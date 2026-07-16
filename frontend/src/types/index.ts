@@ -1,4 +1,4 @@
-/** 分析状态 */
+﻿/** 分析状态 */
 export type AnalysisStatus = "pending" | "fetching" | "analyzing" | "done" | "error";
 
 /** 情感标签 */
@@ -77,3 +77,6 @@ export interface StatusResponse {
   total_comments: number;
   error_msg: string | null;
 }
+
+
+export interface VideoInfoResponse { bv: string; avid: number; title: string; cover: string; play: number; comment_count: number; }

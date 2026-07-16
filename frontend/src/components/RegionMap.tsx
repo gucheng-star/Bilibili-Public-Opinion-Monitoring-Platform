@@ -1,81 +1,46 @@
-import ReactECharts from "echarts-for-react";
-import type { RegionItem } from "../types";
+﻿import { useEffect, useState } from 'react';
+import ReactECharts from 'echarts-for-react';
+import * as echarts from 'echarts';
+import type { RegionItem } from '../types';
+import { isDarkMode } from '../utils';
 
-interface Props {
-  data: RegionItem[];
-}
+interface Props { data: RegionItem[]; }
 
-// 省份名称到 ECharts 地图名的映射
 const NAME_MAP: Record<string, string> = {
-  "北京": "北京", "天津": "天津", "上海": "上海", "重庆": "重庆",
-  "河北": "河北", "山西": "山西", "辽宁": "辽宁", "吉林": "吉林",
-  "黑龙江": "黑龙江", "江苏": "江苏", "浙江": "浙江", "安徽": "安徽",
-  "福建": "福建", "江西": "江西", "山东": "山东", "河南": "河南",
-  "湖北": "湖北", "湖南": "湖南", "广东": "广东", "海南": "海南",
-  "四川": "四川", "贵州": "贵州", "云南": "云南", "陕西": "陕西",
-  "甘肃": "甘肃", "青海": "青海", "台湾": "台湾",
-  "内蒙古": "内蒙古", "广西": "广西", "西藏": "西藏", "宁夏": "宁夏",
-  "新疆": "新疆", "香港": "香港", "澳门": "澳门",
+  '北京':'北京市','天津':'天津市','上海':'上海市','重庆':'重庆市',
+  '河北':'河北省','山西':'山西省','辽宁':'辽宁省','吉林':'吉林省',
+  '黑龙江':'黑龙江省','江苏':'江苏省','浙江':'浙江省','安徽':'安徽省',
+  '福建':'福建省','江西':'江西省','山东':'山东省','河南':'河南省',
+  '湖北':'湖北省','湖南':'湖南省','广东':'广东省','海南':'海南省',
+  '四川':'四川省','贵州':'贵州省','云南':'云南省','陕西':'陕西省',
+  '甘肃':'甘肃省','青海':'青海省','台湾':'台湾省',
+  '内蒙古':'内蒙古自治区','广西':'广西壮族自治区',
+  '西藏':'西藏自治区','宁夏':'宁夏回族自治区',
+  '新疆':'新疆维吾尔自治区','香港':'香港特别行政区','澳门':'澳门特别行政区',
 };
 
 export default function RegionMap({ data }: Props) {
-  const mapData = data
-    .filter((d) => NAME_MAP[d.region])
-    .map((d) => ({ name: NAME_MAP[d.region], value: d.count }));
+  const [mapLoaded, setMapLoaded] = useState(false);
+  useEffect(() => {
+    fetch('/china.json').then(r=>r.json()).then(g=>{echarts.registerMap('china',g);setMapLoaded(true)}).catch(()=>setMapLoaded(false));
+  }, []);
+
+  const dark = isDarkMode();
+  const mapData = data.filter(d=>NAME_MAP[d.region]).map(d=>({name:NAME_MAP[d.region],value:d.count}));
+
+  if (!data.length) return <div className="card"><h3 className="text-xs font-semibold text-secondary mb-2" style={{letterSpacing:'.05em'}}>地域分布</h3><div className="flex items-center justify-center h-64 text-muted text-sm">暂无地域数据</div></div>;
 
   const option = {
-    tooltip: {
-      trigger: "item",
-      formatter: "{b}: {c} 条评论",
-    },
-    visualMap: {
-      min: 0,
-      max: Math.max(...data.map((d) => d.count), 1),
-      left: -10,
-      bottom: 0,
-      text: ["高", "低"],
-      inRange: { color: ["#e0f2fe", "#0ea5e9", "#0369a1"] },
-      calculable: false,
-    },
-    geo: {
-      map: "china",
-      roam: false,
-      layoutCenter: ["50%", "50%"],
-      layoutSize: "100%",
-      itemStyle: {
-        areaColor: "#f3f4f6",
-        borderColor: "#d1d5db",
-      },
-      emphasis: {
-        itemStyle: { areaColor: "#93c5fd" },
-      },
-    },
-    series: [
-      {
-        name: "评论地域分布",
-        type: "map",
-        map: "china",
-        geoIndex: 0,
-        data: mapData,
-      },
-    ],
+    tooltip:{trigger:'item',formatter:'{b}: {c} 条',backgroundColor:dark?'#1A2030':'#FFF',borderColor:dark?'rgba(148,163,184,.12)':'rgba(0,0,0,.08)',textStyle:{color:dark?'#E2E8F0':'#1A1A2E',fontSize:12}},
+    visualMap:{min:0,max:Math.max(...data.map(d=>d.count),1),left:-10,bottom:0,text:['高','低'],inRange:{color:dark?['#1E293B','#FB7299','#FDF2F8']:['#FEF2F2','#FB7299','#9D174D']},calculable:false},
+    geo:{map:'china',roam:false,layoutCenter:['50%','50%'],layoutSize:'100%',itemStyle:{areaColor:dark?'#1A2030':'#F3F4F6',borderColor:dark?'rgba(148,163,184,.15)':'#D1D5DB'},emphasis:{itemStyle:{areaColor:dark?'#2D3A50':'#DBEAFE'}}},
+    series:[{name:'地域',type:'map',map:'china',geoIndex:0,data:mapData}],
   };
 
-  if (!data.length) {
-    return (
-      <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-4">
-        <h3 className="text-sm font-semibold text-gray-700 mb-2">地域分布</h3>
-        <div className="flex items-center justify-center h-72 text-gray-400 text-sm">
-          暂无地域数据（用户未显示 IP 属地）
-        </div>
-      </div>
-    );
+  if (!mapLoaded) {
+    const sorted = [...data].sort((a,b)=>b.count-a.count);
+    return <div className="card"><h3 className="text-xs font-semibold text-secondary mb-2" style={{letterSpacing:'.05em'}}>地域分布</h3><ReactECharts option={{tooltip:{trigger:'axis',backgroundColor:dark?'#1A2030':'#FFF',borderColor:dark?'rgba(148,163,184,.12)':'rgba(0,0,0,.08)',textStyle:{color:dark?'#E2E8F0':'#1A1A2E',fontSize:12}},grid:{left:70,right:40,top:10,bottom:20},xAxis:{type:'value',axisLabel:{color:dark?'#94A3B8':'#6B7280'}},yAxis:{type:'category',data:sorted.map(d=>d.region),axisLabel:{color:dark?'#E2E8F0':'#1A1A2E',fontSize:12}},series:[{type:'bar',data:sorted.map(d=>d.count),barMaxWidth:36,itemStyle:{color:'#FB7299',borderRadius:[0,4,4,0]}}]}} style={{height:300}}/></div>;
   }
 
-  return (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-4">
-      <h3 className="text-sm font-semibold text-gray-700 mb-2">地域分布</h3>
-      <ReactECharts option={option} style={{ height: 360 }} />
-    </div>
-  );
+  return <div className="card"><h3 className="text-xs font-semibold text-secondary mb-2" style={{letterSpacing:'.05em'}}>地域分布 ({data.length} 个地区)</h3><ReactECharts option={option} style={{height:360}}/></div>;
 }

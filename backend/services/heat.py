@@ -4,12 +4,32 @@ from collections import Counter
 from datetime import datetime, timedelta
 
 
+from datetime import datetime
+
+
 def analyze_heat(comments: list[dict]) -> dict:
     """分析评论热度——按时段聚合"""
     if not comments:
         return {"timeline": [], "peak_hour": None, "peak_count": 0, "hourly_distribution": []}
 
-    timestamps = [c["post_time"] for c in comments if c.get("post_time")]
+    # Convert post_time to datetime, handling both string and datetime inputs
+    def _to_dt(ts):
+        if isinstance(ts, datetime):
+            return ts
+        if isinstance(ts, str) and ts:
+            try:
+                return datetime.fromisoformat(ts)
+            except ValueError:
+                return None
+        return None
+
+    timestamps = []
+    for c in comments:
+        pt = c.get("post_time")
+        dt = _to_dt(pt)
+        if dt:
+            timestamps.append(dt)
+
     if not timestamps:
         return {"timeline": [], "peak_hour": None, "peak_count": 0, "hourly_distribution": []}
 
@@ -33,7 +53,7 @@ def analyze_heat(comments: list[dict]) -> dict:
     peak_count = 0
 
     while current <= end:
-        cnt = hourly.get(current, 0)
+        cnt = hourly.get(current.replace(minute=0, second=0, microsecond=0), 0)
         timeline.append({
             "time": current.strftime("%Y-%m-%d %H:%M"),
             "count": cnt,
@@ -41,7 +61,7 @@ def analyze_heat(comments: list[dict]) -> dict:
         if cnt > peak_count:
             peak_count = cnt
             peak_hour = current.strftime("%Y-%m-%d %H:%M")
-        current += timedelta(hours=1)
+        current = current + timedelta(hours=1)
 
     # 按小时段（0-23）分布
     hour_dist = Counter()

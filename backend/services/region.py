@@ -55,3 +55,25 @@ def analyze_region(comments: list[dict]) -> list[dict]:
         {"region": r, "count": cnt, "percentage": round(cnt / total * 100, 2) if total else 0}
         for r, cnt in counter.most_common()
     ]
+def normalize_location(raw: str) -> str | None:
+    """将 IP属地字段标准化为省份名"""
+    if not raw or not raw.strip():
+        return None
+    raw = raw.strip()
+    # Strip "IP属地：" prefix if present
+    if raw.startswith("IP属地："):
+        raw = raw[5:]
+    if raw.startswith("IP属?"):
+        raw = raw[4:]
+    if raw in LOCATION_ALIASES:
+        return LOCATION_ALIASES[raw]
+    if raw in PROVINCES:
+        return raw
+    for p in PROVINCES:
+        if raw.startswith(p):
+            return p
+    if raw.startswith("中国") and len(raw) > 2:
+        suffix = raw[2:]
+        if suffix in PROVINCES:
+            return suffix
+    return raw

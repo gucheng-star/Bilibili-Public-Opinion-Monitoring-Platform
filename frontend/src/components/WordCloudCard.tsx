@@ -1,47 +1,30 @@
-import { useEffect, useState } from "react";
-import { getWordCloud } from "../services/api";
-import type { KeywordItem } from "../types";
+﻿import 'echarts-wordcloud';
+import ReactECharts from 'echarts-for-react';
+import type { KeywordItem } from '../types';
+import { isDarkMode } from '../utils';
 
-interface Props {
-  analysisId: number;
-  keywords: KeywordItem[];
-}
+interface Props { keywords: KeywordItem[]; }
 
-export default function WordCloudCard({ analysisId, keywords }: Props) {
-  const [imgSrc, setImgSrc] = useState<string>("");
+export default function WordCloudCard({ keywords }: Props) {
+  const dark = isDarkMode();
+  if (!keywords.length) return <div className="card"><h3 className="text-xs font-semibold text-secondary mb-2" style={{letterSpacing:'.05em'}}>词云</h3><div className="flex items-center justify-center h-64 text-muted text-sm">暂无关键词</div></div>;
 
-  useEffect(() => {
-    getWordCloud(analysisId)
-      .then((data) => {
-        if (data.base64) {
-          setImgSrc(`data:image/png;base64,${data.base64}`);
-        }
-      })
-      .catch(() => {});
-  }, [analysisId]);
+  const colors = dark
+    ? ['#FB7299','#38BDF8','#34D399','#FBBF24','#A78BFA','#F87171','#FB923C','#22D3EE','#C084FC']
+    : ['#FB7299','#2563EB','#059669','#D97706','#7C3AED','#DC2626','#EA580C','#0891B2','#9333EA'];
 
-  return (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-4">
-      <h3 className="text-sm font-semibold text-gray-700 mb-2">词云</h3>
-      {imgSrc ? (
-        <img src={imgSrc} alt="词云" className="w-full h-auto rounded" />
-      ) : (
-        <div className="flex items-center justify-center h-64 text-gray-400 text-sm">
-          词云生成中...
-        </div>
-      )}
-      {keywords.length > 0 && (
-        <div className="mt-3 flex flex-wrap gap-1.5">
-          {keywords.slice(0, 15).map((kw) => (
-            <span
-              key={kw.word}
-              className="px-2 py-0.5 bg-blue-50 text-blue-700 text-xs rounded-full"
-            >
-              {kw.word} {kw.count}
-            </span>
-          ))}
-        </div>
-      )}
-    </div>
-  );
+  const option = {
+    tooltip: { show:true, formatter:'{b}: {c} 次' },
+    series: [{
+      type:'wordCloud', shape:'circle', left:'center', top:'center', width:'95%', height:'95%',
+      sizeRange:[10, 56], rotationRange:[-45,45], rotationStep:15,
+      gridSize:6, drawOutOfBound:false, layoutAnimation:true,
+      textStyle: { fontFamily:'-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif', fontWeight:'normal',
+        color:()=>colors[Math.floor(Math.random()*colors.length)] },
+      emphasis: { focus:'self', textStyle:{ textShadowBlur:10, textShadowColor:dark?'rgba(251,114,153,.4)':'rgba(251,114,153,.3)' } },
+      data: keywords.slice(0, 80).map(k=>({name:k.word,value:k.count})),
+    }],
+  };
+
+  return <div className="card"><h3 className="text-xs font-semibold text-secondary mb-2" style={{letterSpacing:'.05em'}}>词云</h3><ReactECharts option={option} style={{height:300}}/></div>;
 }

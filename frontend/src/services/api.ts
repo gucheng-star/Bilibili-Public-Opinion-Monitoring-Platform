@@ -1,41 +1,5 @@
-import type { AnalysisResult, HistoryItem, StatusResponse } from "../types";
+﻿import type { AnalysisResult, HistoryItem, StatusResponse, VideoInfoResponse } from "../types"; const BASE = "/api"; async function req<T>(url: string, options?: RequestInit): Promise<T> { const res = await fetch(BASE + url, options); if (!res.ok) { const err = await res.json().catch(() => ({ detail: res.statusText })); throw new Error(err.detail || "请求失败"); } return res.json(); } export function startAnalysis(bv: string, maxComments = 100, requestDelay = 3.0) { return req<{ analysis_id: number; status: string }>("/analyze", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ bv, max_comments: maxComments, request_delay: requestDelay }) }); } export function getStatus(analysisId: number) { return req<StatusResponse>("/status/" + analysisId); } export function getResults(analysisId: number) { return req<AnalysisResult>("/results/" + analysisId); } export function getWordCloud(analysisId: number) { return req<{ base64: string }>("/wordcloud/" + analysisId); } export function getHistory(limit = 20) { return req<HistoryItem[]>("/history?limit=" + limit); }
 
-const BASE = "/api";
-
-async function req<T>(url: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${url}`, options);
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || "请求失败");
-  }
-  return res.json();
-}
-
-/** 提交 BV 号开始分析 */
-export function startAnalysis(bv: string): Promise<{ analysis_id: number; status: string }> {
-  return req("/analyze", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ bv }),
-  });
-}
-
-/** 查询分析状态 */
-export function getStatus(analysisId: number): Promise<StatusResponse> {
-  return req(`/status/${analysisId}`);
-}
-
-/** 获取完整分析结果 */
-export function getResults(analysisId: number): Promise<AnalysisResult> {
-  return req(`/results/${analysisId}`);
-}
-
-/** 获取词云 base64 */
-export function getWordCloud(analysisId: number): Promise<{ base64: string }> {
-  return req(`/wordcloud/${analysisId}`);
-}
-
-/** 获取历史分析列表 */
-export function getHistory(limit = 20): Promise<HistoryItem[]> {
-  return req(`/history?limit=${limit}`);
+export function getVideoInfo(bv: string) {
+  return req<VideoInfoResponse>('/video/' + bv);
 }
