@@ -194,7 +194,7 @@ def get_results(analysis_id: int):
         # 各维度分析
         region_data = analyze_region(comments_list)
         heat_data = analyze_heat(comments_list)
-        keywords = get_topkeywords(comments_list)
+        keywords = get_top_keywords(comments_list)
 
         return {
             "analysis_id": analysis.id,
