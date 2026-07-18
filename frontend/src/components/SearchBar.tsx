@@ -51,7 +51,7 @@ export default function SearchBar({ onAnalyze, loading }: Props) {
         </div>
         {!videoInfo && (
           <button type="button" onClick={handlePreview} disabled={loading || previewLoading || !rawInput.trim()}
-            className="btn-analyze" style={{background:'var(--blue)',whiteSpace:'nowrap'}}>
+            style={{height:'3rem',padding:'0 1.25rem',fontSize:'.875rem',fontWeight:600,background:'rgba(0,161,214,.12)',color:'#00A1D6',border:'1px solid rgba(0,161,214,.25)',borderRadius:'.625rem',cursor:'pointer',whiteSpace:'nowrap',transition:'all .2s ease'}}>
             {previewLoading ? '获取中...' : '获取视频信息'}
           </button>
         )}

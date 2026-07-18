@@ -24,6 +24,7 @@ function App() {
   const [progress, setProgress] = useState(0);
   const [progressMax, setProgressMax] = useState(100);
   const [toast, setToast] = useState<string | null>(null);
+  const [historyRefreshKey, setHistoryRefreshKey] = useState(0);
   const cancelRef = useRef(false);
 
   useEffect(() => { fetch('/api/auth/status').then(r=>r.json()).then(d=>setLoggedIn(d.logged_in)).catch(()=>setLoggedIn(false)); }, []);
@@ -45,7 +46,7 @@ function App() {
             setProgress(status.total_comments);
             if (status.status === 'done') {
               setStatusText(''); const data = await getResults(analysis_id);
-              setResults(data); setLoading(false); showToast('分析完成');
+              setResults(data); setLoading(false); setHistoryRefreshKey(key => key + 1); showToast('分析完成');
               return;
             }
             if (status.status === 'error') { setError(status.error_msg || '分析失败'); setLoading(false); showToast('分析失败'); return; }
@@ -88,16 +89,24 @@ function App() {
           <SearchBar onAnalyze={handleAnalyze} loading={loading}/>
         </div>
       </header>
+      <div className="header-accent-line" />
       <main className="max-w-7xl mx-auto px-4 py-6">
         {toast && <div style={{position:'fixed',top:'1rem',left:'50%',transform:'translateX(-50%)',zIndex:100,padding:'.5rem 1.25rem',background:'var(--green-soft)',border:'1px solid var(--green)',borderRadius:'.5rem',color:'var(--green)',fontSize:'.8125rem',fontWeight:500}}>{toast}</div>}
         {error && <div style={{padding:'.75rem 1rem',background:'var(--red-soft)',border:'1px solid var(--red)',borderRadius:'.5rem',color:'var(--red)',fontSize:'.8125rem',marginBottom:'1rem'}}>{error}</div>}
+        <div className="mb-4">
+          <button onClick={()=>setShowHistory(!showHistory)} className="flex items-center gap-1 text-xs text-muted mb-2" style={{background:'none',border:'none',cursor:'pointer'}}>
+            <span>{showHistory?'收起':'展开'}历史记录</span>
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{transform:showHistory?'rotate(180deg)':'rotate(0deg)',transition:'transform .2s'}}><path strokeLinecap="round" strokeLinejoin="round" d="M6 9l6 6 6-6"/></svg>
+          </button>
+          {showHistory && <HistoryPanel onSelect={handleViewHistory} selectedId={analysisId} refreshKey={historyRefreshKey}/>}
+        </div>
         {loading && !results && (
           <div className="flex flex-col items-center justify-center py-20">
             <div className="pulse-dot" style={{width:'.875rem',height:'.875rem',marginBottom:'1.5rem'}}></div>
             <p className="text-sm text-secondary mb-3">{statusText}</p>
             {progressMax > 0 && (
-              <div style={{width:'20rem',maxWidth:'80%',height:'.375rem',background:'var(--border)',borderRadius:'.25rem',overflow:'hidden'}}>
-                <div style={{height:'100%',width:Math.min(progress/progressMax*100,100)+'%',background:'var(--accent)',borderRadius:'.25rem',transition:'width .3s ease'}}/>
+              <div className="progress-bar-track" style={{width:'20rem',maxWidth:'80%'}}>
+                <div className="progress-bar-fill" style={{width:Math.min(progress/progressMax*100,100)+'%'}}/>
               </div>
             )}
             <button onClick={handleStop} style={{marginTop:'1rem',padding:'.375rem 1rem',fontSize:'.75rem',color:'var(--text-muted)',background:'transparent',border:'1px solid var(--border)',borderRadius:'.375rem',cursor:'pointer'}}>取消分析</button>
@@ -110,22 +119,19 @@ function App() {
           </div>
         )}
         {results && <>
-          <div className="mb-4">
-            <button onClick={()=>setShowHistory(!showHistory)} className="flex items-center gap-1 text-xs text-muted mb-2" style={{background:'none',border:'none',cursor:'pointer'}}>
-              <span>{showHistory?'收起':'展开'}历史记录</span>
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{transform:showHistory?'rotate(180deg)':'rotate(0deg)',transition:'transform .2s'}}><path strokeLinecap="round" strokeLinejoin="round" d="M6 9l6 6 6-6"/></svg>
-            </button>
-            {showHistory && <HistoryPanel onSelect={handleViewHistory} selectedId={analysisId}/>}
-          </div>
           <VideoInfo title={results.video_title} play={results.video_play} totalComments={results.total_comments}/>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
-            <SentimentChart {...results.sentiment}/>
-            <RegionMap data={results.region}/>
-            <GenderChart {...results.gender}/>
+          <div className="grid grid-cols-1 md:grid-cols-2 md:grid-auto-rows-fr gap-4 mt-4">
+            <div className="card-enter"><SentimentChart {...results.sentiment}/></div>
+            <div className="card-enter"><GenderChart {...results.gender}/></div>
+          </div>
+          <div className="card-enter mt-4"><RegionMap data={results.region}/></div>
+          <div className="card-enter mt-4">
             <WordCloudCard keywords={results.keywords}/>
+          </div>
+          <div className="card-enter mt-4">
             <HeatTimeline timeline={results.heat.timeline} hourlyDistribution={results.heat.hourly_distribution} peakHour={results.heat.peak_hour} peakCount={results.heat.peak_count}/>
           </div>
-          <div className="mt-4"><CommentTable comments={results.comments}/></div>
+          <div className="card-enter mt-4"><CommentTable comments={results.comments}/></div>
         </>}
       </main>
     </div>

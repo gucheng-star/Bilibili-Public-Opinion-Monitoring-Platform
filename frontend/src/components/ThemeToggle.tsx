@@ -14,6 +14,16 @@ export default function ThemeToggle() {
     document.documentElement.dataset.theme = dark ? 'dark' : 'light';
   }, [dark]);
 
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    const handler = (e: MediaQueryListEvent) => {
+      const saved = localStorage.getItem('theme');
+      if (!saved) setDark(e.matches);
+    };
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, []);
+
   return (
     <button
       className="theme-toggle"

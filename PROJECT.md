@@ -1,127 +1,176 @@
-# B站舆论监测平台 - 项目需求文档
+# B站视频评论区舆情监测平台 — 项目文档
 
 ## 项目概述
 
-一个Web应用，用于分析B站(Bilibili)视频评论区的舆情数据。输入视频BV号，自动抓取评论并进行多维度分析，以可视化仪表盘展示结果。
+Web 应用，输入 B站视频 BV 号或链接，自动抓取评论并进行情感分析、词云、地域分布、性别结构、热度趋势等多维度分析，以可视化仪表盘展示。
 
-## 核心功能
+## 核心技术栈
 
-### 1. 评论抓取
-- 通过B站API抓取视频评论
-- 支持Cookie认证（扫码登录）
-- 防封策略：请求间隔3秒，单次最多100条
-- 使用旧版评论API（x/v2/reply，sort=2按时间排序）
-- 提取字段：内容、发布时间、点赞数、用户性别、IP属地
-
-### 2. 用户认证（扫码登录）
-- 调用B站 passport API 生成二维码
-- 轮询扫码状态直至确认
-- 成功后保存 SESSDATA Cookie 到本地 uth.json
-- 支持多账号：最多保留5个历史账号，可快速切换
-- 退出登录仅清除当前会话，保留文件
-- **登录仅用于抓取评论数据，不获取其他个人信息**
-
-### 3. 数据分析维度
-| 模块 | 实现 | 输出 |
-|------|------|------|
-| 情感分析 | SnowNLP（正面/负面/中性） | 环形图 |
-| 词云 | echarts-wordcloud（前端生成） | 词云图 |
-| 地域分析 | IP属地 → 省份聚合 | 中国地图热力图 |
-| 性别结构 | API返回的sex字段统计 | 饼图 |
-| 热度趋势 | 评论发布时间序列 → 按时段聚合 | 折线图+24h柱状图 |
-| ~~年龄结构~~ | B站API不提供，标注不支持 | - |
-
-### 4. 前端界面
-- React + TypeScript + Vite
-- ECharts 图表（echarts-for-react）
-- 明/暗双主题（默认跟随系统，可手动切换）
-- **界面语言：中文**
-- 3列仪表盘布局
-- 登录页 → 欢迎说明 → 扫码/历史账号登录
-
-## 技术栈
-
-| 层 | 技术 | 说明 |
-|----|------|------|
-| 后端框架 | FastAPI (Python) | 异步API |
-| 数据库 | SQLite + SQLAlchemy | 轻量持久化 |
-| HTTP客户端 | httpx | 调用B站API |
-| NLP | jieba + snownlp | 分词+情感分析 |
-| 前端框架 | React + TypeScript | Vite构建 |
-| 包管理 | pnpm | - |
-| 图表 | ECharts + echarts-for-react + echarts-wordcloud | - |
-| 样式 | 纯CSS（CSS变量驱动主题） | - |
-| 版本管理 | Git | - |
+| 层 | 技术 |
+|----|------|
+| 后端 | FastAPI (Python) + SQLite + SQLAlchemy |
+| HTTP | httpx (B站 API 调用) |
+| NLP | jieba 分词 + SnowNLP 情感分析 |
+| 前端 | React 19 + TypeScript + Vite |
+| 图表 | ECharts + echarts-for-react + echarts-wordcloud |
+| 样式 | 纯 CSS (CSS 变量驱动双主题) |
+| 包管理 | pnpm |
+| 版本 | Git |
 
 ## 项目结构
 
-`
+```
 b站舆论监测平台/
 ├── backend/
-│   ├── main.py              # FastAPI入口
-│   ├── config.py             # 配置（含停用词加载）
-│   ├── stopwords.txt         # 停用词表（backend内部）
-│   ├── auth.json             # 登录凭据（gitignore，自动生成）
-│   ├── api/
-│   │   ├── routes.py         # 分析API路由
-│   │   └── auth_routes.py    # 认证API路由（QR登录）
-│   ├── services/
-│   │   ├── bilibili.py       # B站API客户端
-│   │   ├── sentiment.py      # 情感分析
-│   │   ├── wordcloud_gen.py  # 词云（已废弃，改用前端echarts-wordcloud）
-│   │   ├── region.py         # 地域分析（IP属地→省份）
-│   │   ├── heat.py           # 热度分析（时间序列）
-│   │   └── auth.py           # 认证服务（QR登录、账号管理）
-│   ├── models/database.py    # SQLAlchemy模型
-│   └── utils/bv_av.py        # BV号↔AV号互转
+│   ├── main.py
+│   ├── config.py / stopwords.txt / auth.json
+│   ├── api/         (routes.py, auth_routes.py)
+│   ├── services/    (bilibili, sentiment, wordcloud_gen, region, heat, auth)
+│   ├── models/      (database.py)
+│   └── utils/       (bv_av.py)
 ├── frontend/
 │   ├── src/
-│   │   ├── App.tsx           # 主应用（含登录守卫）
-│   │   ├── main.tsx          # 入口
-│   │   ├── index.css         # 全局样式（CSS变量主题）
-│   │   ├── utils.ts          # 主题检测工具
-│   │   ├── types/index.ts    # TypeScript类型
-│   │   ├── services/api.ts   # API客户端
-│   │   └── components/
-│   │       ├── LoginPage.tsx      # 登录页（欢迎+扫码+历史账号）
-│   │       ├── ThemeToggle.tsx    # 明暗主题切换
-│   │       ├── SearchBar.tsx      # BV号搜索栏
-│   │       ├── VideoInfo.tsx      # 视频信息卡
-│   │       ├── SentimentChart.tsx # 情感分布环形图
-│   │       ├── GenderChart.tsx    # 性别分布饼图
-│   │       ├── RegionMap.tsx      # 地域分布地图/柱状图
-│   │       ├── WordCloudCard.tsx  # 词云图（echarts-wordcloud）
-│   │       ├── HeatTimeline.tsx   # 热度趋势图
-│   │       ├── CommentTable.tsx   # 评论列表（可筛选/排序/分页）
-│   │       └── HistoryPanel.tsx   # 历史记录横条
-│   ├── public/china.json     # 中国地图GeoJSON（本地，不依赖CDN）
-│   └── package.json
-├── .gitignore
-└── PROJECT.md                # 本文件
-`
+│   │   ├── App.tsx, main.tsx, index.css, utils.ts
+│   │   ├── types/index.ts, services/api.ts
+│   │   └── components/ (14 个组件)
+│   └── public/china.json
+└── PROJECT.md
+```
 
-## 设计原则
+## API 路由
 
-### 界面
-- **中文优先**：所有UI文字使用中文
-- **双主题**：CSS变量驱动，默认跟随系统偏好，可手动切换
-- **深色主题**：底色 #0A0E17，卡片 #131822，B站粉强调色 #FB7299
-- **浅色主题**：暖白底色 #F6F3F0，白卡片，柔和阴影
-- **ECharts图表**：tooltip/文字/地图底色均跟随主题自动切换
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET/POST | /api/auth/* | 扫码登录、状态、退出、账号管理 |
+| POST | /api/analyze | 提交 BV 号触发异步分析 |
+| GET | /api/status/{id} | 查询分析进度 |
+| GET | /api/results/{id} | 获取完整结果 |
+| GET | /api/wordcloud/{id} | 词云图片 (base64) |
+| GET | /api/history | 历史记录 |
+| DELETE | /api/history/{id} | 删除历史 (级联) |
+| GET | /api/video/{bv} | 视频基本信息 |
 
-### 安全
-- **无硬编码Cookie**：代码中不包含任何凭据
-- **本地存储**：登录凭据仅保存在本机 uth.json，已加入 .gitignore
-- **多账号隔离**：每个账号独立保存，切换方便
+## 启动方式
 
-### API
-- **认证接口**（不需登录）：/api/auth/*
-- **分析接口**（需登录）：/api/analyze、/api/status/*、/api/results/*、/api/wordcloud/*、/api/history
-- **IP属地提取**：B站 
-eply_control.location 字段，格式 "IP属地：XX"，后端自动剥离前缀
+```bash
+# 后端 (端口 8000)
+cd backend && venv\Scripts\activate
+python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
-## 已知限制
-- 年龄数据：B站API不提供
-- 评论数量：单次最多100条（可在config.py调整）
-- 反爬：请求间隔3秒，依赖Cookie认证
-- 地域粒度：仅到省份/国家级别
+# 前端开发 (端口 5173)
+cd frontend && pnpm run dev
+
+# 生产构建后仅需后端 (自动服务前端 dist)
+cd frontend && pnpm run build
+cd backend && python -m uvicorn main:app --host 0.0.0.0 --port 8000
+```
+
+## 版本历史
+
+| 日期 | 版本 | 内容 |
+|------|------|------|
+| 2026-07-18 | v1.3 | 设计系统重构：完整动效体系、CSS token 系统、header 呼吸线、卡片入场 stagger、弹窗 scale+fade、进度条脉冲、hover lift、reduced-motion 适配 |
+| 2026-07-17 | v1.2 | 词云交互 (词频列表+点击排除)、历史记录删除、布局优化 |
+| 2026-07-17 | v1.1 | 扫码登录、可调抓取参数、双主题、进度条 |
+| 2026-07-16 | v1.0 | 初始版本 |
+---
+# 前端设计规范 v2
+
+## 1. 设计哲学
+
+**一个风险，一个签名**: B站粉 (#FB7299) 是唯一的色彩声明，header 下方 2px 呼吸线是唯一的装饰性动效。其余一切保持克制。深色是"夜色数据舞台"，浅色是"晨间分析工坊"。
+
+## 2. 色彩系统
+
+### 深色主题 `[data-theme="dark"]`
+
+| Token | 值 | 用途 |
+|-------|-----|------|
+| --bg | #070B14 | 页面底色 |
+| --bg-card | #0F1629 | 卡片底色 |
+| --accent | #FB7299 | B站粉 |
+| --accent-glow | rgba(251,114,153,.32) | 发光 |
+| --text-primary | #E2E8F0 | 主文字 |
+| --text-secondary | #94A3B8 | 辅助 |
+| --text-muted | #64748B | 弱化 |
+| --border | rgba(148,163,184,.08) | 分割线 |
+| --shadow-hover | 0 4px 20px rgba(0,0,0,.30) | 悬停阴影 |
+
+### 浅色主题
+
+| Token | 值 |
+|-------|-----|
+| --bg | #F6F3F0 |
+| --bg-card | #FFFFFF |
+| --shadow-hover | 0 4px 16px rgba(0,0,0,.06) |
+
+### 语义色
+
+| Token | 深色 | 浅色 |
+|-------|------|------|
+| --green | #34D399 | #059669 |
+| --red | #F87171 | #DC2626 |
+| --yellow | #FBBF24 | #D97706 |
+| --blue | #38BDF8 | #2563EB |
+
+## 3. 动效系统
+
+### 入场动效
+
+| 动效 | CSS 类 | 描述 |
+|------|--------|------|
+| 卡片入场 | .card-enter | opacity + translateY, 50ms stagger |
+| 弹窗 | .modal-content | scale .92->1 + fade |
+| 遮罩 | .modal-backdrop | fade |
+| Toast | .toast | slide-down + fade |
+
+### 持续性动效
+
+| 动效 | 元素 | 周期 |
+|------|------|------|
+| 呼吸线 | .header-accent-line | opacity .35-.75, 4s |
+| 按钮流光 | .btn-primary::after | gradient skim, 3s |
+| 进度条脉冲 | .progress-bar-fill | gradient shift, 2s |
+| 加载点 | .pulse-dot | box-shadow 扩散, 1.8s |
+| 浮动 | .animate-float | translateY 0--3px, 3s |
+
+### 微交互
+
+| 触发 | 效果 | 时长 |
+|------|------|------|
+| 卡片 hover | lift 2px + border glow + shadow | .25s |
+| 按钮 active | scale(.975) | instant |
+| 搜索框 focus | border accent + double glow ring | .25s |
+| 主题切换 | CSS 变量过渡 | .35s |
+
+### Reduced Motion
+
+```css
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    transition-duration: .01ms !important;
+  }
+}
+```
+
+## 4. 组件规范
+
+| 组件 | CSS 类 | 说明 |
+|------|--------|------|
+| 卡片 | .card | 唯一表面容器，禁止嵌套 |
+| 主按钮 | .btn-primary | 粉色背景 + 流光 |
+| 次按钮 | .btn-ghost | 透明 + 边框 |
+| 图标按钮 | .btn-icon | 2.25rem 正方形 |
+| 搜索框 | .search-input | 3rem 高, focus 发光环 |
+| 进度条 | .progress-bar-track / .progress-bar-fill | 脉冲渐变 |
+| 弹窗 | .modal-overlay / .modal-backdrop / .modal-content | 居中遮罩 |
+| Toast | .toast | 顶部居中 |
+
+## 5. 布局
+
+3 行 + 评论列表: Row 1 三列等宽 / Row 2 词云全宽 / Row 3 热度全宽，max-w-7xl (80rem) 居中，移动端单列堆叠。
+
+## 6. 图表规范
+
+ECharts 透明背景，颜色跟随 CSS 变量。通过 isDarkMode() 检测主题动态设置 option。

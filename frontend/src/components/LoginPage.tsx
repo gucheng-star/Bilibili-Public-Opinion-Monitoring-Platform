@@ -52,7 +52,7 @@ export default function LoginPage({ onLogin }: Props) {
   return (
     <div className="min-h-screen flex items-center justify-center" style={{background:'var(--bg)'}}>
       {step === 'welcome' ? (
-        <div className="card text-center" style={{maxWidth:'26rem',padding:'2.5rem 2rem'}}>
+        <div className="card card-enter text-center" style={{maxWidth:'26rem',padding:'2.5rem 2rem'}}>
           <div style={{fontSize:'2rem',fontWeight:700,color:'var(--accent)',marginBottom:'.25rem'}}>B站</div>
           <div className="text-primary" style={{fontSize:'1.125rem',fontWeight:600,marginBottom:'1.5rem'}}>舆论监测平台</div>
 

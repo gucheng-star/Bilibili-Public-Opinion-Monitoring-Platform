@@ -97,7 +97,7 @@ def get_results(analysis_id: int):
             'total_comments':a.total_comments,'created_at':a.created_at.isoformat() if a.created_at else None,
             'sentiment':{'positive':s.positive_count if s else 0,'negative':s.negative_count if s else 0,'neutral':s.neutral_count if s else 0},
             'gender':_calc_gender(cl),'region':analyze_region(cl),'heat':analyze_heat(cl),
-            'keywords':get_top_keywords(cl),'comments':cl}
+            'keywords':get_top_keywords(cl, top_n=500),'comments':cl}
     finally: db.close()
 
 @router.get('/wordcloud/{analysis_id}')
@@ -119,6 +119,18 @@ def get_history(limit: int = 20):
             for a in db.query(Analysis).order_by(desc(Analysis.created_at)).limit(limit).all()]
     finally: db.close()
 
+@router.delete('/history/{analysis_id}')
+def delete_history(analysis_id: int):
+    db = SessionLocal()
+    try:
+        a = db.query(Analysis).filter_by(id=analysis_id).first()
+        if not a: raise HTTPException(404, 'Not found')
+        db.delete(a); db.commit()
+        return {'deleted': True}
+    except Exception as e:
+        db.rollback(); raise HTTPException(500, str(e))
+    finally:
+        db.close()
 def _calc_gender(comments):
     return {'male':sum(1 for c in comments if c.get('gender')=='男'),
         'female':sum(1 for c in comments if c.get('gender')=='女'),
