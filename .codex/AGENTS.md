@@ -16,20 +16,17 @@ Web 应用，分析 B站视频评论区的舆情数据。输入 BV 号或视频�
 | Python | backend/venv（禁止系统 Python） |
 
 ## 代码编辑规范
-- 所有文件编辑必须通过 apply_patch 工具完成
-- 禁止 cat / Set-Content / heredoc 写入文件
+- 所有文件编辑优先通过 apply_patch 工具完成
 - 新建文件用 *** Add File:，增量用 *** Update File:
-- **优先使用 *** Update File: 做定点编辑，只改需要改的几行，避免全文重写**
-  - 哪怕改动跨越多个不连续位置，也应拆成多个小 patch，而不是整文件 Add File
-  - 只有在上下文匹配反复失败时才回退到 *** Add File:（全文重写）
-- 全文重写会增加回滚难度、掩盖无意间引入的 side effect，应尽量避免
- ** *** Update File: 必须使用裸 @@（不带行号）**：`@@` 单独一行，靠纯内容文本匹配
-   - 禁止 `@@ -14,5 +14,6 @@` 带行号格式：工具内部 diff 行号基准与实际文件不对齐，必然失败
-   - 裸 `@@` 经实测可匹配中文和纯 ASCII 内容，100% 可靠
-   - 示例：`@@` 换行后跟 `+新增行` 和 ` 上下文行`，不加任何数字
-- 已踩坑：PowerShell heredoc 吃反引号、Python inline -c 三层转义打架、Start-Process hidden 被沙箱杀
-- PowerShell @'...'@ | python - 会损坏 UTF-8 中文，禁止通过管道传中文内容
-- 如需通过 Python 脚本生成文件，必须先将 .py 写出到磁盘再运行，禁止 @'...'@ | python -
+- ** *** Update File: @@ 一律不带行号**，行号格式（@@ -14,5 +14,6 @@）禁止使用
+  - 工具内部 diff 行号基准与实际文件不对齐，模型生成行号也极易出错，必然匹配失败
+  - 裸 @@ 做纯内容文本匹配，中文/ASCII 均可靠
+  - 示例： *** Begin Patch; *** Update File: /path/to/file; 下一行 @@; 然后 +新增行; 再跟 上下文行（空格开头）; *** End Patch
+- **优先定点编辑，避免全文重写**：哪怕改动跨多个不连续位置，也应拆成多个小 patch
+- **apply_patch 连续两次匹配失败时，允许用 Python 脚本辅助**：先写 .py 到临时目录再运行，再复制到目标位置
+- **禁止**：cat / Set-Content / heredoc 直接写入目标文件
+- **禁止**：PowerShell @'...'@ | python - 管道传中文（UTF-8 必然损坏）
+- **禁止**：Python inline -c 三层转义、Start-Process hidden 被沙箱杀
 
 ## 启动方式
 ```bash
