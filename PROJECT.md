@@ -20,7 +20,7 @@ Web 应用，输入 B站视频 BV 号或链接，自动抓取评论并进行情�
 ## 项目结构
 
 ```
-b站舆论监测平台/
+Bilibili Public Opinion Monitoring Platform/
 ├── backend/
 │   ├── main.py
 │   ├── config.py / stopwords.txt / auth.json

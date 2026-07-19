@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { getHistory, deleteHistory } from '../services/api';
 import type { HistoryItem } from '../types';
 
@@ -28,7 +28,7 @@ export default function HistoryPanel({ onSelect, selectedId, refreshKey = 0, onD
 
   return (
     <>
-      <div className="flex gap-2 overflow-x-auto" style={{scrollbarWidth:'thin'}}>
+      <div className="history-scroll" style={{display:'flex',gap:'.5rem',overflowX:'auto',paddingBottom:'.25rem'}}>
         {items.map(item => (
           <div key={item.id} style={{position:'relative',flexShrink:0}}>
             <button onClick={()=>onSelect(item.id)}

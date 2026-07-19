@@ -7,6 +7,7 @@ from fastapi.staticfiles import StaticFiles
 
 sys.path.insert(0, os.path.dirname(__file__))
 from models.database import init_db
+from api.settings_routes import router as settings_router
 from api.routes import router
 from api.auth_routes import router as auth_router
 
@@ -26,6 +27,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(settings_router)
 app.include_router(router)
 app.include_router(auth_router)
 

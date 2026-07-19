@@ -1,10 +1,13 @@
-﻿/** 分析状态 */
+/** Analysis status */
 export type AnalysisStatus = "pending" | "fetching" | "analyzing" | "done" | "error";
 
-/** 情感标签 */
+/** Analysis mode */
+export type AnalysisMode = "nlp" | "llm";
+
+/** Sentiment label (traditional 3-class) */
 export type SentimentLabel = "positive" | "negative" | "neutral";
 
-/** 评论数据 */
+/** Comment data */
 export interface CommentData {
   id: number;
   rpid: number;
@@ -15,29 +18,36 @@ export interface CommentData {
   likes: number;
   sentiment_label: SentimentLabel;
   sentiment_score: number;
+  sentiment_llm_label: string;
   post_time: string | null;
 }
 
-/** 地域分布项 */
+/** LLM 8-category sentiment counts */
+export interface SentimentLLM {
+  joy: number; anger: number; sadness: number; surprise: number;
+  fear: number; disgust: number; anticipation: number; trust: number;
+}
+
+/** Region distribution item */
 export interface RegionItem {
   region: string;
   count: number;
   percentage: number;
 }
 
-/** 热度时间点 */
+/** Heat timeline point */
 export interface HeatPoint {
   time: string;
   count: number;
 }
 
-/** 关键词项 */
+/** Keyword item */
 export interface KeywordItem {
   word: string;
   count: number;
 }
 
-/** 完整分析结果 */
+/** Complete analysis result */
 export interface AnalysisResult {
   analysis_id: number;
   bv: string;
@@ -46,7 +56,9 @@ export interface AnalysisResult {
   video_play: number;
   total_comments: number;
   created_at: string | null;
+  mode: AnalysisMode;
   sentiment: { positive: number; negative: number; neutral: number };
+  sentiment_llm?: SentimentLLM;
   gender: { male: number; female: number; unknown: number };
   region: RegionItem[];
   heat: {
@@ -59,7 +71,7 @@ export interface AnalysisResult {
   comments: CommentData[];
 }
 
-/** 历史分析项 */
+/** History analysis item */
 export interface HistoryItem {
   id: number;
   bv: string;
@@ -70,7 +82,7 @@ export interface HistoryItem {
   created_at: string | null;
 }
 
-/** 分析进度 */
+/** Analysis progress */
 export interface StatusResponse {
   analysis_id: number;
   status: AnalysisStatus;
@@ -78,5 +90,22 @@ export interface StatusResponse {
   error_msg: string | null;
 }
 
+/** Video info response */
+export interface VideoInfoResponse {
+  bv: string; avid: number; title: string; cover: string; play: number; comment_count: number;
+}
 
-export interface VideoInfoResponse { bv: string; avid: number; title: string; cover: string; play: number; comment_count: number; }
+/** Settings response */
+export interface SettingsResponse {
+  has_api_key: boolean;
+  api_key_preview: string;
+  analysis_mode: AnalysisMode;
+}
+
+/** Filter state */
+export interface FilterState {
+  gender: "all" | "male" | "female";
+  dateFrom: string;
+  dateTo: string;
+  region: string;
+}

@@ -1,4 +1,4 @@
-﻿import type { AnalysisResult, HistoryItem, StatusResponse, VideoInfoResponse } from '../types';
+import type { AnalysisResult, HistoryItem, StatusResponse, VideoInfoResponse, SettingsResponse, AnalysisMode } from '../types';
 
 const BASE = '/api';
 
@@ -6,16 +6,16 @@ async function req<T>(url: string, options?: RequestInit): Promise<T> {
   const res = await fetch(BASE + url, options);
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || '请求失败');
+    throw new Error(err.detail || 'Request failed');
   }
   return res.json();
 }
 
-export function startAnalysis(bv: string, maxComments = 100, requestDelay = 3.0) {
+export function startAnalysis(bv: string, maxComments = 100, requestDelay = 3.0, mode: AnalysisMode = 'nlp') {
   return req<{ analysis_id: number; status: string }>('/analyze', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ bv, max_comments: maxComments, request_delay: requestDelay }),
+    body: JSON.stringify({ bv, max_comments: maxComments, request_delay: requestDelay, mode }),
   });
 }
 
@@ -37,11 +37,23 @@ export function getHistory(limit = 20) {
 
 export function deleteHistory(analysisId: number) {
   return fetch(BASE + '/history/' + analysisId, { method: 'DELETE' }).then(r => {
-    if (!r.ok) throw new Error('删除失败');
+    if (!r.ok) throw new Error('Delete failed');
     return r.json();
   });
 }
 
 export function getVideoInfo(bv: string) {
   return req<VideoInfoResponse>('/video/' + bv);
+}
+
+export function getSettings() {
+  return req<SettingsResponse>('/settings');
+}
+
+export function updateSettings(data: { api_key?: string; analysis_mode?: AnalysisMode }) {
+  return req<{ ok: boolean }>('/settings', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
 }

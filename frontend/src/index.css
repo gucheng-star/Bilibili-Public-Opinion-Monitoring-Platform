@@ -471,6 +471,9 @@ body {
 .kw-tag:hover { filter:brightness(1.2); }
 
 /* ---- 20. Scrollbar ---- */
+.history-scroll::-webkit-scrollbar { height:8px; }
+.history-scroll::-webkit-scrollbar-thumb { background:var(--scrollbar-thumb); border-radius:4px; }
+.history-scroll::-webkit-scrollbar-thumb:hover { background:var(--scrollbar-thumb-hover); }
 ::-webkit-scrollbar { width:6px; height:6px; }
 ::-webkit-scrollbar-track { background:transparent; }
 ::-webkit-scrollbar-thumb { background:var(--scrollbar-thumb); border-radius:3px; }

@@ -28,7 +28,7 @@ export default function ThemeToggle() {
     <button
       className="theme-toggle"
       onClick={() => setDark(!dark)}
-      title={dark ? 'Switch to light' : 'Switch to dark'}
+      title={dark ? '切换为浅色模式' : '切换为深色模式'}
     >
       {dark ? (
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
