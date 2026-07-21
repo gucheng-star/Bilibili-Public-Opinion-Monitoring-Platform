@@ -4,7 +4,7 @@ __pycache__/
 *.pyo
 *.egg-info/
 backend/venv/
-backend/data.db
+data.db
 
 # Frontend
 frontend/node_modules/
@@ -31,4 +31,3 @@ skills/
 # OS
 .DS_Store
 Thumbs.db
-PROJECT.md
