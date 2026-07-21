@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import ReactECharts from 'echarts-for-react';
 import { chartTooltip, chartTextColor } from '../utils';
 import type { SentimentLLM, AnalysisMode } from '../types';
+import DownloadChartButton from './DownloadChartButton';
 
 interface Props {
   positive: number; negative: number; neutral: number;
@@ -24,6 +25,7 @@ const LLM_LABELS: Record<string, string> = {
 
 export default function SentimentChart({ positive, negative, neutral, mode, llm, onModeChange }: Props) {
   const [type, setType] = useState<ChartType>('donut');
+  const chartRef = useRef<ReactECharts | null>(null);
   const tt = chartTooltip(); const tc = chartTextColor();
   const isLLM = mode === 'llm' && llm;
 
@@ -62,6 +64,7 @@ export default function SentimentChart({ positive, negative, neutral, mode, llm,
           情感分布{isLLM ? '（大模型八分类）' : '（NLP 三分类）'}
         </h3>
         <div className="flex items-center gap-2">
+          <DownloadChartButton echartRefs={chartRef} />
           <div className="segmented">
             <button className={type==='donut'?'active':''} onClick={toggle('donut')}>环形</button>
             <button className={type==='pie'?'active':''} onClick={toggle('pie')}>饼图</button>
@@ -79,7 +82,7 @@ export default function SentimentChart({ positive, negative, neutral, mode, llm,
           </select>
         </div>
       </div>
-      <ReactECharts option={option} style={{height:260}}/>
+      <ReactECharts ref={chartRef} option={option} style={{height:260}}/>
     </div>
   );
 }

@@ -3,6 +3,7 @@ import ReactECharts from 'echarts-for-react';
 import * as echarts from 'echarts';
 import type { RegionItem } from '../types';
 import { isDarkMode } from '../utils';
+import DownloadChartButton from './DownloadChartButton';
 
 interface Props { data: RegionItem[]; }
 
@@ -23,6 +24,7 @@ export default function RegionMap({ data }: Props) {
   const [dark, setDark] = useState(isDarkMode());
   const [mapLoaded, setMapLoaded] = useState(false);
   const renderKey = useRef(0);
+  const chartRef = useRef<ReactECharts | null>(null);
 
   useEffect(() => {
     fetch('/china.json').then(r=>r.json()).then(g=>{echarts.registerMap('china',g);setMapLoaded(true)}).catch(()=>setMapLoaded(false));
@@ -50,8 +52,8 @@ export default function RegionMap({ data }: Props) {
 
   if (!mapLoaded) {
     const sorted = [...data].sort((a,b)=>b.count-a.count);
-    return <div className="card"><h3 className="text-xs font-semibold text-secondary mb-2" style={{letterSpacing:'.05em'}}>地域分布</h3><ReactECharts key={'fallback-'+renderKey.current} option={{tooltip:{trigger:'axis',backgroundColor:dark?'#1A2030':'#FFF',borderColor:dark?'rgba(148,163,184,.12)':'rgba(0,0,0,.08)',textStyle:{color:dark?'#E2E8F0':'#1A1A2E',fontSize:12}},grid:{left:70,right:40,top:10,bottom:20},xAxis:{type:'value',axisLabel:{color:dark?'#94A3B8':'#6B7280'}},yAxis:{type:'category',data:sorted.map(d=>d.region),axisLabel:{color:dark?'#E2E8F0':'#1A1A2E',fontSize:12}},series:[{type:'bar',data:sorted.map(d=>d.count),barMaxWidth:36,itemStyle:{color:'#FB7299',borderRadius:[0,4,4,0]}}]}} style={{height:300}}/></div>;
+    return <div className="card"><div className="flex items-center justify-between mb-2"><h3 className="text-xs font-semibold text-secondary" style={{letterSpacing:'.05em'}}>地域分布</h3><DownloadChartButton echartRefs={chartRef} /></div><ReactECharts ref={chartRef} key={'fallback-'+renderKey.current} option={{tooltip:{trigger:'axis',backgroundColor:dark?'#1A2030':'#FFF',borderColor:dark?'rgba(148,163,184,.12)':'rgba(0,0,0,.08)',textStyle:{color:dark?'#E2E8F0':'#1A1A2E',fontSize:12}},grid:{left:70,right:40,top:10,bottom:20},xAxis:{type:'value',axisLabel:{color:dark?'#94A3B8':'#6B7280'}},yAxis:{type:'category',data:sorted.map(d=>d.region),axisLabel:{color:dark?'#E2E8F0':'#1A1A2E',fontSize:12}},series:[{type:'bar',data:sorted.map(d=>d.count),barMaxWidth:36,itemStyle:{color:'#FB7299',borderRadius:[0,4,4,0]}}]}} style={{height:300}}/></div>;
   }
 
-  return <div className="card"><h3 className="text-xs font-semibold text-secondary mb-2" style={{letterSpacing:'.05em'}}>地域分布 ({data.length} 个地区)</h3><ReactECharts key={'map-'+renderKey.current} option={option} style={{height:360}}/></div>;
+  return <div className="card"><div className="flex items-center justify-between mb-2"><h3 className="text-xs font-semibold text-secondary" style={{letterSpacing:'.05em'}}>地域分布 ({data.length} 个地区)</h3><DownloadChartButton echartRefs={chartRef} /></div><ReactECharts ref={chartRef} key={'map-'+renderKey.current} option={option} style={{height:360}}/></div>;
 }

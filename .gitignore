@@ -1,13 +1,34 @@
+# Python
 __pycache__/
 *.py[cod]
 *.pyo
+*.egg-info/
 backend/venv/
 backend/data.db
+
+# Frontend
 frontend/node_modules/
 frontend/dist/
+
+# Environment & Secrets
 .env
-*.egg-info/
+backend/auth.json
+backend/settings.json
+
+# IDE
 .idea/
 .vscode/
+
+# Logs
 *.log
-backend/auth.json
+
+# Agent / AI tooling (local only, not tracked)
+.agents/
+.codex/
+.claude/
+skills/
+
+# OS
+.DS_Store
+Thumbs.db
+PROJECT.md

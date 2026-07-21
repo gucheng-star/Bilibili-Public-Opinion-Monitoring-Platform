@@ -98,6 +98,93 @@ async def start_analysis(req: dict, background_tasks: BackgroundTasks):
     finally:
         db.close()
 
+@router.post('/reanalyze/{analysis_id}')
+async def reanalyze(analysis_id: int, background_tasks: BackgroundTasks):
+    """Re-analyze existing comments with LLM sentiment analysis.
+    Only works when current mode is 'nlp' and target mode is 'llm'.
+    Reuses stored comments, skips B站 fetching."""
+    db = SessionLocal()
+    try:
+        a = db.query(Analysis).filter_by(id=analysis_id).first()
+        if not a:
+            raise HTTPException(404, 'Analysis not found')
+        if a.status != 'done':
+            raise HTTPException(400, f'Analysis not complete (current: {a.status})')
+        if a.mode == 'llm':
+            raise HTTPException(400, 'Already in LLM mode, no need to re-analyze')
+
+        # Read API key
+        settings_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "settings.json")
+        api_key = ""
+        if os.path.exists(settings_path):
+            with open(settings_path, "r", encoding="utf-8") as sf:
+                settings = json.load(sf)
+            api_key = settings.get("api_key", "")
+        if not api_key:
+            raise HTTPException(400, 'API Key not configured')
+
+        a.status = 'analyzing'; a.mode = 'llm'; db.commit()
+
+        # Load existing comments
+        comments_data = [
+            {
+                'rpid': c.rpid, 'username': c.username, 'gender': c.gender,
+                'ip_location': c.ip_location, 'content': c.content, 'likes': c.likes,
+                'post_time': c.post_time,
+            }
+            for c in db.query(Comment).filter_by(analysis_id=analysis_id).all()
+        ]
+        if not comments_data:
+            a.status = 'error'; a.error_msg = 'No comments to re-analyze'; db.commit(); return
+
+        # Run LLM in background
+        background_tasks.add_task(_run_reanalyze, analysis_id, comments_data, api_key)
+        return {'analysis_id': analysis_id, 'status': 'analyzing', 'mode': 'llm'}
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        a2 = db.query(Analysis).filter_by(id=analysis_id).first()
+        if a2: a2.status = 'error'; a2.error_msg = str(e); db.commit()
+        raise HTTPException(500, str(e))
+    finally:
+        db.close()
+
+
+async def _run_reanalyze(analysis_id: int, comments_data: list[dict], api_key: str):
+    """Background task: re-analyze existing comments with LLM."""
+    db = SessionLocal()
+    try:
+        # Run LLM analysis
+        comments_analyzed = await batch_analyze_llm(comments_data, api_key)
+
+        # Remove old sentiment result
+        old_sr = db.query(SentimentResult).filter_by(analysis_id=analysis_id).first()
+        if old_sr: db.delete(old_sr)
+
+        # Update each comment's LLM label
+        label_map = {c['rpid']: c.get('sentiment_llm_label', '') for c in comments_analyzed}
+        for comment in db.query(Comment).filter_by(analysis_id=analysis_id).all():
+            if comment.rpid in label_map:
+                comment.sentiment_llm_label = label_map[comment.rpid]
+
+        # Save new sentiment result
+        s = summarize_sentiment_llm(comments_analyzed)
+        db.add(SentimentResult(analysis_id=analysis_id, positive_count=0, negative_count=0, neutral_count=0,
+            llm_joy=s['joy'], llm_anger=s['anger'], llm_sadness=s['sadness'],
+            llm_surprise=s['surprise'], llm_fear=s['fear'], llm_disgust=s['disgust'],
+            llm_anticipation=s['anticipation'], llm_trust=s['trust']))
+
+        db.query(Analysis).filter_by(id=analysis_id).update({'status': 'done', 'mode': 'llm'})
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        a = db.query(Analysis).filter_by(id=analysis_id).first()
+        if a: a.status = 'error'; a.error_msg = str(e); db.commit()
+    finally:
+        db.close()
+
+
 @router.get('/status/{analysis_id}')
 def get_status(analysis_id: int):
     db = SessionLocal()
@@ -106,6 +193,7 @@ def get_status(analysis_id: int):
         if not a: raise HTTPException(404, 'Not found')
         return {'analysis_id':a.id,'status':a.status,'total_comments':a.total_comments,'error_msg':a.error_msg}
     finally: db.close()
+
 
 @router.get('/results/{analysis_id}')
 def get_results(analysis_id: int):

@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import ReactECharts from 'echarts-for-react';
 import { chartTooltip, chartTextColor } from '../utils';
+import DownloadChartButton from './DownloadChartButton';
 
 interface Props { male: number; female: number; unknown: number; }
 
@@ -8,6 +9,7 @@ type ChartType = 'donut' | 'pie' | 'rose';
 
 export default function GenderChart({ male, female, unknown }: Props) {
   const [type, setType] = useState<ChartType>('donut');
+  const chartRef = useRef<ReactECharts | null>(null);
   const tt = chartTooltip(); const tc = chartTextColor();
   const radiusMap: Record<ChartType, [string,string]> = { donut:['50%','75%'], pie:['0%','72%'], rose:['20%','80%'] };
 
@@ -31,12 +33,15 @@ export default function GenderChart({ male, female, unknown }: Props) {
   return <div className="card">
     <div className="flex items-center justify-between mb-2">
       <h3 className="text-xs font-semibold text-secondary" style={{letterSpacing:'.05em'}}>性别分布</h3>
-      <div className="segmented">
-        <button className={type==='donut'?'active':''} onClick={toggle('donut')}>环形</button>
-        <button className={type==='pie'?'active':''} onClick={toggle('pie')}>饼图</button>
-        <button className={type==='rose'?'active':''} onClick={toggle('rose')}>玫瑰</button>
+      <div className="flex items-center gap-2">
+        <DownloadChartButton echartRefs={chartRef} />
+        <div className="segmented">
+          <button className={type==='donut'?'active':''} onClick={toggle('donut')}>环形</button>
+          <button className={type==='pie'?'active':''} onClick={toggle('pie')}>饼图</button>
+          <button className={type==='rose'?'active':''} onClick={toggle('rose')}>玫瑰</button>
+        </div>
       </div>
     </div>
-    <ReactECharts option={option} style={{height:260}}/>
+    <ReactECharts ref={chartRef} option={option} style={{height:260}}/>
   </div>;
 }

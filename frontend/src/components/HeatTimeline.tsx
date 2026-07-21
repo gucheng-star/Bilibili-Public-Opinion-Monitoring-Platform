@@ -1,11 +1,15 @@
-﻿import ReactECharts from 'echarts-for-react';
+﻿import { useRef } from 'react';
+import ReactECharts from 'echarts-for-react';
 import type { HeatPoint } from '../types';
 import { chartTooltip, chartTextColor } from '../utils';
+import DownloadChartButton from './DownloadChartButton';
 
 interface Props { timeline: HeatPoint[]; hourlyDistribution: {hour:number;count:number}[]; peakHour: string | null; peakCount: number; }
 
 export default function HeatTimeline({ timeline, hourlyDistribution, peakHour, peakCount }: Props) {
   const tt = chartTooltip(); const tc = chartTextColor();
+  const timeChartRef = useRef<ReactECharts | null>(null);
+  const hourChartRef = useRef<ReactECharts | null>(null);
   const timeOption = {
     tooltip: { trigger: 'axis', backgroundColor: tt.backgroundColor, borderColor: tt.borderColor, textStyle: tt.textStyle },
     xAxis: { type: 'category', data: timeline.map(p => p.time.slice(5, 16)), axisLabel: { rotate: 30, fontSize: 10, color: tc } },
@@ -21,11 +25,14 @@ export default function HeatTimeline({ timeline, hourlyDistribution, peakHour, p
     grid: { left: 50, right: 20, top: 10, bottom: 30 },
   };
   return <div className="card">
-    <h3 className="text-xs font-semibold text-secondary mb-2" style={{letterSpacing:'.05em'}}>
-      热度趋势 {peakHour && <span className="ml-2 text-xs text-muted" style={{fontWeight:400}}>峰值: {peakHour} ({peakCount} 条)</span>}
-    </h3>
-    <ReactECharts option={timeOption} style={{ height: 200 }} />
+    <div className="flex items-center justify-between mb-2">
+      <h3 className="text-xs font-semibold text-secondary" style={{letterSpacing:'.05em'}}>
+        热度趋势 {peakHour && <span className="ml-2 text-xs text-muted" style={{fontWeight:400}}>峰值: {peakHour} ({peakCount} 条)</span>}
+      </h3>
+      <DownloadChartButton echartRefs={[timeChartRef, hourChartRef]} label="下载" />
+    </div>
+    <ReactECharts ref={timeChartRef} option={timeOption} style={{ height: 200 }} />
     <h4 className="text-xs text-muted mt-3 mb-1">24小时分布</h4>
-    <ReactECharts option={hourOption} style={{ height: 160 }} />
+    <ReactECharts ref={hourChartRef} option={hourOption} style={{ height: 160 }} />
   </div>;
 }

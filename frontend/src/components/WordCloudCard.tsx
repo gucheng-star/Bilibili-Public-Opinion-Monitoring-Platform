@@ -1,8 +1,9 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef } from 'react';
 import 'echarts-wordcloud';
 import ReactECharts from 'echarts-for-react';
 import type { KeywordItem } from '../types';
 import { isDarkMode } from '../utils';
+import DownloadChartButton from './DownloadChartButton';
 
 interface Props {
   keywords: KeywordItem[];
@@ -12,6 +13,7 @@ interface Props {
 export default function WordCloudCard({ keywords, className }: Props) {
   const dark = isDarkMode();
   const [excluded, setExcluded] = useState<Set<string>>(new Set());
+  const chartRef = useRef<ReactECharts | null>(null);
 
   const activeKeywords = useMemo(
     () => keywords.filter(k => !excluded.has(k.word)).slice(0, 200),
@@ -67,13 +69,16 @@ export default function WordCloudCard({ keywords, className }: Props) {
 
   return (
     <div className={"card" + (className ? " " + className : "")}>
-      <h3 className="text-xs font-semibold text-secondary mb-2" style={{letterSpacing:'.05em'}}>{"\u8bcd\u4e91"}</h3>
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="text-xs font-semibold text-secondary" style={{letterSpacing:'.05em'}}>{"\u8bcd\u4e91"}</h3>
+        <DownloadChartButton echartRefs={chartRef} />
+      </div>
       <div style={{display:'flex',gap:'.75rem',minHeight:'320px'}}>
         <div style={{flex:'1 1 60%',minWidth:0}}>
           {activeKeywords.length === 0 ? (
             <div className="flex items-center justify-center h-full text-muted text-sm">{"\u5df2\u5168\u90e8\u6392\u9664"}</div>
           ) : (
-            <ReactECharts option={cloudOption} style={{height:'300px',width:'100%'}} />
+            <ReactECharts ref={chartRef} option={cloudOption} style={{height:'300px',width:'100%'}} />
           )}
         </div>
         <div style={{

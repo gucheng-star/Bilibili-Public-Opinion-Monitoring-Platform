@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 
 export default function ThemeToggle() {
   const [dark, setDark] = useState(() => {
@@ -24,10 +24,42 @@ export default function ThemeToggle() {
     return () => mq.removeEventListener('change', handler);
   }, []);
 
+  const toggle = () => {
+    const goingDark = !dark;
+    const cx = window.innerWidth / 2;
+    const cy = window.innerHeight / 2;
+    const maxR = Math.hypot(cx, cy);
+
+    // 1. 先切换 data-theme（页面立刻变为新主题）
+    setDark(goingDark);
+
+    // 2. 创建 overlay，颜色 = 旧主题背景色
+    // 旧主题的颜色作为遮罩"被推开"
+    const oldBg = goingDark ? '#F6F3F0' : '#070B14';
+    const overlay = document.createElement('div');
+    overlay.style.cssText = `
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      pointer-events: none;
+      background: ${oldBg};
+      clip-path: circle(${maxR}px at ${cx}px ${cy}px);
+    `;
+    document.body.appendChild(overlay);
+
+    // 3. 下一帧启动动画：从全屏圆形收缩到圆心点
+    requestAnimationFrame(() => {
+      overlay.style.transition = 'clip-path .5s cubic-bezier(.4,0,.2,1)';
+      overlay.style.clipPath = `circle(0 at ${cx}px ${cy}px)`;
+    });
+
+    overlay.addEventListener('transitionend', () => overlay.remove());
+  };
+
   return (
     <button
       className="theme-toggle"
-      onClick={() => setDark(!dark)}
+      onClick={toggle}
       title={dark ? '切换为浅色模式' : '切换为深色模式'}
     >
       {dark ? (

@@ -1,4 +1,4 @@
-﻿import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import type { CommentData, SentimentLabel } from '../types';
 
 interface Props { comments: CommentData[]; }
@@ -15,6 +15,63 @@ export default function CommentTable({ comments }: Props) {
   const [page, setPage] = useState(1);
   const pageSize = 30;
 
+  const tipEl = useRef<HTMLDivElement|null>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
+  const rafId = useRef(0);
+  const hideTimer = useRef(0);
+
+  // Create persistent tooltip DOM element (portal style, command-style updates)
+  useEffect(() => {
+    const el = document.createElement('div');
+    el.style.cssText = 'position:fixed;z-index:200;max-width:30rem;padding:.625rem .875rem;background:var(--bg-elevated);border:1px solid var(--border-strong);border-radius:.5rem;box-shadow:0 8px 24px rgba(0,0,0,.18);font-size:.8125rem;line-height:1.6;pointer-events:none;white-space:pre-wrap;word-break:break-word;opacity:0;transform:translate(-50%,-100%);will-change:transform,opacity;transition:opacity .15s ease;display:none;';
+    tipEl.current = el;
+    document.body.appendChild(el);
+    return () => { document.body.removeChild(el); cancelAnimationFrame(rafId.current); };
+  }, []);
+
+  // Command-style position update (no React state, no re-render)
+  const moveTip = useCallback((x: number, y: number) => {
+    if (!tipEl.current) return;
+    cancelAnimationFrame(rafId.current);
+    rafId.current = requestAnimationFrame(() => {
+      const el = tipEl.current!;
+      // Confine: clamp to viewport
+      const vw = window.innerWidth, vh = window.innerHeight;
+      const rect = el.getBoundingClientRect();
+      const finalX = Math.min(Math.max(x, rect.width/2), vw - rect.width/2);
+      const finalY = Math.min(Math.max(y - 8, rect.height), vh - 4);
+      el.style.left = finalX + 'px';
+      el.style.top = finalY + 'px';
+    });
+  }, []);
+
+  // Show tip (command-style: set content, show, start transition)
+  const showTip = useCallback((text: string, x: number, y: number) => {
+    clearTimeout(hideTimer.current);
+    const el = tipEl.current; if (!el) return;
+    el.textContent = text;
+    if (el.style.display === 'none') { el.style.display = ''; /* trigger reflow */ void el.offsetHeight; }
+    el.style.opacity = '1';
+    moveTip(x, y);
+  }, [moveTip]);
+
+  // Hide tip with delay (matches ECharts hideLater pattern)
+  const hideTip = useCallback(() => {
+    clearTimeout(hideTimer.current);
+    hideTimer.current = window.setTimeout(() => {
+      const el = tipEl.current; if (!el) return;
+      el.style.opacity = '0';
+      // Delay display:none until transition completes
+      setTimeout(() => { if (el.style.opacity === '0') el.style.display = 'none'; }, 160);
+    }, 80);
+  }, []);
+
+  const onCardMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (tipEl.current?.style.display !== 'none') {
+      moveTip(e.clientX, e.clientY);
+    }
+  }, [moveTip]);
+
   const filtered = useMemo(() => {
     let list = [...comments];
     if (filter !== 'all') list = list.filter(c => c.sentiment_label === filter);
@@ -25,7 +82,7 @@ export default function CommentTable({ comments }: Props) {
   const pages = Math.ceil(filtered.length/pageSize);
   const paged = filtered.slice((page-1)*pageSize, page*pageSize);
 
-  return <div className="card">
+  return <div className="card" ref={cardRef} onMouseMove={onCardMove}>
     <div className="flex items-center justify-between mb-3">
       <h3 className="text-xs font-semibold text-secondary" style={{letterSpacing:'.05em'}}>评论列表 ({filtered.length})</h3>
       <div className="flex items-center gap-2">
@@ -38,27 +95,29 @@ export default function CommentTable({ comments }: Props) {
       </div>
     </div>
     <div className="overflow-x-auto">
-      <table style={{fontSize:'.8125rem'}}>
+      <table style={{fontSize:'.8125rem',width:'100%'}}>
         <thead>
           <tr style={{borderBottom:'1px solid var(--border)'}}>
-            <th style={{padding:'.5rem .5rem .5rem 0',textAlign:'left',fontWeight:500,color:'var(--text-muted)',fontSize:'.6875rem',letterSpacing:'.05em'}}>用户</th>
-            <th style={{padding:'.5rem',textAlign:'left',fontWeight:500,color:'var(--text-muted)',fontSize:'.6875rem',letterSpacing:'.05em'}}>IP属地</th>
+            <th style={{padding:'.5rem',textAlign:'left',fontWeight:500,color:'var(--text-muted)',fontSize:'.6875rem',letterSpacing:'.05em',width:'12%',minWidth:'72px'}}>用户</th>
+            <th style={{padding:'.5rem',textAlign:'left',fontWeight:500,color:'var(--text-muted)',fontSize:'.6875rem',letterSpacing:'.05em',width:'10%',minWidth:'60px'}}>IP属地</th>
             <th style={{padding:'.5rem',textAlign:'left',fontWeight:500,color:'var(--text-muted)',fontSize:'.6875rem',letterSpacing:'.05em'}}>内容</th>
-            <th style={{padding:'.5rem',textAlign:'center',fontWeight:500,color:'var(--text-muted)',fontSize:'.6875rem',letterSpacing:'.05em'}}>点赞</th>
-            <th style={{padding:'.5rem',textAlign:'center',fontWeight:500,color:'var(--text-muted)',fontSize:'.6875rem',letterSpacing:'.05em'}}>情感</th>
-            <th style={{padding:'.5rem .5rem .5rem 0',textAlign:'left',fontWeight:500,color:'var(--text-muted)',fontSize:'.6875rem',letterSpacing:'.05em'}}>时间</th>
+            <th style={{padding:'.5rem',textAlign:'center',fontWeight:500,color:'var(--text-muted)',fontSize:'.6875rem',letterSpacing:'.05em',width:'7%',minWidth:'50px'}}>点赞</th>
+            <th style={{padding:'.5rem',textAlign:'center',fontWeight:500,color:'var(--text-muted)',fontSize:'.6875rem',letterSpacing:'.05em',width:'9%',minWidth:'56px'}}>情感</th>
+            <th style={{padding:'.5rem',textAlign:'left',fontWeight:500,color:'var(--text-muted)',fontSize:'.6875rem',letterSpacing:'.05em',width:'12%',minWidth:'90px'}}>时间</th>
           </tr>
         </thead>
         <tbody>
           {paged.map(c => {
             const t = TAG[c.sentiment_label] || TAG.neutral;
             return <tr key={c.id} style={{borderBottom:'1px solid var(--border)'}} className="transition-colors">
-              <td style={{padding:'.5rem .5rem .5rem 0',color:'var(--text-primary)',maxWidth:'96px'}} className="truncate">{c.username}</td>
+              <td style={{padding:'.5rem',color:'var(--text-primary)'}} className="truncate" title={c.username}>{c.username}</td>
               <td style={{padding:'.5rem',color:'var(--text-muted)',fontSize:'.6875rem'}}>{c.ip_location||'-'}</td>
-              <td style={{padding:'.5rem',color:'var(--text-secondary)',maxWidth:'280px'}} className="truncate">{c.content}</td>
+              <td style={{padding:'.5rem',color:'var(--text-secondary)',cursor:'pointer'}} className="truncate"
+                onMouseEnter={e=>{showTip(c.content,e.clientX,e.clientY);}}
+                onMouseLeave={hideTip}>{c.content}</td>
               <td style={{padding:'.5rem',textAlign:'center',color:'var(--text-secondary)',fontSize:'.8125rem'}}>{c.likes}</td>
               <td style={{padding:'.5rem',textAlign:'center'}}><span style={{fontSize:'.6875rem',padding:'.125rem .375rem',borderRadius:'.25rem',background:t.bg,color:t.color}}>{t.label}</span></td>
-              <td style={{padding:'.5rem .5rem .5rem 0',color:'var(--text-muted)',fontSize:'.6875rem'}}>{c.post_time?new Date(c.post_time).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}):'-'}</td>
+              <td style={{padding:'.5rem',color:'var(--text-muted)',fontSize:'.6875rem'}}>{c.post_time?new Date(c.post_time).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}):'-'}</td>
             </tr>;
           })}
         </tbody>

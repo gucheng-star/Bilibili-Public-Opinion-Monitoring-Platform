@@ -57,3 +57,7 @@ export function updateSettings(data: { api_key?: string; analysis_mode?: Analysi
     body: JSON.stringify(data),
   });
 }
+
+export function reanalyze(analysisId: number) {
+  return req<{ analysis_id: number; status: string }>('/reanalyze/' + analysisId, { method: 'POST' });
+}
