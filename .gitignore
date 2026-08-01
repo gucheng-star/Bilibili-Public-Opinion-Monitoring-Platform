@@ -27,8 +27,8 @@ backend/settings.json
 .codex/
 .claude/
 skills/
+PROJECT.md
 
 # OS
 .DS_Store
 Thumbs.db
-PROJECT.md
