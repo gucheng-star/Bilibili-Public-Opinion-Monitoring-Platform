@@ -1,7 +1,9 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
-import type { CommentData, SentimentLabel } from '../types';
+import type { AnalysisMode, CommentData, SentimentLabel, SentimentLLM } from '../types';
 
-interface Props { comments: CommentData[]; }
+interface Props { comments: CommentData[]; mode: AnalysisMode; }
+
+type LlmSentimentLabel = keyof SentimentLLM;
 
 const TAG: Record<SentimentLabel, { label: string; bg: string; color: string }> = {
   positive: { label: '正面', bg: 'var(--green-soft)', color: 'var(--green)' },
@@ -9,8 +11,20 @@ const TAG: Record<SentimentLabel, { label: string; bg: string; color: string }> 
   neutral: { label: '中性', bg: 'rgba(148,163,184,.06)', color: 'var(--text-muted)' },
 };
 
-export default function CommentTable({ comments }: Props) {
-  const [filter, setFilter] = useState<SentimentLabel|'all'>('all');
+const LLM_TAG: Record<LlmSentimentLabel, { label: string; bg: string; color: string }> = {
+  joy: { label: '喜悦', bg: 'rgba(251,191,36,.14)', color: '#B45309' },
+  anger: { label: '愤怒', bg: 'var(--red-soft)', color: 'var(--red)' },
+  sadness: { label: '悲伤', bg: 'rgba(99,102,241,.12)', color: '#4F46E5' },
+  surprise: { label: '惊讶', bg: 'rgba(249,115,22,.12)', color: '#C2410C' },
+  fear: { label: '恐惧', bg: 'rgba(139,92,246,.12)', color: '#7C3AED' },
+  disgust: { label: '厌恶', bg: 'rgba(132,204,22,.14)', color: '#4D7C0F' },
+  anticipation: { label: '期待', bg: 'rgba(6,182,212,.12)', color: '#0E7490' },
+  trust: { label: '信任', bg: 'var(--green-soft)', color: 'var(--green)' },
+};
+
+const UNCLASSIFIED_TAG = { label: '未分类', bg: 'rgba(148,163,184,.06)', color: 'var(--text-muted)' };
+
+export default function CommentTable({ comments, mode }: Props) {
   const [sortBy, setSortBy] = useState<'time'|'likes'>('time');
   const [page, setPage] = useState(1);
   const pageSize = 30;
@@ -19,6 +33,8 @@ export default function CommentTable({ comments }: Props) {
   const cardRef = useRef<HTMLDivElement>(null);
   const rafId = useRef(0);
   const hideTimer = useRef(0);
+
+  useEffect(() => { setPage(1); }, [mode, comments]);
 
   // Create persistent tooltip DOM element (portal style, command-style updates)
   useEffect(() => {
@@ -72,23 +88,19 @@ export default function CommentTable({ comments }: Props) {
     }
   }, [moveTip]);
 
-  const filtered = useMemo(() => {
+  const sorted = useMemo(() => {
     let list = [...comments];
-    if (filter !== 'all') list = list.filter(c => c.sentiment_label === filter);
     list.sort((a,b) => sortBy==='likes' ? b.likes-a.likes : new Date(b.post_time||0).getTime()-new Date(a.post_time||0).getTime());
     return list;
-  }, [comments, filter, sortBy]);
+  }, [comments, sortBy]);
 
-  const pages = Math.ceil(filtered.length/pageSize);
-  const paged = filtered.slice((page-1)*pageSize, page*pageSize);
+  const pages = Math.ceil(sorted.length/pageSize);
+  const paged = sorted.slice((page-1)*pageSize, page*pageSize);
 
   return <div className="card" ref={cardRef} onMouseMove={onCardMove}>
     <div className="flex items-center justify-between mb-3">
-      <h3 className="text-xs font-semibold text-secondary" style={{letterSpacing:'.05em'}}>评论列表 ({filtered.length})</h3>
+      <h3 className="text-xs font-semibold text-secondary" style={{letterSpacing:'.05em'}}>评论列表 ({sorted.length})</h3>
       <div className="flex items-center gap-2">
-        <select value={filter} onChange={e=>{setFilter(e.target.value as any);setPage(1)}} className="select-sm">
-          <option value="all">全部</option><option value="positive">正面</option><option value="neutral">中性</option><option value="negative">负面</option>
-        </select>
         <select value={sortBy} onChange={e=>setSortBy(e.target.value as any)} className="select-sm">
           <option value="time">按时间</option><option value="likes">按点赞</option>
         </select>
@@ -108,7 +120,9 @@ export default function CommentTable({ comments }: Props) {
         </thead>
         <tbody>
           {paged.map(c => {
-            const t = TAG[c.sentiment_label] || TAG.neutral;
+            const t = mode === 'llm'
+              ? LLM_TAG[c.sentiment_llm_label as LlmSentimentLabel] || UNCLASSIFIED_TAG
+              : TAG[c.sentiment_label] || TAG.neutral;
             return <tr key={c.id} style={{borderBottom:'1px solid var(--border)'}} className="transition-colors">
               <td style={{padding:'.5rem',color:'var(--text-primary)'}} className="truncate" title={c.username}>{c.username}</td>
               <td style={{padding:'.5rem',color:'var(--text-muted)',fontSize:'.6875rem'}}>{c.ip_location||'-'}</td>

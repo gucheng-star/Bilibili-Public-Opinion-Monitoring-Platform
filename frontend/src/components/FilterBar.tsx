@@ -1,18 +1,32 @@
 import { useState, useEffect } from 'react';
-import type { FilterState } from '../types';
+import type { AnalysisMode, FilterState } from '../types';
 
 interface Props {
   filters: FilterState;
   onApply: (f: FilterState) => void;
   availableRegions: string[];
+  mode: AnalysisMode;
 }
 
-export default function FilterBar({ filters, onApply, availableRegions }: Props) {
+const NLP_SENTIMENTS = [
+  ['positive', '正面'], ['neutral', '中性'], ['negative', '负面'],
+] as const;
+const LLM_SENTIMENTS = [
+  ['joy', '喜悦'], ['anger', '愤怒'], ['sadness', '悲伤'], ['surprise', '惊讶'],
+  ['fear', '恐惧'], ['disgust', '厌恶'], ['anticipation', '期待'], ['trust', '信任'],
+] as const;
+
+export default function FilterBar({ filters, onApply, availableRegions, mode }: Props) {
   const [draft, setDraft] = useState<FilterState>(filters);
   useEffect(() => { setDraft(filters); }, [filters]);
 
   const update = (patch: Partial<FilterState>) => setDraft(prev => ({ ...prev, ...patch }));
-  const changed = draft.gender !== filters.gender || draft.dateFrom !== filters.dateFrom || draft.dateTo !== filters.dateTo || draft.region !== filters.region;
+  const changed = draft.gender !== filters.gender || draft.dateFrom !== filters.dateFrom
+    || draft.dateTo !== filters.dateTo || draft.region !== filters.region
+    || draft.sentiment !== filters.sentiment;
+  const hasActiveFilter = filters.gender !== 'all' || Boolean(filters.dateFrom || filters.dateTo || filters.region)
+    || filters.sentiment !== 'all';
+  const sentimentOptions = mode === 'llm' ? LLM_SENTIMENTS : NLP_SENTIMENTS;
 
   return (
     <div style={{
@@ -53,6 +67,13 @@ export default function FilterBar({ filters, onApply, availableRegions }: Props)
         {availableRegions.map(r => <option key={r} value={r}>{r}</option>)}
       </select>
 
+      <select value={draft.sentiment}
+        onChange={e => update({ sentiment: e.target.value as FilterState['sentiment'] })}
+        className="select-sm" aria-label="情绪筛选">
+        <option value="all">全部情绪</option>
+        {sentimentOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+      </select>
+
       <button onClick={() => onApply(draft)}
         disabled={!changed}
         style={{
@@ -65,8 +86,8 @@ export default function FilterBar({ filters, onApply, availableRegions }: Props)
         应用筛选
       </button>
 
-      {changed && (
-        <button onClick={() => onApply({ gender: 'all', dateFrom: '', dateTo: '', region: '' })}
+      {(changed || hasActiveFilter) && (
+        <button onClick={() => onApply({ gender: 'all', dateFrom: '', dateTo: '', region: '', sentiment: 'all' })}
           style={{
             padding: '.25rem .5rem', fontSize: '.6875rem', color: 'var(--text-muted)',
             background: 'transparent', border: '1px solid var(--border)', borderRadius: '.375rem', cursor: 'pointer',

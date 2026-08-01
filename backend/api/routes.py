@@ -1,6 +1,4 @@
 import httpx
-import json
-import os
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from sqlalchemy import desc
 from models.database import SessionLocal, Analysis, Comment, SentimentResult, init_db
@@ -10,6 +8,7 @@ from services.sentiment_llm import batch_analyze_llm, summarize_sentiment_llm
 from services.wordcloud_gen import generate_wordcloud, get_top_keywords
 from services.region import analyze_region
 from services.heat import analyze_heat
+from services.settings_store import get_task_config
 
 router = APIRouter(prefix='/api')
 
@@ -34,16 +33,10 @@ async def _run_analysis(analysis_id: int, bv: str, avid: int, max_comments: int 
         analysis.status = 'analyzing'; analysis.total_comments = len(comments_raw); db.commit()
 
         if mode == "llm":
-            settings_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "settings.json")
-            if os.path.exists(settings_path):
-                with open(settings_path, "r", encoding="utf-8") as sf:
-                    settings = json.load(sf)
-                api_key = settings.get("api_key", "")
-            else:
-                api_key = ""
-            if not api_key:
+            llm_config = get_task_config("sentiment")
+            if not llm_config.get("api_key"):
                 analysis.status = 'error'; analysis.error_msg = 'API Key not configured'; db.commit(); return
-            comments_analyzed = await batch_analyze_llm(comments_raw, api_key)
+            comments_analyzed = await batch_analyze_llm(comments_raw, llm_config)
             for c in comments_analyzed:
                 db.add(Comment(analysis_id=analysis_id, rpid=c['rpid'], username=c['username'],
                     gender=c['gender'], ip_location=c['ip_location'], content=c['content'],
@@ -113,14 +106,8 @@ async def reanalyze(analysis_id: int, background_tasks: BackgroundTasks):
         if a.mode == 'llm':
             raise HTTPException(400, 'Already in LLM mode, no need to re-analyze')
 
-        # Read API key
-        settings_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "settings.json")
-        api_key = ""
-        if os.path.exists(settings_path):
-            with open(settings_path, "r", encoding="utf-8") as sf:
-                settings = json.load(sf)
-            api_key = settings.get("api_key", "")
-        if not api_key:
+        llm_config = get_task_config("sentiment")
+        if not llm_config.get("api_key"):
             raise HTTPException(400, 'API Key not configured')
 
         a.status = 'analyzing'; a.mode = 'llm'; db.commit()
@@ -138,7 +125,7 @@ async def reanalyze(analysis_id: int, background_tasks: BackgroundTasks):
             a.status = 'error'; a.error_msg = 'No comments to re-analyze'; db.commit(); return
 
         # Run LLM in background
-        background_tasks.add_task(_run_reanalyze, analysis_id, comments_data, api_key)
+        background_tasks.add_task(_run_reanalyze, analysis_id, comments_data, llm_config)
         return {'analysis_id': analysis_id, 'status': 'analyzing', 'mode': 'llm'}
     except HTTPException:
         raise
@@ -151,12 +138,12 @@ async def reanalyze(analysis_id: int, background_tasks: BackgroundTasks):
         db.close()
 
 
-async def _run_reanalyze(analysis_id: int, comments_data: list[dict], api_key: str):
+async def _run_reanalyze(analysis_id: int, comments_data: list[dict], llm_config: dict[str, str]):
     """Background task: re-analyze existing comments with LLM."""
     db = SessionLocal()
     try:
         # Run LLM analysis
-        comments_analyzed = await batch_analyze_llm(comments_data, api_key)
+        comments_analyzed = await batch_analyze_llm(comments_data, llm_config)
 
         # Remove old sentiment result
         old_sr = db.query(SentimentResult).filter_by(analysis_id=analysis_id).first()

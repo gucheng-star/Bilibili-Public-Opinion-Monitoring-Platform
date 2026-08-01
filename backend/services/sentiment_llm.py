@@ -1,19 +1,17 @@
-"""LLM sentiment analysis service using Alibaba Bailian Qwen (OpenAI-compatible)
+"""LLM sentiment analysis service using a configured OpenAI-compatible provider.
 
 Plutchik's 8 emotion categories: joy, anger, sadness, surprise, fear, disgust, anticipation, trust
 """
 
-import json
 import asyncio
-import httpx
+import json
 
-BAILIAN_BASE = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-BAILIAN_MODEL = "qwen-plus"  # 升级到 plus：推理能力更强，成本几乎无感
-
-# 模型回退策略：plus 不可用时自动降级到 turbo
-BAILIAN_FALLBACK_MODEL = "qwen-turbo"
+from services.llm_client import chat_completion_json
 
 EIGHT_LABELS = ["joy", "anger", "sadness", "surprise", "fear", "disgust", "anticipation", "trust"]
+LLM_BATCH_SIZE = 5
+LLM_BATCH_CONCURRENCY = 3
+LLM_BATCH_RETRIES = 2
 
 # Plutchik 八情绪中文定义（帮助模型理解分类边界）
 EMOTION_DESCRIPTIONS = """
@@ -70,89 +68,95 @@ def _build_few_shot_messages():
     return messages
 
 
-async def _call_llm(messages: list[dict], api_key: str, temperature: float = 0.1) -> dict | None:
-    """调用百炼 API，自动尝试 plus → turbo 降级"""
-    models_to_try = [BAILIAN_MODEL, BAILIAN_FALLBACK_MODEL] if BAILIAN_MODEL != BAILIAN_FALLBACK_MODEL else [BAILIAN_MODEL]
-
-    for model in models_to_try:
-        payload = {
-            "model": model,
-            "messages": messages,
-            "temperature": temperature,
-            "max_tokens": 80,
-        }
-        try:
-            async with httpx.AsyncClient(timeout=30) as client:
-                resp = await client.post(
-                    f"{BAILIAN_BASE}/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json=payload,
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                content = data["choices"][0]["message"]["content"].strip()
-                # 尝试解析 JSON，可能被 markdown 代码块包裹
-                if content.startswith("```"):
-                    content = content.split("\n", 1)[1]
-                    if content.endswith("```"):
-                        content = content[:-3]
-                    content = content.strip()
-                    # 去掉可能的 json 语言标识
-                    if content.startswith("json"):
-                        content = content[4:].strip()
-                parsed = json.loads(content)
-                return parsed
-        except Exception:
-            continue
-    return None
+async def _call_llm(
+    messages: list[dict],
+    config: dict[str, str],
+    temperature: float = 0.1,
+    max_tokens: int = 80,
+) -> dict:
+    """Call the configured provider and parse a JSON response."""
+    parsed, _ = await chat_completion_json(
+        config,
+        messages,
+        temperature=temperature,
+        max_tokens=max_tokens,
+    )
+    return parsed
 
 
-async def analyze_sentiment_llm(text: str, api_key: str) -> dict:
-    """调用百炼 API 分析单条评论。返回 {"label": str, "confidence": float, "reason": str}。"""
-    if not text or not text.strip():
-        return {"label": "neutral", "confidence": 0.5}
-
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
+async def _analyze_comment_batch(comments: list[dict], config: dict[str, str]) -> dict[str, str]:
+    """Classify one batch and return a validated map of comment ID to label."""
+    expected_ids = {str(comment["rpid"]) for comment in comments}
+    payload_comments = [
+        {"id": str(comment["rpid"]), "text": comment["content"].strip()}
+        for comment in comments
     ]
+    batch_instruction = (
+        "请独立分析以下每条评论。只返回一个合法 JSON 对象，格式必须为 "
+        '{"items":[{"id":"评论ID","label":"joy","confidence":0.0}]}。'
+        "items 必须恰好包含输入中的每个 id 一次；label 只能是 joy、anger、sadness、"
+        "surprise、fear、disgust、anticipation、trust；不要输出 reason 或任何额外文字。\n"
+        f"评论：{json.dumps(payload_comments, ensure_ascii=False)}"
+    )
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     messages.extend(_build_few_shot_messages())
-    messages.append({"role": "user", "content": text})
+    messages.append({"role": "user", "content": batch_instruction})
+    parsed = await _call_llm(messages, config, max_tokens=180)
 
-    try:
-        parsed = await _call_llm(messages, api_key)
-        if parsed is None:
-            return {"label": "neutral", "confidence": 0.5}
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("items"), list):
+        raise ValueError("LLM response does not contain an items array")
 
-        label = parsed.get("label", "neutral")
-        confidence = float(parsed.get("confidence", 0.5))
-        if label not in EIGHT_LABELS:
-            label = "neutral"
-        return {"label": label, "confidence": round(confidence, 4)}
-    except Exception:
-        return {"label": "neutral", "confidence": 0.5}
+    labels_by_id: dict[str, str] = {}
+    for item in parsed["items"]:
+        if not isinstance(item, dict):
+            raise ValueError("LLM response contains an invalid item")
+        comment_id = str(item.get("id", ""))
+        label = item.get("label")
+        if comment_id not in expected_ids or label not in EIGHT_LABELS or comment_id in labels_by_id:
+            raise ValueError("LLM response contains an invalid, duplicate, or unexpected item")
+        labels_by_id[comment_id] = label
+
+    if set(labels_by_id) != expected_ids:
+        raise ValueError("LLM response is missing one or more comment results")
+    return labels_by_id
 
 
-async def batch_analyze_llm(comments: list[dict], api_key: str, concurrency: int = 3) -> list[dict]:
-    """批量分析评论（并发控制，避免触发 API 限流）。
+async def _analyze_batch_with_retry(comments: list[dict], config: dict[str, str]) -> dict[str, str]:
+    """Retry only the failed batch so valid completed batches are preserved."""
+    last_error: Exception | None = None
+    for attempt in range(LLM_BATCH_RETRIES + 1):
+        try:
+            return await _analyze_comment_batch(comments, config)
+        except Exception as exc:
+            last_error = exc
+            if attempt < LLM_BATCH_RETRIES:
+                await asyncio.sleep(attempt + 1)
+    raise RuntimeError(f"LLM batch failed after {LLM_BATCH_RETRIES + 1} attempts: {last_error}")
 
-    Args:
-        comments: 评论列表，每条包含 content 字段
-        api_key: 百炼 API Key
-        concurrency: 最大并发数（默认3，防止限流）
-    """
+
+async def batch_analyze_llm(
+    comments: list[dict], config: dict[str, str], concurrency: int = LLM_BATCH_CONCURRENCY,
+) -> list[dict]:
+    """Classify five comments per request, with limited concurrent batches."""
+    comments_to_analyze = []
+    for comment in comments:
+        if comment.get("content", "").strip():
+            comments_to_analyze.append(comment)
+        else:
+            comment["sentiment_llm_label"] = "neutral"
+
+    batches = [comments_to_analyze[i:i + LLM_BATCH_SIZE] for i in range(0, len(comments_to_analyze), LLM_BATCH_SIZE)]
     semaphore = asyncio.Semaphore(concurrency)
 
-    async def _analyze_with_limit(c: dict) -> dict:
+    async def _run_batch(batch: list[dict]) -> dict[str, str]:
         async with semaphore:
-            llm_result = await analyze_sentiment_llm(c.get("content", ""), api_key)
-            c["sentiment_llm_label"] = llm_result["label"]
-            return c
+            return await _analyze_batch_with_retry(batch, config)
 
-    tasks = [_analyze_with_limit(c) for c in comments]
-    return await asyncio.gather(*tasks)
+    batch_results = await asyncio.gather(*[_run_batch(batch) for batch in batches])
+    labels_by_id = {comment_id: label for result in batch_results for comment_id, label in result.items()}
+    for comment in comments_to_analyze:
+        comment["sentiment_llm_label"] = labels_by_id[str(comment["rpid"])]
+    return comments
 
 
 def summarize_sentiment_llm(comments: list[dict]) -> dict:

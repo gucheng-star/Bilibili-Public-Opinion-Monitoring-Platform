@@ -29,7 +29,7 @@ export default function SentimentChart({ positive, negative, neutral, mode, llm,
   const tt = chartTooltip(); const tc = chartTextColor();
   const isLLM = mode === 'llm' && llm;
 
-  const radiusMap: Record<ChartType, [string, string]> = { donut:['50%','75%'], pie:['0%','72%'], rose:['20%','80%'] };
+  const radiusMap: Record<ChartType, [string, string]> = { donut:['45%','70%'], pie:['0%','68%'], rose:['20%','74%'] };
   const roseType = type === 'rose';
 
   const data = isLLM
@@ -43,15 +43,19 @@ export default function SentimentChart({ positive, negative, neutral, mode, llm,
         { value: negative, name: '负面', itemStyle: { color: '#F87171' } },
         { value: neutral, name: '中性', itemStyle: { color: '#94A3B8' } },
       ];
+  const nonZeroData = data.filter(item => item.value > 0);
+  const chartData = roseType
+    ? nonZeroData.sort((a, b) => b.value - a.value)
+    : nonZeroData;
 
   const option = {
     tooltip: { trigger:'item', formatter:'{b}: {c} ({d}%)', backgroundColor:tt.backgroundColor, borderColor:tt.borderColor, textStyle:tt.textStyle },
-    legend: { bottom:0, textStyle:{ color:tc, fontSize:11 } },
+    legend: { bottom:2, itemWidth:13, itemHeight:8, itemGap:7, textStyle:{ color:tc, fontSize:9 } },
     series: [{
-      type:'pie', radius:radiusMap[type], center:['50%','45%'], roseType:roseType?'radius':undefined,
+      type:'pie', radius:radiusMap[type], center:['50%','41%'], roseType:roseType?'radius':undefined,
       itemStyle: { borderRadius:8 },
       label: { color:tc, fontSize:11, formatter: '{b}\n{d}%' },
-      data,
+      data:chartData,
     }],
   };
 

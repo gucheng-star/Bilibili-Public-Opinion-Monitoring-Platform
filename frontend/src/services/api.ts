@@ -1,4 +1,15 @@
-import type { AnalysisResult, HistoryItem, StatusResponse, VideoInfoResponse, SettingsResponse, AnalysisMode } from '../types';
+import type {
+  AISummary,
+  AnalysisMode,
+  AnalysisResult,
+  FilterState,
+  HistoryItem,
+  LLMTask,
+  LLMTaskUpdate,
+  SettingsResponse,
+  StatusResponse,
+  VideoInfoResponse,
+} from '../types';
 
 const BASE = '/api';
 
@@ -50,11 +61,35 @@ export function getSettings() {
   return req<SettingsResponse>('/settings');
 }
 
-export function updateSettings(data: { api_key?: string; analysis_mode?: AnalysisMode }) {
-  return req<{ ok: boolean }>('/settings', {
+export function updateSettings(data: {
+  api_key?: string;
+  analysis_mode?: AnalysisMode;
+  llm?: Partial<Record<LLMTask, Partial<LLMTaskUpdate>>>;
+}) {
+  return req<SettingsResponse>('/settings', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
+  });
+}
+
+export function testLLM(task: LLMTask, config?: Partial<LLMTaskUpdate>) {
+  return req<{ ok: boolean; provider: string; model: string; latency_ms: number; message: string }>('/settings/test-llm', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ task, config }),
+  });
+}
+
+export function getSummaries(analysisId: number) {
+  return req<AISummary[]>('/summaries/' + analysisId);
+}
+
+export function generateSummary(analysisId: number, filters: FilterState, regenerate = false) {
+  return req<AISummary>('/summaries/' + analysisId, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ filters, regenerate }),
   });
 }
 

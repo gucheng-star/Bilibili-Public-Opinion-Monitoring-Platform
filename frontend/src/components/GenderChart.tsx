@@ -12,19 +12,25 @@ export default function GenderChart({ male, female, unknown }: Props) {
   const chartRef = useRef<ReactECharts | null>(null);
   const tt = chartTooltip(); const tc = chartTextColor();
   const radiusMap: Record<ChartType, [string,string]> = { donut:['50%','75%'], pie:['0%','72%'], rose:['20%','80%'] };
+  const roseType = type === 'rose';
+  const data = [
+    { value:male, name:'男', itemStyle:{ color:'#38BDF8' } },
+    { value:female, name:'女', itemStyle:{ color:'#FB7299' } },
+    { value:unknown, name:'保密', itemStyle:{ color:'#64748B' } },
+  ];
+  const nonZeroData = data.filter(item => item.value > 0);
+  const chartData = roseType
+    ? nonZeroData.sort((a, b) => b.value - a.value)
+    : nonZeroData;
 
   const option = {
     tooltip: { trigger:'item', formatter:'{b}: {c} ({d}%)', backgroundColor:tt.backgroundColor, borderColor:tt.borderColor, textStyle:tt.textStyle },
     legend: { bottom:0, textStyle:{ color:tc, fontSize:11 } },
     series: [{
-      type:'pie', radius:radiusMap[type], center:['50%','45%'], roseType:type==='rose'?'radius':undefined,
+      type:'pie', radius:radiusMap[type], center:['50%','45%'], roseType:roseType?'radius':undefined,
       itemStyle: { borderRadius:8 },
       label: { color:tc, fontSize:11, formatter:'{b}: {d}%' },
-      data: [
-        { value:male, name:'男', itemStyle:{ color:'#38BDF8' } },
-        { value:female, name:'女', itemStyle:{ color:'#FB7299' } },
-        { value:unknown, name:'保密', itemStyle:{ color:'#64748B' } },
-      ],
+      data: chartData,
     }],
   };
 

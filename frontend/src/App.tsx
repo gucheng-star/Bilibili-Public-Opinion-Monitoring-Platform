@@ -12,10 +12,22 @@ import ThemeToggle from './components/ThemeToggle';
 import LoginPage from './components/LoginPage';
 import FilterBar from './components/FilterBar';
 import SettingsPanel from './components/SettingsPanel';
+import AISummaryCard from './components/AISummaryCard';
 import { startAnalysis, getStatus, getResults, getSettings, updateSettings, reanalyze } from './services/api';
-import type { AnalysisResult, FilterState, AnalysisMode, KeywordItem } from './types';
+import type { AnalysisResult, FilterState, AnalysisMode, SentimentLLM } from './types';
 
 const PROVINCES = new Set(['北京','天津','上海','重庆','河北','山西','辽宁','吉林','黑龙江','江苏','浙江','安徽','福建','江西','山东','河南','湖北','湖南','广东','海南','四川','贵州','云南','陕西','甘肃','青海','台湾','内蒙古','广西','西藏','宁夏','新疆','香港','澳门']);
+const LLM_EMOTIONS: (keyof SentimentLLM)[] = ['joy', 'anger', 'sadness', 'surprise', 'fear', 'disgust', 'anticipation', 'trust'];
+const LLM_CONCURRENCY = 3;
+const LLM_SECONDS_PER_COMMENT = 1.29;
+
+function getLlmEstimateText(commentCount: number): string {
+  const totalSeconds = Math.ceil(Math.max(commentCount, 1) * LLM_SECONDS_PER_COMMENT);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  const duration = minutes > 0 ? `${minutes}分${seconds}秒` : `${seconds}秒`;
+  return `大模型分析中，预计约 ${duration}（每轮最多并发 ${LLM_CONCURRENCY} 个单评论请求）`;
+}
 
 function normalizeProvince(raw: string): string {
   const s = (raw || '').replace(/^IP属地[：:]/, '');
@@ -43,18 +55,21 @@ function App() {
   const [analysisMode, setAnalysisMode] = useState<AnalysisMode>('nlp');
   const [maxComments, setMaxComments] = useState(100);
   const [delay, setDelay] = useState(3.0);
-  const [filters, setFilters] = useState<FilterState>({ gender: 'all', dateFrom: '', dateTo: '', region: '' });
+  const [filters, setFilters] = useState<FilterState>({ gender: 'all', dateFrom: '', dateTo: '', region: '', sentiment: 'all' });
   const [hasApiKey, setHasApiKey] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [reanalyzeModal, setReanalyzeModal] = useState(false);
 
   useEffect(() => { fetch('/api/auth/status').then(r=>r.json()).then(d=>setLoggedIn(d.logged_in)).catch(()=>setLoggedIn(false)); }, []);
-  useEffect(() => { getSettings().then(s => { setHasApiKey(s.has_api_key); setAnalysisMode(s.analysis_mode || 'nlp'); }).catch(() => {}); }, []);
+  useEffect(() => { getSettings().then(s => { setHasApiKey(s.llm.sentiment.has_api_key); setAnalysisMode(s.analysis_mode || 'nlp'); }).catch(() => {}); }, []);
+  useEffect(() => {
+    setFilters(current => current.sentiment === 'all' ? current : { ...current, sentiment: 'all' });
+  }, [results?.mode]);
 
-  const showToast = (msg: string, kind: 'info' | 'warn' = 'info') => { setToast(msg); setTimeout(()=>setToast(null), 4000); };
+  const showToast = (msg: string) => { setToast(msg); setTimeout(()=>setToast(null), 4000); };
 
   const handleModeChange = async (mode: AnalysisMode) => {
-    if (mode === 'llm' && !hasApiKey) { showToast('请先在设置面板填入百炼 API Key 后再切换到大模型模式', 'warn'); return; }
+    if (mode === 'llm' && !hasApiKey) { showToast('请先在设置面板配置情绪分析模型的 API Key'); return; }
     // NLP → LLM：弹出确认弹窗
     if (mode === 'llm' && results && results.mode !== 'llm') { setReanalyzeModal(true); return; }
     setAnalysisMode(mode);
@@ -66,7 +81,7 @@ function App() {
     setReanalyzeModal(false);
     setLoading(true); setError(null); cancelRef.current = false;
     setProgress(0); setProgressMax(results?.total_comments || 100);
-    setStatusText('正在使用大模型重新分析评论...');
+    setStatusText(getLlmEstimateText(results?.total_comments || 100));
     setAnalysisMode('llm');
     try { await updateSettings({ analysis_mode: 'llm' }); } catch {}
     try {
@@ -84,7 +99,7 @@ function App() {
               return;
             }
             if (status.status === 'error') { setError(status.error_msg || '分析失败'); setLoading(false); showToast('分析失败'); return; }
-            if (status.status === 'analyzing') setStatusText('大模型分析中...');
+            if (status.status === 'analyzing') setStatusText(getLlmEstimateText(status.total_comments || results?.total_comments || 100));
           } catch { if (cancelRef.current) { setLoading(false); return; } }
         }
         setError('超时'); setLoading(false);
@@ -113,7 +128,9 @@ function App() {
             }
             if (status.status === 'error') { setError(status.error_msg || '分析失败'); setLoading(false); showToast('分析失败'); return; }
             if (status.status === 'fetching') setStatusText('抓取中 ('+status.total_comments+'/'+_maxComments+')');
-            else if (status.status === 'analyzing') setStatusText('分析中...');
+            else if (status.status === 'analyzing') {
+              setStatusText(mode === 'llm' ? getLlmEstimateText(status.total_comments || _maxComments) : '分析中...');
+            }
           } catch { if (cancelRef.current) { setLoading(false); return; } }
         }
         setError('超时'); setLoading(false);
@@ -124,7 +141,7 @@ function App() {
 
   const handleViewHistory = useCallback(async (id: number) => {
     setLoading(true); setError(null); setStatusText('加载中...');
-    try { const data = await getResults(id); setResults(data); setAnalysisId(id); setAnalysisMode(data.mode); setFilters({ gender:'all',dateFrom:'',dateTo:'',region:'' }); } catch (e:any) { setError(e.message); }
+    try { const data = await getResults(id); setResults(data); setAnalysisId(id); setAnalysisMode(data.mode); setFilters({ gender:'all',dateFrom:'',dateTo:'',region:'',sentiment:'all' }); } catch (e:any) { setError(e.message); }
     setLoading(false);
   }, []);
 
@@ -137,9 +154,14 @@ function App() {
     let comments = [...results.comments];
     if (filters.gender === 'male') comments = comments.filter(c => c.gender === '男');
     if (filters.gender === 'female') comments = comments.filter(c => c.gender === '女');
-    if (filters.dateFrom) { const ts = new Date(filters.dateFrom).getTime(); comments = comments.filter(c => c.post_time && new Date(c.post_time).getTime() >= ts); }
-    if (filters.dateTo) { const ts = new Date(filters.dateTo).getTime() + 86400000; comments = comments.filter(c => c.post_time && new Date(c.post_time).getTime() <= ts); }
-    if (filters.region) { comments = comments.filter(c => c.ip_location && (c.ip_location === filters.region || c.ip_location.startsWith(filters.region+' '))); }
+    if (filters.dateFrom) comments = comments.filter(c => c.post_time && c.post_time.slice(0, 10) >= filters.dateFrom);
+    if (filters.dateTo) comments = comments.filter(c => c.post_time && c.post_time.slice(0, 10) <= filters.dateTo);
+    if (filters.region) { comments = comments.filter(c => normalizeProvince(c.ip_location) === filters.region); }
+    if (filters.sentiment !== 'all') {
+      comments = results.mode === 'llm'
+        ? comments.filter(c => c.sentiment_llm_label === filters.sentiment)
+        : comments.filter(c => c.sentiment_label === filters.sentiment);
+    }
     return comments;
   }, [results, filters]);
 
@@ -149,10 +171,19 @@ function App() {
     neutral: filteredComments.filter(c => c.sentiment_label === 'neutral').length,
   }), [filteredComments]);
 
+  const filteredLlmSentiment = useMemo<SentimentLLM>(() => {
+    const counts: SentimentLLM = { joy:0, anger:0, sadness:0, surprise:0, fear:0, disgust:0, anticipation:0, trust:0 };
+    filteredComments.forEach(comment => {
+      const label = comment.sentiment_llm_label as keyof SentimentLLM;
+      if (LLM_EMOTIONS.includes(label)) counts[label]++;
+    });
+    return counts;
+  }, [filteredComments]);
+
   const filteredGender = useMemo(() => ({
     male: filteredComments.filter(c => c.gender === '男').length,
     female: filteredComments.filter(c => c.gender === '女').length,
-    unknown: filteredComments.filter(c => c.gender === '保密').length,
+    unknown: filteredComments.filter(c => c.gender !== '男' && c.gender !== '女').length,
   }), [filteredComments]);
 
   const filteredRegion = useMemo(() => {
@@ -168,14 +199,23 @@ function App() {
     const timeline = Array.from(counts.entries()).map(([t,c])=>({time:t,count:c})).sort((a,b)=>a.time.localeCompare(b.time));
     const hd = new Array(24).fill(0);
     filteredComments.forEach(c => { if (c.post_time) hd[new Date(c.post_time).getHours()]++; });
-    const pk = Math.max(...hd); const pi = hd.indexOf(pk);
+    const pk = filteredComments.length ? Math.max(...hd) : 0;
+    const pi = pk > 0 ? hd.indexOf(pk) : -1;
     return { timeline, peak_hour: pi>=0?String(pi).padStart(2,'0')+':00':null, peak_count: pk, hourly_distribution: hd.map((c,h)=>({hour:h,count:c})) };
   }, [filteredComments]);
 
   const filteredKeywords = useMemo(() => {
     if (!results) return [];
-    const txt = filteredComments.map(c=>c.content).join(' ');
-    return results.keywords.filter(k => txt.includes(k.word));
+    return results.keywords
+      .map(keyword => ({
+        ...keyword,
+        count: filteredComments.reduce(
+          (total, comment) => total + Math.max(0, comment.content.split(keyword.word).length - 1),
+          0,
+        ),
+      }))
+      .filter(keyword => keyword.count > 0)
+      .sort((left, right) => right.count - left.count);
   }, [results, filteredComments]);
 
   const availableRegions = useMemo(() => {
@@ -211,7 +251,8 @@ function App() {
       <div className="header-accent-line" />
       {showSettings && (
         <div className="max-w-7xl mx-auto px-4" style={{background:'var(--bg)'}}>
-          <SettingsPanel maxComments={maxComments} onMaxCommentsChange={setMaxComments} delay={delay} onDelayChange={setDelay} mode={analysisMode} onModeChange={handleModeChange} hasApiKey={hasApiKey} onApiKeySaved={() => getSettings().then(s => setHasApiKey(s.has_api_key))}/>
+          <SettingsPanel maxComments={maxComments} onMaxCommentsChange={setMaxComments} delay={delay} onDelayChange={setDelay}
+            onSettingsChanged={settings => setHasApiKey(settings.llm.sentiment.has_api_key)}/>
         </div>
       )}
       <main className="max-w-7xl mx-auto px-4 py-6">
@@ -256,10 +297,13 @@ function App() {
         )}
         {results && <>
           <VideoInfo title={results.video_title} play={results.video_play} totalComments={results.total_comments}/>
-          <FilterBar filters={filters} onApply={handleApplyFilters} availableRegions={availableRegions}/>
+          <FilterBar filters={filters} onApply={handleApplyFilters} availableRegions={availableRegions} mode={results.mode}/>
+          {analysisId && <div className="card-enter mt-4">
+            <AISummaryCard analysisId={analysisId} filters={filters} matchedCount={filteredComments.length} mode={results.mode}/>
+          </div>}
           <div className="grid grid-cols-1 md:grid-cols-2 md:grid-auto-rows-fr gap-4 mt-4">
             <div className="card-enter">
-              <SentimentChart positive={filteredSentiment.positive} negative={filteredSentiment.negative} neutral={filteredSentiment.neutral} mode={analysisMode} llm={results.sentiment_llm || null} onModeChange={handleModeChange}/>
+              <SentimentChart positive={filteredSentiment.positive} negative={filteredSentiment.negative} neutral={filteredSentiment.neutral} mode={analysisMode} llm={results.mode === 'llm' ? filteredLlmSentiment : null} onModeChange={handleModeChange}/>
             </div>
             <div className="card-enter"><GenderChart male={filteredGender.male} female={filteredGender.female} unknown={filteredGender.unknown}/></div>
           </div>
@@ -268,7 +312,7 @@ function App() {
           <div className="card-enter mt-4">
             <HeatTimeline timeline={filteredHeat.timeline} hourlyDistribution={filteredHeat.hourly_distribution} peakHour={filteredHeat.peak_hour} peakCount={filteredHeat.peak_count}/>
           </div>
-          <div className="card-enter mt-4"><CommentTable comments={filteredComments}/></div>
+          <div className="card-enter mt-4"><CommentTable comments={filteredComments} mode={results.mode}/></div>
         </>}
 
         {/* Reanalyze confirmation modal */}
@@ -280,7 +324,7 @@ function App() {
                 当前分析结果使用 NLP 三分类模式生成。是否使用已保存的 {results?.total_comments} 条评论数据，重新进行大模型八分类情感分析？
               </p>
               <p style={{fontSize:'.75rem',color:'var(--text-muted)',marginBottom:'1.25rem',padding:'.5rem',background:'var(--yellow-soft)',borderRadius:'.375rem'}}>
-                ⚠ 大模型分析将调用百炼 API，可能产生少量费用。
+                ⚠ 大模型分析将调用设置中选择的情绪分析供应商，可能产生少量费用。
               </p>
               <div style={{display:'flex',gap:'.75rem',justifyContent:'flex-end'}}>
                 <button onClick={()=>setReanalyzeModal(false)} style={{padding:'.5rem 1rem',fontSize:'.8125rem',color:'var(--text-secondary)',background:'transparent',border:'1px solid var(--border)',borderRadius:'.375rem',cursor:'pointer'}}>取消</button>

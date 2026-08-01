@@ -3,6 +3,8 @@ export type AnalysisStatus = "pending" | "fetching" | "analyzing" | "done" | "er
 
 /** Analysis mode */
 export type AnalysisMode = "nlp" | "llm";
+export type LLMProvider = "bailian" | "deepseek" | "custom";
+export type LLMTask = "sentiment" | "summary";
 
 /** Sentiment label (traditional 3-class) */
 export type SentimentLabel = "positive" | "negative" | "neutral";
@@ -100,6 +102,28 @@ export interface SettingsResponse {
   has_api_key: boolean;
   api_key_preview: string;
   analysis_mode: AnalysisMode;
+  llm: {
+    sentiment: LLMTaskSettings;
+    summary: LLMTaskSettings;
+  };
+}
+
+export interface LLMTaskSettings {
+  provider: LLMProvider;
+  base_url: string;
+  model: string;
+  fallback_model: string;
+  has_api_key: boolean;
+  api_key_preview: string;
+}
+
+export interface LLMTaskUpdate {
+  provider: LLMProvider;
+  base_url: string;
+  model: string;
+  fallback_model?: string;
+  api_key?: string;
+  clear_api_key?: boolean;
 }
 
 /** Filter state */
@@ -108,4 +132,20 @@ export interface FilterState {
   dateFrom: string;
   dateTo: string;
   region: string;
+  sentiment: "all" | SentimentLabel | keyof SentimentLLM;
+}
+
+export interface AISummary {
+  id: number;
+  analysis_id: number;
+  filters: FilterState;
+  filter_hash: string;
+  summary_text: string;
+  provider: LLMProvider;
+  model: string;
+  matched_count: number;
+  sampled_count: number;
+  created_at: string | null;
+  updated_at: string | null;
+  stale: boolean;
 }

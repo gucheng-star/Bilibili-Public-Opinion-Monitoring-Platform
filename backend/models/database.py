@@ -1,11 +1,14 @@
 """数据库模型"""
 
 from datetime import datetime
+import os
 
-from sqlalchemy import Column, Integer, String, Text, Float, DateTime, ForeignKey, create_engine
+from sqlalchemy import Column, Integer, String, Text, Float, DateTime, ForeignKey, UniqueConstraint, create_engine
 from sqlalchemy.orm import DeclarativeBase, relationship, sessionmaker
 
-DB_URL = "sqlite:///data.db"
+DEFAULT_DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data.db")
+DB_PATH = os.environ.get("BILI_DB_PATH", DEFAULT_DB_PATH)
+DB_URL = f"sqlite:///{DB_PATH}"
 engine = create_engine(DB_URL, echo=False)
 SessionLocal = sessionmaker(bind=engine)
 
@@ -31,6 +34,7 @@ class Analysis(Base):
 
     comments = relationship("Comment", back_populates="analysis", cascade="all, delete-orphan")
     sentiment = relationship("SentimentResult", back_populates="analysis", uselist=False, cascade="all, delete-orphan")
+    summaries = relationship("AISummary", back_populates="analysis", cascade="all, delete-orphan")
 
 
 class Comment(Base):
@@ -72,13 +76,32 @@ class SentimentResult(Base):
     analysis = relationship("Analysis", back_populates="sentiment")
 
 
+class AISummary(Base):
+    __tablename__ = "ai_summaries"
+    __table_args__ = (
+        UniqueConstraint("analysis_id", "filter_hash", name="uq_ai_summary_analysis_filter"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    analysis_id = Column(Integer, ForeignKey("analyses.id"), nullable=False, index=True)
+    filter_json = Column(Text, nullable=False)
+    filter_hash = Column(String(64), nullable=False)
+    input_hash = Column(String(64), nullable=False)
+    summary_text = Column(Text, nullable=False)
+    provider = Column(String(30), nullable=False)
+    model = Column(String(100), nullable=False)
+    matched_count = Column(Integer, default=0)
+    sampled_count = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+    analysis = relationship("Analysis", back_populates="summaries")
+
+
 def init_db():
     """Initialize database tables"""
-    import os
-    db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data.db")
-    eng = create_engine(f"sqlite:///{db_path}", echo=False)
-    Base.metadata.create_all(eng)
-    _migrate(eng)
+    Base.metadata.create_all(engine)
+    _migrate(engine)
 
 def _migrate(eng):
     """Add missing columns to existing tables (best-effort, errors logged)."""
