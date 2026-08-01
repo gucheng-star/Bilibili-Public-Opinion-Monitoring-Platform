@@ -203,14 +203,14 @@ export default function SettingsPanel({ maxComments, onMaxCommentsChange, delay,
           <label className="text-xs text-secondary mb-1" style={{ display: 'block' }}>抓取评论总数（每页 20 条，预计 {Math.ceil(maxComments / 20)} 次请求约 {Math.round(Math.ceil(maxComments / 20) * delay)} 秒）</label>
           <div className="flex items-center gap-2">
             <input type="range" min="1" max="2000" value={Math.min(maxComments, 2000)} onChange={event => onMaxCommentsChange(Number(event.target.value))} style={{ flex: 1, accentColor: 'var(--accent)' }} />
-            <input type="number" min="1" value={maxComments} onChange={event => onMaxCommentsChange(clamp(Number(event.target.value), 1, 99999))} className="settings-number-input" />
+            <input type="number" inputMode="numeric" min="1" value={maxComments} onChange={event => onMaxCommentsChange(clamp(Number(event.target.value), 1, 99999))} className="settings-number-input" />
           </div>
         </div>
         <div style={{ flex: '1 1 12rem' }}>
           <label className="text-xs text-secondary mb-1" style={{ display: 'block' }}>请求间隔</label>
           <div className="flex items-center gap-2">
             <input type="range" min="1" max="10" step="0.5" value={delay} onChange={event => onDelayChange(Number(event.target.value))} style={{ flex: 1, accentColor: 'var(--accent)' }} />
-            <input type="number" min="1" max="60" step="0.5" value={delay} onChange={event => onDelayChange(clamp(Number(event.target.value), 1, 60))} className="settings-number-input" />
+            <input type="number" inputMode="decimal" min="1" max="60" step="0.5" value={delay} onChange={event => onDelayChange(clamp(Number(event.target.value), 1, 60))} className="settings-number-input" />
             <span className="text-xs text-muted">秒</span>
           </div>
         </div>

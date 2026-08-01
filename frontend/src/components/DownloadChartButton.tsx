@@ -1,5 +1,5 @@
 import ReactECharts from 'echarts-for-react';
-import { useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
 
 interface Props {
   /** 单个或多个 ECharts 实例 ref */
@@ -11,7 +11,10 @@ interface Props {
  * 图表下载按钮：取 ECharts 实例的截图并触发下载为 PNG。
  */
 export default function DownloadChartButton({ echartRefs, label = '下载' }: Props) {
-  const refs = Array.isArray(echartRefs) ? echartRefs : [echartRefs];
+  const refs = useMemo(
+    () => (Array.isArray(echartRefs) ? echartRefs : [echartRefs]),
+    [echartRefs],
+  );
 
   const handleDownload = useCallback(async () => {
     const dataUrls: string[] = [];

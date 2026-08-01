@@ -3,19 +3,22 @@
 /* ---- 1. CSS Custom Properties (Design Tokens) ---- */
 :root {
   /* Surface */
-  --bg: #F6F3F0;
+  --bg: #F4F6FB;
   --bg-card: #FFFFFF;
-  --bg-card-hover: #F8F7F6;
+  --bg-card-hover: #F8FAFD;
   --bg-elevated: #FFFFFF;
+  --bg-subtle: #EEF2F8;
   /* Text */
-  --text-primary: #1A1A2E;
-  --text-secondary: #6B7280;
-  --text-muted: #9CA3AF;
+  --text-primary: #11182A;
+  --text-secondary: #566176;
+  --text-muted: #8791A4;
   /* Brand accent — B站粉 */
   --accent: #FB7299;
   --accent-hover: #FF8DAF;
   --accent-glow: rgba(251,114,153,.28);
-  --accent-soft: rgba(251,114,153,.08);
+  --accent-soft: rgba(251,114,153,.10);
+  --cyan: #159BB3;
+  --cyan-soft: rgba(73,214,233,.12);
   /* Semantic */
   --blue: #2563EB;
   --blue-soft: rgba(37,99,235,.08);
@@ -26,18 +29,18 @@
   --yellow: #D97706;
   --yellow-soft: rgba(217,119,6,.06);
   /* Borders */
-  --border: rgba(0,0,0,.06);
-  --border-strong: rgba(0,0,0,.10);
+  --border: rgba(18,31,54,.08);
+  --border-strong: rgba(18,31,54,.14);
   --border-accent: rgba(251,114,153,.25);
   /* Input */
   --input-bg: #FFFFFF;
   --input-border: rgba(0,0,0,.10);
   --input-focus-glow: rgba(251,114,153,.15);
   /* Shadows */
-  --shadow-sm: 0 1px 2px rgba(0,0,0,.03);
-  --shadow: 0 1px 3px rgba(0,0,0,.04);
-  --shadow-hover: 0 4px 16px rgba(0,0,0,.06);
-  --shadow-modal: 0 16px 48px rgba(0,0,0,.12);
+  --shadow-sm: 0 1px 2px rgba(17,24,39,.03), 0 8px 24px rgba(34,52,84,.04);
+  --shadow: 0 10px 28px rgba(34,52,84,.07);
+  --shadow-hover: 0 14px 34px rgba(34,52,84,.09);
+  --shadow-modal: 0 24px 72px rgba(13,20,36,.20);
   /* Chart */
   --chart-tooltip-bg: #FFFFFF;
   --chart-tooltip-border: rgba(0,0,0,.08);
@@ -48,18 +51,21 @@
   --tag-bg: rgba(37,99,235,.06);
   --tag-color: #2563EB;
   /* Radius */
-  --radius-sm: .375rem;
-  --radius: .5rem;
-  --radius-lg: .625rem;
-  --radius-xl: .75rem;
+  --radius-sm: .5rem;
+  --radius: .75rem;
+  --radius-lg: 1rem;
+  --radius-xl: 1.25rem;
+  --font-ui: Inter, "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-data: "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 }
 
 /* ---- 2. Dark Theme Override ---- */
 [data-theme='dark'] {
-  --bg: #070B14;
-  --bg-card: #0F1629;
-  --bg-card-hover: #151D33;
-  --bg-elevated: #151D33;
+  --bg: #080C18;
+  --bg-card: #11182A;
+  --bg-card-hover: #172138;
+  --bg-elevated: #172138;
+  --bg-subtle: #0D1424;
   --text-primary: #E2E8F0;
   --text-secondary: #94A3B8;
   --text-muted: #64748B;
@@ -67,6 +73,8 @@
   --accent-hover: #FF8DAF;
   --accent-glow: rgba(251,114,153,.32);
   --accent-soft: rgba(251,114,153,.08);
+  --cyan: #49D6E9;
+  --cyan-soft: rgba(73,214,233,.10);
   --blue: #38BDF8;
   --blue-soft: rgba(56,189,248,.08);
   --green: #34D399;
@@ -95,10 +103,11 @@
 
 @media (prefers-color-scheme:dark) {
   :root:not([data-theme='light']) {
-    --bg: #070B14;
-    --bg-card: #0F1629;
-    --bg-card-hover: #151D33;
-    --bg-elevated: #151D33;
+    --bg: #080C18;
+    --bg-card: #11182A;
+    --bg-card-hover: #172138;
+    --bg-elevated: #172138;
+    --bg-subtle: #0D1424;
     --text-primary: #E2E8F0;
     --text-secondary: #94A3B8;
     --text-muted: #64748B;
@@ -106,6 +115,8 @@
     --accent-hover: #FF8DAF;
     --accent-glow: rgba(251,114,153,.32);
     --accent-soft: rgba(251,114,153,.08);
+    --cyan: #49D6E9;
+    --cyan-soft: rgba(73,214,233,.10);
     --blue: #38BDF8;
     --blue-soft: rgba(56,189,248,.08);
     --green: #34D399;
@@ -138,13 +149,18 @@
 
 /* ---- 4. Base ---- */
 body {
-  font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,"PingFang SC","Microsoft YaHei",sans-serif;
+  min-width: 320px;
+  font-family: var(--font-ui);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   font-variant-numeric: tabular-nums;
   font-size: 14px;
   line-height: 1.6;
-  background: var(--bg);
+  background:
+    radial-gradient(circle at 12% -8%, var(--accent-soft), transparent 28rem),
+    radial-gradient(circle at 92% 12%, var(--cyan-soft), transparent 34rem),
+    var(--bg);
+  background-attachment: fixed;
   color: var(--text-primary);
   transition: background .35s ease, color .35s ease;
 }
@@ -197,7 +213,7 @@ body {
 .w-32 { width:8rem; }
 .h-4 { height:1rem; }
 .h-64 { height:16rem; }
-.max-w-7xl { max-width:100%; }
+.max-w-7xl { width:100%; max-width:90rem; }
 .mx-auto { margin-left:auto; margin-right:auto; }
 .mt-1 { margin-top:.25rem; }
 .mt-2 { margin-top:.5rem; }
@@ -237,35 +253,48 @@ body {
   border-radius: var(--radius-lg);
   padding: 1.25rem;
   box-shadow: var(--shadow-sm);
-  transition: border-color .25s ease, box-shadow .25s ease, transform .25s ease;
+  transition: border-color .2s ease, box-shadow .2s ease, background .2s ease;
 }
 .card:hover {
   border-color: var(--border-accent);
   box-shadow: var(--shadow-hover);
-  transform: translateY(-2px);
 }
 
 /* ---- 8. Header Accent Line (Signature Element) ---- */
 .header-accent-line {
-  height: 2px;
-  background: linear-gradient(90deg, transparent, var(--accent), transparent);
-  opacity: .5;
-  animation: accent-line-breathe 4s ease-in-out infinite;
+  position:relative;
+  height:3px;
+  overflow:hidden;
+  background:
+    radial-gradient(circle at 18% 50%,var(--cyan) 0 2px,transparent 2.5px),
+    radial-gradient(circle at 54% 50%,var(--accent) 0 2px,transparent 2.5px),
+    radial-gradient(circle at 83% 50%,var(--cyan) 0 2px,transparent 2.5px),
+    linear-gradient(90deg,transparent 2%,var(--cyan) 20%,var(--accent) 52%,var(--cyan) 82%,transparent 98%);
+  opacity:.7;
 }
-@keyframes accent-line-breathe {
-  0%, 100% { opacity: .35; }
-  50% { opacity: .75; }
+.header-accent-line::after {
+  content:'';
+  position:absolute;
+  inset:0;
+  width:16%;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.9),transparent);
+  filter:blur(1px);
+  animation:signal-scan 5.5s ease-in-out infinite;
+}
+@keyframes signal-scan {
+  from { transform:translateX(-120%); }
+  to { transform:translateX(720%); }
 }
 
 /* ---- 9. Search Input ---- */
 .search-input {
-  width: 100%; height: 3rem;
+  width: 100%; height: 3.25rem;
   padding: 0 1rem;
   font-size: .9375rem;
   color: var(--text-primary);
   background: var(--input-bg);
   border: 1px solid var(--input-border);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius);
   outline: none;
   transition: border-color .25s ease, box-shadow .25s ease;
 }
@@ -279,7 +308,7 @@ body {
 /* ---- 10. Buttons ---- */
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: .375rem;
-  font-size: .8125rem; font-weight: 500;
+  font-size: .8125rem; font-weight: 650;
   padding: .5rem 1rem;
   border-radius: var(--radius);
   cursor: pointer;
@@ -292,7 +321,9 @@ body {
 
 /* Primary */
 .btn-primary {
-  color: #fff; background: var(--accent); border-color: var(--accent);
+  color: #fff;
+  background: linear-gradient(135deg,var(--accent),#F05888);
+  border-color: transparent;
 }
 .btn-primary:hover { background: var(--accent-hover); box-shadow: 0 2px 12px var(--accent-glow); }
 .btn-primary:disabled { background: var(--text-muted); cursor: not-allowed; box-shadow: none; }
@@ -334,6 +365,22 @@ body {
   animation: none;
   mix-blend-mode: normal;
 }
+
+button,
+input,
+select,
+textarea { font: inherit; }
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+::selection { color:#fff; background:var(--accent); }
 [data-theme='light']::view-transition-new(root),
 [data-theme='dark']::view-transition-old(root) { z-index: 2; }
 [data-theme='light']::view-transition-old(root),
@@ -472,6 +519,10 @@ body {
 .truncate { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .min-w-0 { min-width:0; }
 .object-cover { object-fit:cover; }
+
+.comment-table { table-layout:fixed; }
+.comment-table__content-column { width:50%; }
+.comment-table__content { max-width:0; }
 
 /* ---- 18. Form Elements ---- */
 .select-sm {
@@ -885,6 +936,13 @@ body {
 .settings-number-input {
   width:5rem;
   text-align:center;
+  appearance:textfield;
+  -moz-appearance:textfield;
+}
+.settings-number-input::-webkit-inner-spin-button,
+.settings-number-input::-webkit-outer-spin-button {
+  margin:0;
+  -webkit-appearance:none;
 }
 .settings-warning {
   margin-top:.75rem;

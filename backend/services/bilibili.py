@@ -30,7 +30,7 @@ def _extract_comment(r: dict) -> dict:
         'post_time':datetime.fromtimestamp(r.get('ctime',0)),
     }
 
-async def fetch_comments(client: httpx.AsyncClient, avid: int, max_comments=None, delay=None):
+async def fetch_comments(client: httpx.AsyncClient, avid: int, max_comments=None, delay=None, progress_callback=None):
     all_comments = []
     page = 1
     page_size = 20
@@ -61,6 +61,10 @@ async def fetch_comments(client: httpx.AsyncClient, avid: int, max_comments=None
                     if len(all_comments) >= limit: break
                     c = _extract_comment(sr)
                     all_comments.append(c)
+        if progress_callback:
+            progress_callback(len(all_comments))
+        if len(all_comments) >= limit:
+            break
         page += 1
         await asyncio.sleep(wait + random.uniform(0, 0.5))
         if page > 50: break

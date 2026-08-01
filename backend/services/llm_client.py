@@ -183,7 +183,12 @@ async def chat_completion(
                 "temperature": temperature,
                 "max_tokens": max_tokens,
             }
-            if config.get("provider") == "bailian":
+            if config.get("provider") == "deepseek":
+                # DeepSeek V4 enables thinking by default. Short structured
+                # tasks can otherwise spend the entire token budget in
+                # reasoning_content and return an empty final content field.
+                payload["thinking"] = {"type": "disabled"}
+            elif config.get("provider") == "bailian":
                 payload["enable_thinking"] = False
             try:
                 async with httpx.AsyncClient(

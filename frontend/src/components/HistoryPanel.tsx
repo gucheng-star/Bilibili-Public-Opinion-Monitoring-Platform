@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { getHistory, deleteHistory } from '../services/api';
 import type { HistoryItem } from '../types';
+import './DataPanels.css';
 
 interface Props {
   onSelect: (id: number) => void;
@@ -28,27 +29,23 @@ export default function HistoryPanel({ onSelect, selectedId, refreshKey = 0, onD
 
   return (
     <>
-      <div className="history-scroll" style={{display:'flex',gap:'.5rem',overflowX:'auto',paddingBottom:'.25rem'}}>
+      <div className="history-panel">
+        <div className="history-panel__header"><span className="panel-status">ANALYSIS ARCHIVE</span><span className="history-panel__count">{items.length}</span></div>
+      <div className="history-scroll history-panel__list">
         {items.map(item => (
-          <div key={item.id} style={{position:'relative',flexShrink:0}}>
-            <button onClick={()=>onSelect(item.id)}
-              style={{
-                padding:'.375rem 1.5rem .375rem .625rem', fontSize:'.75rem', borderRadius:'.375rem', cursor:'pointer',
-                background: selectedId===item.id ? 'var(--accent-soft)' : 'transparent',
-                border: selectedId===item.id ? '1px solid var(--border-accent)' : '1px solid var(--border)',
-                color: selectedId===item.id ? 'var(--accent)' : 'var(--text-secondary)',
-                transition:'all .15s ease', textAlign:'left', maxWidth:'16rem',
-              }}>
-              <div className="truncate" style={{fontWeight:500,color:selectedId===item.id?'var(--accent)':'var(--text-primary)'}}>{item.video_title || item.bv}</div>
-              <div className="truncate"><span style={{fontSize:'.625rem',color:'var(--text-muted)'}}>{item.total_comments} 条评论</span></div>
+          <div key={item.id} className="history-panel__item">
+            <button onClick={()=>onSelect(item.id)} className={`history-panel__record${selectedId===item.id ? ' is-selected' : ''}`} aria-pressed={selectedId===item.id}>
+              <div className="history-panel__record-title truncate">{item.video_title || item.bv}</div>
+              <div className="history-panel__record-meta truncate">{item.total_comments} 条评论</div>
             </button>
-            <span
+            <button type="button" className="history-panel__delete"
               onClick={(e)=>{e.stopPropagation();setConfirmItem(item);}}
-              style={{position:'absolute',top:'.25rem',right:'.25rem',zIndex:5,fontSize:'.75rem',lineHeight:1,cursor:'pointer',color:'var(--text-muted)',padding:'0 .25rem',borderRadius:'.25rem',background:'transparent'}}
               title="删除记录"
-            >&times;</span>
+              aria-label={`删除记录：${item.video_title || item.bv}`}
+            >&times;</button>
           </div>
         ))}
+      </div>
       </div>
 
       {confirmItem && (

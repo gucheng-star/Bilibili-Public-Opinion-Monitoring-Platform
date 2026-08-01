@@ -6,14 +6,16 @@ Bilibili Public Opinion Monitoring Platform — 输入 BV 号，自动抓取评�
 
 - **扫码登录** — B站 App 扫码，安全无侵入，Cookie 仅用于数据抓取
 - **多维度分析** — 情感倾向、词云、地域分布、性别结构、热度趋势
-- **双引擎分析** — NLP 三分类 + 可配置 LLM 八分类（Plutchik 情绪模型）
+- **NLP 优先的双引擎分析** — 新分析固定先运行本地 NLP 三分类，用户主动切换后才调用可配置的 LLM 八分类（Plutchik 情绪模型）
 - **批量 LLM 分析** — 每批 5 条评论、最多 3 批并发，按评论 ID 校验分类结果并自动重试失败批次
 - **AI 智能总结** — 对当前筛选统计和代表性评论生成一段舆情简报，并按筛选条件保存
-- **多模型供应商** — 情绪分析和智能总结可分别使用百炼、DeepSeek 或自定义 OpenAI 兼容接口
-- **暗/亮双主题** — 跟随系统自动切换，支持手动切换并带过渡动画
-- **丰富的图表** — ECharts 饼图/玫瑰图/中国地图/词云/折线图，全部支持一键下载；图表隐藏 0 值分类，玫瑰图按数量降序排列
-- **筛选过滤** — 性别、日期、地域和情绪共同驱动图表、评论列表与 AI 总结；NLP/LLM 模式分别提供三分类和八分类标签
+- **多模型供应商** — 情绪分析和智能总结可分别使用百炼、DeepSeek 或自定义 OpenAI 兼容接口；模型与回退模型从供应商列表中选择
+- **暗/亮双主题** — 跟随系统自动切换；手动切换以主题按钮为中心，浅色向外展开、深色向内收拢
+- **丰富的图表** — ECharts 饼图/玫瑰图/中国地图/词云/折线图，全部支持一键下载；成对图表保持等宽，地域地图按排名选择代表性省份标注
+- **筛选过滤** — 性别、时间维度、地域和情绪共同驱动图表、评论列表与 AI 总结；时间支持快捷范围和自定义双月日历，NLP/LLM 模式分别提供三分类和八分类标签
 - **历史管理** — 自动保存分析结果，随时回顾或删除
+- **可感知的任务进度** — 抓取进度按已获取评论数实时更新，AI 总结等待时循环显示打字机状态；长评论以定长摘要展示，完整内容由悬浮详情承载
+- **沉浸式登录页** — 全屏信号观测主题背景、左右分栏圆角工作台与登录区内昼夜切换
 
 ## 技术栈
 
@@ -59,10 +61,13 @@ cd frontend && pnpm run dev
 
 ### 大模型分析说明
 
+- 首次提交分析不会调用大模型，而是先完成本地 NLP。只有用户在结果页主动切换到“大模型八分类”时，才会调用 `/api/reanalyze/{id}`。
 - 每个请求包含 5 条评论，最多并发 3 个批次。返回结果使用评论 ID 绑定并校验，单个失败批次最多重试 2 次。
+- LLM 重分析失败时保留已经完成的 NLP 结果和可用界面，不会把整条分析记录标记为不可用。
 - 情绪分析与智能总结拥有独立的供应商、模型、Base URL、API Key 和可选回退模型配置。
-- 百炼默认使用 `qwen3.6-plus`，DeepSeek 默认使用 `deepseek-v4-flash`；模型 ID 均可编辑。
-- 以当前实测为例，100 条评论约需 2 分 9 秒。实际耗时会受模型响应、网络和服务负载影响。
+- 配置供应商、Base URL 和 API Key 后，先点击“获取模型列表”，再从下拉列表选择主模型与回退模型，避免手工输入错误。切换供应商或修改 Base URL 后需要重新获取。
+- 百炼初始推荐 `qwen3.6-plus`，DeepSeek 初始推荐 `deepseek-v4-flash`；最终可用模型以供应商接口返回的列表为准。自定义接口需要兼容 OpenAI 的 `GET /models` 才能提供选择列表。
+- 百炼与 DeepSeek 请求会关闭思考模式，避免推理内容占满输出预算后返回空正文。设置页的“测试连接”会走与实际情感分析相同的结构化分类链路。
 
 ### AI 智能总结
 
@@ -80,6 +85,22 @@ cd frontend && pnpm run build
 cd backend && python -m uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
+### 验证
+
+```bash
+cd backend
+venv\Scripts\python.exe -m unittest discover -s tests -v
+
+cd ../frontend
+pnpm run lint
+pnpm run build -- --configLoader runner
+```
+
+### 常见问题
+
+- `attempt to write a readonly database`：这属于本机 SQLite 文件或目录写权限问题，不是 B站拒绝访问。请确认后端进程以正常用户权限运行，并且 `backend/` 与数据库文件可写。
+- `模型返回了空内容`：请先更新到包含 DeepSeek 关闭思考参数的版本，并在设置页重新测试情感分析配置；首次分析仍会优先使用本地 NLP。
+
 ## 项目结构
 
 ```
@@ -89,14 +110,13 @@ cd backend && python -m uvicorn main:app --host 0.0.0.0 --port 8000
 │   ├── services/            # 业务逻辑（抓取、情绪、通用 LLM、总结、图表）
 │   ├── models/              # SQLAlchemy 模型 (database.py)
 │   └── venv/                # Python 虚拟环境 (gitignored)
-├── frontend/
-│   ├── src/
-│   │   ├── App.tsx          # 主应用
-│   │   ├── components/      # 页面与数据可视化组件
-│   │   ├── services/api.ts  # API 客户端
-│   │   └── types/           # TypeScript 类型定义
-│   └── public/china.json    # ECharts 中国地图数据
-└── PROJECT.md               # 详细开发文档
+└── frontend/
+    ├── src/
+    │   ├── App.tsx          # 主应用
+    │   ├── components/      # 页面与数据可视化组件
+    │   ├── services/api.ts  # API 客户端
+    │   └── types/           # TypeScript 类型定义
+    └── public/china.json    # ECharts 中国地图数据
 ```
 
 ## API 路由
@@ -104,7 +124,7 @@ cd backend && python -m uvicorn main:app --host 0.0.0.0 --port 8000
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET/POST | `/api/auth/*` | 扫码登录、状态、退出、账号管理 |
-| POST | `/api/analyze` | 提交 BV 号，异步分析 |
+| POST | `/api/analyze` | 提交 BV 号，异步抓取并执行本地 NLP |
 | POST | `/api/reanalyze/{id}` | 对已有结果用 LLM 重新分析 |
 | GET | `/api/status/{id}` | 查询分析进度 |
 | GET | `/api/results/{id}` | 获取完整分析结果 |
@@ -113,7 +133,7 @@ cd backend && python -m uvicorn main:app --host 0.0.0.0 --port 8000
 | DELETE | `/api/history/{id}` | 删除历史 (级联删除) |
 | GET/PUT | `/api/settings` | 读取或更新本机设置（密钥仅返回掩码） |
 | POST | `/api/settings/models` | 从指定供应商获取可选模型列表 |
-| POST | `/api/settings/test-llm` | 测试某项 AI 任务的模型连接 |
+| POST | `/api/settings/test-llm` | 按指定任务的真实调用链测试模型连接 |
 | GET | `/api/summaries/{id}` | 获取分析记录下已保存的智能总结 |
 | POST | `/api/summaries/{id}` | 按当前筛选生成或覆盖智能总结 |
 

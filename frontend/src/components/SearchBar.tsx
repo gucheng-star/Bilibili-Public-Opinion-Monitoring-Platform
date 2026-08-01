@@ -1,13 +1,13 @@
 import { useState } from 'react';
 import { getVideoInfo } from '../services/api';
-import type { VideoInfoResponse, AnalysisMode } from '../types';
+import type { VideoInfoResponse } from '../types';
+import './DataPanels.css';
 
 interface Props {
-  onAnalyze: (bv: string, maxComments: number, delay: number, mode: AnalysisMode) => void;
+  onAnalyze: (bv: string, maxComments: number, delay: number) => void;
   loading: boolean;
   maxComments: number;
   delay: number;
-  currentMode: AnalysisMode;
 }
 
 function parseBv(input: string): string {
@@ -15,7 +15,7 @@ function parseBv(input: string): string {
   return m ? m[0] : '';
 }
 
-export default function SearchBar({ onAnalyze, loading, maxComments, delay, currentMode }: Props) {
+export default function SearchBar({ onAnalyze, loading, maxComments, delay }: Props) {
   const [rawInput, setRawInput] = useState('');
   const [bv, setBv] = useState('');
   const [videoInfo, setVideoInfo] = useState<VideoInfoResponse | null>(null);
@@ -34,26 +34,24 @@ export default function SearchBar({ onAnalyze, loading, maxComments, delay, curr
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (bv) onAnalyze(bv, maxComments, delay, currentMode);
+    if (bv) onAnalyze(bv, maxComments, delay);
   };
 
   return (
-    <form onSubmit={handleSubmit}>
-      <div className="flex items-center gap-3">
-        <div className="flex-1 relative">
+    <form className="signal-search" onSubmit={handleSubmit}>
+      <div className="signal-search__controls">
+        <div className="signal-search__field">
           <input type="text" value={rawInput} onChange={e => { setRawInput(e.target.value); setVideoInfo(null); setPreviewError(''); }}
             placeholder="B站视频链接或 BV 号" className="search-input" disabled={loading}/>
         </div>
         {!videoInfo && (
-          <button type="button" onClick={handlePreview} disabled={loading || previewLoading || !rawInput.trim()}
-            style={{height:'3rem',padding:'0 1.25rem',fontSize:'.875rem',fontWeight:600,background:'rgba(0,161,214,.12)',color:'#00A1D6',border:'1px solid rgba(0,161,214,.25)',borderRadius:'.625rem',cursor:'pointer',whiteSpace:'nowrap',transition:'all .2s ease'}}>
+          <button type="button" className="signal-search__action signal-search__action--preview" onClick={handlePreview} disabled={loading || previewLoading || !rawInput.trim()}>
             {previewLoading ? '获取中...' : '获取视频信息'}
           </button>
         )}
         {videoInfo && (
-          <div className="flex items-center gap-3">
-            <button type="submit" disabled={loading}
-              style={{height:'3rem',padding:'0 1.25rem',fontSize:'.875rem',fontWeight:600,background:'rgba(0,161,214,.12)',color:'#00A1D6',border:'1px solid rgba(0,161,214,.25)',borderRadius:'.625rem',cursor:loading?'default':'pointer',whiteSpace:'nowrap',transition:'all .2s ease',opacity:loading?.6:1}}>
+          <div className="signal-search__actions">
+            <button type="submit" className="signal-search__action signal-search__action--analyze" disabled={loading}>
               {loading ? '分析中...' : '开始分析'}
             </button>
           </div>
@@ -61,15 +59,18 @@ export default function SearchBar({ onAnalyze, loading, maxComments, delay, curr
       </div>
 
       {previewError && (
-        <div style={{marginTop:'.5rem',padding:'.5rem .75rem',background:'var(--red-soft)',border:'1px solid var(--red)',borderRadius:'.375rem'}}>
-          <p className="text-xs" style={{color:'var(--red)'}}>{previewError}</p>
+        <div className="signal-search__alert" role="alert">
+          <p className="text-xs">{previewError}</p>
         </div>
       )}
 
       {videoInfo && (
-        <div className="card mt-3" style={{padding:'.75rem 1rem'}}>
-          <p className="text-sm font-medium text-primary truncate">{videoInfo.title}</p>
-          <p className="text-xs text-secondary mt-1">播放 {videoInfo.play.toLocaleString()} &middot; 评论 {(videoInfo?.comment_count ?? 0).toLocaleString()}</p>
+        <div className="signal-search__preview">
+          <span className="panel-status">VIDEO READY</span>
+          <div className="signal-search__preview-copy">
+            <p className="text-sm font-medium text-primary truncate">{videoInfo.title}</p>
+            <p className="text-xs text-secondary">播放 {videoInfo.play.toLocaleString()} &middot; 评论 {(videoInfo?.comment_count ?? 0).toLocaleString()}</p>
+          </div>
         </div>
       )}
     </form>

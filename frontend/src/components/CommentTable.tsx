@@ -5,6 +5,15 @@ interface Props { comments: CommentData[]; mode: AnalysisMode; }
 
 type LlmSentimentLabel = keyof SentimentLLM;
 
+const COMMENT_PREVIEW_LENGTH = 72;
+
+function getCommentPreview(content: string): string {
+  const characters = Array.from(content);
+  return characters.length > COMMENT_PREVIEW_LENGTH
+    ? `${characters.slice(0, COMMENT_PREVIEW_LENGTH).join('')}…`
+    : content;
+}
+
 const TAG: Record<SentimentLabel, { label: string; bg: string; color: string }> = {
   positive: { label: '正面', bg: 'var(--green-soft)', color: 'var(--green)' },
   negative: { label: '负面', bg: 'var(--red-soft)', color: 'var(--red)' },
@@ -107,12 +116,12 @@ export default function CommentTable({ comments, mode }: Props) {
       </div>
     </div>
     <div className="overflow-x-auto">
-      <table style={{fontSize:'.8125rem',width:'100%'}}>
+      <table className="comment-table" style={{fontSize:'.8125rem',width:'100%'}}>
         <thead>
           <tr style={{borderBottom:'1px solid var(--border)'}}>
             <th style={{padding:'.5rem',textAlign:'left',fontWeight:500,color:'var(--text-muted)',fontSize:'.6875rem',letterSpacing:'.05em',width:'12%',minWidth:'72px'}}>用户</th>
             <th style={{padding:'.5rem',textAlign:'left',fontWeight:500,color:'var(--text-muted)',fontSize:'.6875rem',letterSpacing:'.05em',width:'10%',minWidth:'60px'}}>IP属地</th>
-            <th style={{padding:'.5rem',textAlign:'left',fontWeight:500,color:'var(--text-muted)',fontSize:'.6875rem',letterSpacing:'.05em'}}>内容</th>
+            <th className="comment-table__content-column" style={{padding:'.5rem',textAlign:'left',fontWeight:500,color:'var(--text-muted)',fontSize:'.6875rem',letterSpacing:'.05em'}}>内容</th>
             <th style={{padding:'.5rem',textAlign:'center',fontWeight:500,color:'var(--text-muted)',fontSize:'.6875rem',letterSpacing:'.05em',width:'7%',minWidth:'50px'}}>点赞</th>
             <th style={{padding:'.5rem',textAlign:'center',fontWeight:500,color:'var(--text-muted)',fontSize:'.6875rem',letterSpacing:'.05em',width:'9%',minWidth:'56px'}}>情感</th>
             <th style={{padding:'.5rem',textAlign:'left',fontWeight:500,color:'var(--text-muted)',fontSize:'.6875rem',letterSpacing:'.05em',width:'12%',minWidth:'90px'}}>时间</th>
@@ -126,9 +135,9 @@ export default function CommentTable({ comments, mode }: Props) {
             return <tr key={c.id} style={{borderBottom:'1px solid var(--border)'}} className="transition-colors">
               <td style={{padding:'.5rem',color:'var(--text-primary)'}} className="truncate" title={c.username}>{c.username}</td>
               <td style={{padding:'.5rem',color:'var(--text-muted)',fontSize:'.6875rem'}}>{c.ip_location||'-'}</td>
-              <td style={{padding:'.5rem',color:'var(--text-secondary)',cursor:'pointer'}} className="truncate"
+              <td style={{padding:'.5rem',color:'var(--text-secondary)',cursor:'pointer'}} className="comment-table__content truncate"
                 onMouseEnter={e=>{showTip(c.content,e.clientX,e.clientY);}}
-                onMouseLeave={hideTip}>{c.content}</td>
+                onMouseLeave={hideTip}>{getCommentPreview(c.content)}</td>
               <td style={{padding:'.5rem',textAlign:'center',color:'var(--text-secondary)',fontSize:'.8125rem'}}>{c.likes}</td>
               <td style={{padding:'.5rem',textAlign:'center'}}><span style={{fontSize:'.6875rem',padding:'.125rem .375rem',borderRadius:'.25rem',background:t.bg,color:t.color}}>{t.label}</span></td>
               <td style={{padding:'.5rem',color:'var(--text-muted)',fontSize:'.6875rem'}}>{c.post_time?new Date(c.post_time).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}):'-'}</td>

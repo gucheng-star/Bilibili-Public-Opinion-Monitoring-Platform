@@ -66,6 +66,7 @@ class LLMClientTests(unittest.IsolatedAsyncioTestCase):
             )
         self.assertEqual((content, model), ("完成", "deepseek-v4-flash"))
         self.assertNotIn("enable_thinking", calls[0][1]["json"])
+        self.assertEqual(calls[0][1]["json"]["thinking"], {"type": "disabled"})
 
         calls.clear()
         config["provider"] = "bailian"
@@ -74,6 +75,7 @@ class LLMClientTests(unittest.IsolatedAsyncioTestCase):
                 config, [{"role": "user", "content": "test"}], check_dns=False, retries=0
             )
         self.assertFalse(calls[0][1]["json"]["enable_thinking"])
+        self.assertNotIn("thinking", calls[0][1]["json"])
 
     async def test_authentication_error_is_sanitized(self):
         response = httpx.Response(

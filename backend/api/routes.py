@@ -24,10 +24,21 @@ async def _run_analysis(analysis_id: int, bv: str, avid: int, max_comments: int 
     try:
         analysis = db.query(Analysis).filter_by(id=analysis_id).first()
         if not analysis: return
-        analysis.status = 'fetching'; analysis.mode = mode
+        analysis.status = 'fetching'; analysis.mode = mode; analysis.total_comments = 0
         db.commit()
+
+        def report_fetch_progress(count: int):
+            analysis.total_comments = count
+            db.commit()
+
         async with httpx.AsyncClient(timeout=30) as client:
-            comments_raw = await fetch_comments(client, avid, max_comments=max_comments, delay=delay)
+            comments_raw = await fetch_comments(
+                client,
+                avid,
+                max_comments=max_comments,
+                delay=delay,
+                progress_callback=report_fetch_progress,
+            )
         if not comments_raw:
             analysis.status = 'error'; analysis.error_msg = 'No comments fetched'; db.commit(); return
         analysis.status = 'analyzing'; analysis.total_comments = len(comments_raw); db.commit()
@@ -71,7 +82,9 @@ async def start_analysis(req: dict, background_tasks: BackgroundTasks):
     bv = req.get('bv', '').strip()
     max_comments = min(max(req.get('max_comments', 100), 20), 10000)
     request_delay = min(max(req.get('request_delay', 3.0), 1.0), 60.0)
-    mode = req.get('mode', 'nlp')
+    # New analyses always start with local Python NLP. LLM sentiment analysis
+    # is an explicit second step exposed only by /reanalyze/{analysis_id}.
+    mode = 'nlp'
     if not bv or not bv.startswith('BV'):
         raise HTTPException(400, 'Please enter a valid BV number')
     async with httpx.AsyncClient(timeout=15) as client:
@@ -110,7 +123,9 @@ async def reanalyze(analysis_id: int, background_tasks: BackgroundTasks):
         if not llm_config.get("api_key"):
             raise HTTPException(400, 'API Key not configured')
 
-        a.status = 'analyzing'; a.mode = 'llm'; db.commit()
+        # Keep the persisted mode as NLP until the LLM pass succeeds so a
+        # provider failure never destroys access to the existing result.
+        a.status = 'analyzing'; a.error_msg = None; db.commit()
 
         # Load existing comments
         comments_data = [
@@ -162,12 +177,18 @@ async def _run_reanalyze(analysis_id: int, comments_data: list[dict], llm_config
             llm_surprise=s['surprise'], llm_fear=s['fear'], llm_disgust=s['disgust'],
             llm_anticipation=s['anticipation'], llm_trust=s['trust']))
 
-        db.query(Analysis).filter_by(id=analysis_id).update({'status': 'done', 'mode': 'llm'})
+        db.query(Analysis).filter_by(id=analysis_id).update({
+            'status': 'done', 'mode': 'llm', 'error_msg': None,
+        })
         db.commit()
     except Exception as e:
         db.rollback()
         a = db.query(Analysis).filter_by(id=analysis_id).first()
-        if a: a.status = 'error'; a.error_msg = str(e); db.commit()
+        if a:
+            a.status = 'done'
+            a.mode = 'nlp'
+            a.error_msg = str(e)
+            db.commit()
     finally:
         db.close()
 

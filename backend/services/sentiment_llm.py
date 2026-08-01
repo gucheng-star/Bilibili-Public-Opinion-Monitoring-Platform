@@ -121,6 +121,18 @@ async def _analyze_comment_batch(comments: list[dict], config: dict[str, str]) -
     return labels_by_id
 
 
+async def test_sentiment_connection(config: dict[str, str]) -> int:
+    """Exercise the real structured sentiment path with harmless samples."""
+    labels = await _analyze_comment_batch(
+        [
+            {"rpid": "connection-positive", "content": "讲得很好，期待下一期"},
+            {"rpid": "connection-negative", "content": "完全看不懂，太失望了"},
+        ],
+        config,
+    )
+    return len(labels)
+
+
 async def _analyze_batch_with_retry(comments: list[dict], config: dict[str, str]) -> dict[str, str]:
     """Retry only the failed batch so valid completed batches are preserved."""
     last_error: Exception | None = None

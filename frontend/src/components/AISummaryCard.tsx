@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { generateSummary, getSummaries } from '../services/api';
 import type { AISummary, AnalysisMode, FilterState, LLMProvider } from '../types';
+import './DataPanels.css';
 
 interface Props {
   analysisId: number;
@@ -15,6 +16,8 @@ const PROVIDER_NAMES: Record<LLMProvider, string> = {
   custom: '自定义接口',
 };
 
+const THINKING_MESSAGES = ['AI 正在思考', '正在仔细分析', '正在遣词造句'];
+
 function sameFilters(left: FilterState, right: FilterState): boolean {
   return left.gender === right.gender
     && left.dateFrom === right.dateFrom
@@ -27,6 +30,7 @@ export default function AISummaryCard({ analysisId, filters, matchedCount, mode 
   const [summaries, setSummaries] = useState<AISummary[]>([]);
   const [loadingList, setLoadingList] = useState(true);
   const [generating, setGenerating] = useState(false);
+  const [thinkingText, setThinkingText] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -39,6 +43,45 @@ export default function AISummaryCard({ analysisId, filters, matchedCount, mode 
       .finally(() => { if (active) setLoadingList(false); });
     return () => { active = false; };
   }, [analysisId, mode]);
+
+  useEffect(() => {
+    if (!generating) {
+      setThinkingText('');
+      return;
+    }
+
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      setThinkingText(THINKING_MESSAGES[0]);
+      return;
+    }
+
+    let cancelled = false;
+    let messageIndex = 0;
+    let characterIndex = 0;
+    let timer = 0;
+
+    const typeNextCharacter = () => {
+      if (cancelled) return;
+      const message = THINKING_MESSAGES[messageIndex];
+      if (characterIndex <= message.length) {
+        setThinkingText(message.slice(0, characterIndex));
+        characterIndex += 1;
+        timer = window.setTimeout(typeNextCharacter, 85);
+        return;
+      }
+      timer = window.setTimeout(() => {
+        messageIndex = (messageIndex + 1) % THINKING_MESSAGES.length;
+        characterIndex = 0;
+        typeNextCharacter();
+      }, 900);
+    };
+
+    typeNextCharacter();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [generating]);
 
   const exact = useMemo(
     () => summaries.find(item => sameFilters(item.filters, filters)),
@@ -65,15 +108,15 @@ export default function AISummaryCard({ analysisId, filters, matchedCount, mode 
 
   return (
     <section className="card ai-summary-card" aria-labelledby="ai-summary-title">
-      <div className="ai-summary-header">
+      <div className="ai-summary-header panel-heading">
         <div className="ai-summary-title-group">
           <div className="summary-signal" aria-hidden="true"><i /><i /><i /><i /></div>
           <div>
-            <span className="ai-summary-eyebrow">CURRENT SIGNAL</span>
+            <span className="ai-summary-eyebrow panel-status">CURRENT SIGNAL</span>
             <h3 id="ai-summary-title">AI 舆情简报</h3>
           </div>
         </div>
-        <button type="button" className={current ? 'btn btn-ghost' : 'btn btn-primary'}
+        <button type="button" className={`${current ? 'btn btn-ghost' : 'btn btn-primary'} ai-summary-card__action`}
           onClick={run} disabled={generating || loadingList || matchedCount === 0}>
           {generating ? '归纳中…' : current ? '重新生成' : exact?.stale ? '更新总结' : '生成总结'}
         </button>
@@ -81,10 +124,18 @@ export default function AISummaryCard({ analysisId, filters, matchedCount, mode 
 
       {loadingList ? (
         <div className="ai-summary-loading"><span className="pulse-dot" />正在读取已保存的简报…</div>
+      ) : generating ? (
+        <div className="ai-summary-thinking" role="status" aria-live="polite">
+          <div className="ai-summary-thinking__line">
+            <span className="ai-summary-thinking__prompt" aria-hidden="true">AI</span>
+            <strong>{thinkingText}<span className="ai-summary-thinking__cursor" aria-hidden="true" /></strong>
+          </div>
+          <p>正在归纳 {matchedCount} 条筛选评论，请保持当前页面开启。</p>
+        </div>
       ) : current ? (
         <>
           <p className="ai-summary-text">{current.summary_text}</p>
-          <div className="ai-summary-meta">
+          <div className="ai-summary-meta" aria-label="简报元数据">
             <span>基于 {current.matched_count} 条筛选数据</span>
             <span>抽取 {current.sampled_count} 条代表评论</span>
             <span>{PROVIDER_NAMES[current.provider]} · {current.model}</span>

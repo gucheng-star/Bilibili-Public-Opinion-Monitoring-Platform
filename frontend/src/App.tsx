@@ -13,8 +13,9 @@ import LoginPage from './components/LoginPage';
 import FilterBar from './components/FilterBar';
 import SettingsPanel from './components/SettingsPanel';
 import AISummaryCard from './components/AISummaryCard';
-import { startAnalysis, getStatus, getResults, getSettings, updateSettings, reanalyze } from './services/api';
+import { startAnalysis, getStatus, getResults, getSettings, reanalyze } from './services/api';
 import type { AnalysisResult, FilterState, AnalysisMode, SentimentLLM } from './types';
+import './AppShell.css';
 
 const PROVINCES = new Set(['北京','天津','上海','重庆','河北','山西','辽宁','吉林','黑龙江','江苏','浙江','安徽','福建','江西','山东','河南','湖北','湖南','广东','海南','四川','贵州','云南','陕西','甘肃','青海','台湾','内蒙古','广西','西藏','宁夏','新疆','香港','澳门']);
 const LLM_EMOTIONS: (keyof SentimentLLM)[] = ['joy', 'anger', 'sadness', 'surprise', 'fear', 'disgust', 'anticipation', 'trust'];
@@ -61,19 +62,18 @@ function App() {
   const [reanalyzeModal, setReanalyzeModal] = useState(false);
 
   useEffect(() => { fetch('/api/auth/status').then(r=>r.json()).then(d=>setLoggedIn(d.logged_in)).catch(()=>setLoggedIn(false)); }, []);
-  useEffect(() => { getSettings().then(s => { setHasApiKey(s.llm.sentiment.has_api_key); setAnalysisMode(s.analysis_mode || 'nlp'); }).catch(() => {}); }, []);
+  useEffect(() => { getSettings().then(s => { setHasApiKey(s.llm.sentiment.has_api_key); }).catch(() => {}); }, []);
   useEffect(() => {
     setFilters(current => current.sentiment === 'all' ? current : { ...current, sentiment: 'all' });
   }, [results?.mode]);
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(()=>setToast(null), 4000); };
 
-  const handleModeChange = async (mode: AnalysisMode) => {
+  const handleModeChange = (mode: AnalysisMode) => {
     if (mode === 'llm' && !hasApiKey) { showToast('请先在设置面板配置情绪分析模型的 API Key'); return; }
     // NLP → LLM：弹出确认弹窗
     if (mode === 'llm' && results && results.mode !== 'llm') { setReanalyzeModal(true); return; }
     setAnalysisMode(mode);
-    try { await updateSettings({ analysis_mode: mode }); } catch {}
   };
 
   const handleReanalyzeConfirm = async () => {
@@ -83,7 +83,6 @@ function App() {
     setProgress(0); setProgressMax(results?.total_comments || 100);
     setStatusText(getLlmEstimateText(results?.total_comments || 100));
     setAnalysisMode('llm');
-    try { await updateSettings({ analysis_mode: 'llm' }); } catch {}
     try {
       await reanalyze(analysisId);
       const poll = async () => {
@@ -94,6 +93,13 @@ function App() {
             const status = await getStatus(analysisId);
             setProgress(status.total_comments);
             if (status.status === 'done') {
+              if (status.error_msg) {
+                setError(status.error_msg);
+                setAnalysisMode(results?.mode || 'nlp');
+                setLoading(false);
+                showToast('大模型分析失败，已保留 NLP 结果');
+                return;
+              }
               setStatusText(''); const data = await getResults(analysisId);
               setResults(data); setAnalysisMode(data.mode); setLoading(false); setHistoryRefreshKey(k=>k+1); showToast('大模型分析完成');
               return;
@@ -108,11 +114,12 @@ function App() {
     } catch (e: any) { setError(e.message || '重新分析失败'); setLoading(false); }
   };
 
-  const handleAnalyze = useCallback(async (bv: string, _maxComments: number, _delay: number, mode: AnalysisMode) => {
+  const handleAnalyze = useCallback(async (bv: string, _maxComments: number, _delay: number) => {
     setLoading(true); setError(null); setResults(null); cancelRef.current = false;
+    setAnalysisMode('nlp');
     setProgress(0); setProgressMax(_maxComments); setStatusText('正在获取视频信息...');
     try {
-      const { analysis_id } = await startAnalysis(bv, _maxComments, _delay, mode);
+      const { analysis_id } = await startAnalysis(bv, _maxComments, _delay);
       setAnalysisId(analysis_id); setStatusText('正在抓取评论...');
       const poll = async () => {
         for (let i = 0; i < 300; i++) {
@@ -129,7 +136,7 @@ function App() {
             if (status.status === 'error') { setError(status.error_msg || '分析失败'); setLoading(false); showToast('分析失败'); return; }
             if (status.status === 'fetching') setStatusText('抓取中 ('+status.total_comments+'/'+_maxComments+')');
             else if (status.status === 'analyzing') {
-              setStatusText(mode === 'llm' ? getLlmEstimateText(status.total_comments || _maxComments) : '分析中...');
+              setStatusText('分析中...');
             }
           } catch { if (cancelRef.current) { setLoading(false); return; } }
         }
@@ -225,73 +232,78 @@ function App() {
     return Array.from(s).sort();
   }, [results]);
 
-  if (loggedIn === null) return <div className="min-h-screen flex items-center justify-center" style={{background:'var(--bg)'}}><div className="pulse-dot"></div></div>;
+  if (loggedIn === null) return <div className="app-shell app-shell--booting" aria-label="正在加载应用"><div className="pulse-dot"></div></div>;
   if (!loggedIn) return <LoginPage onLogin={()=>setLoggedIn(true)}/>;
 
   return (
-    <div className="min-h-screen" style={{background:'var(--bg)'}}>
-      <header className="sticky top-0 z-10" style={{background:'var(--bg)',borderBottom:'1px solid var(--border)'}}>
-        <div className="max-w-7xl mx-auto px-4 py-4">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <span style={{fontSize:'1.25rem',fontWeight:700,color:'var(--accent)'}}>B站</span>
-              <span className="text-primary" style={{fontSize:'1rem',fontWeight:600}}>舆论监测平台</span>
+    <div className="app-shell min-h-screen">
+      <header className="app-header sticky top-0 z-10">
+        <div className="app-header__inner max-w-7xl mx-auto px-4 py-4">
+          <div className="app-header__bar flex items-center justify-between mb-3">
+            <div className="app-brand flex items-center gap-2">
+              <img className="app-brand__icon" src="/signal-observatory-icon.png" alt="" aria-hidden="true" />
+              <span className="app-brand__mark">B站</span>
+              <span className="app-brand__name">舆论监测平台</span>
             </div>
-            <div className="flex items-center gap-3">
-              <button onClick={handleLogout} style={{fontSize:'.75rem',color:'var(--text-muted)',background:'none',border:'none',cursor:'pointer'}}>退出</button>
+            <div className="app-header__actions flex items-center gap-3">
+              <button onClick={handleLogout} className="app-header__logout">退出</button>
               <button onClick={() => setShowSettings(!showSettings)} className="theme-toggle" title="设置" style={{borderColor:showSettings?'var(--accent)':'var(--border)'}}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l-.06-.06a2 2 0 012.83 2.83l.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
               </button>
               <ThemeToggle/>
             </div>
           </div>
-          <SearchBar onAnalyze={handleAnalyze} loading={loading} maxComments={maxComments} delay={delay} currentMode={analysisMode}/>
+          <section className="command-deck" aria-label="视频分析指令舱">
+            <div className="command-deck__label"><span aria-hidden="true"></span>VIDEO SIGNAL COMMAND</div>
+            <SearchBar onAnalyze={handleAnalyze} loading={loading} maxComments={maxComments} delay={delay}/>
+          </section>
         </div>
       </header>
       <div className="header-accent-line" />
       {showSettings && (
-        <div className="max-w-7xl mx-auto px-4" style={{background:'var(--bg)'}}>
+        <div className="settings-drawer max-w-7xl mx-auto px-4">
           <SettingsPanel maxComments={maxComments} onMaxCommentsChange={setMaxComments} delay={delay} onDelayChange={setDelay}
             onSettingsChanged={settings => setHasApiKey(settings.llm.sentiment.has_api_key)}/>
         </div>
       )}
-      <main className="max-w-7xl mx-auto px-4 py-6">
-        {toast && <div style={{position:'fixed',top:'1rem',left:'50%',transform:'translateX(-50%)',zIndex:100,padding:'.5rem 1.25rem',background:'var(--green-soft)',border:'1px solid var(--green)',borderRadius:'.5rem',color:'var(--green)',fontSize:'.8125rem',fontWeight:500}}>{toast}</div>}
-        {error && <div style={{padding:'.75rem 1rem',background:'var(--red-soft)',border:'1px solid var(--red)',borderRadius:'.5rem',color:'var(--red)',fontSize:'.8125rem',marginBottom:'1rem'}}>{error}</div>}
-        <div className="mb-4">
-          <button onClick={()=>setShowHistory(!showHistory)} className="flex items-center gap-1 text-xs text-muted mb-2" style={{background:'none',border:'none',cursor:'pointer'}}>
+      <main className="app-main max-w-7xl mx-auto px-4 py-6">
+        {toast && <div className="app-toast" role="status">{toast}</div>}
+        {error && <div className="app-alert app-alert--error" role="alert">{error}</div>}
+        <section className="history-rail mb-4" aria-label="历史记录">
+          <button onClick={()=>setShowHistory(!showHistory)} className="history-rail__toggle flex items-center gap-1 text-xs text-muted mb-2" aria-expanded={showHistory}>
             <span>{showHistory?'收起':'展开'}历史记录</span>
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{transform:showHistory?'rotate(180deg)':'rotate(0deg)',transition:'transform .2s'}}><path strokeLinecap="round" strokeLinejoin="round" d="M6 9l6 6 6-6"/></svg>
           </button>
           {showHistory && <HistoryPanel onSelect={handleViewHistory} selectedId={analysisId} refreshKey={historyRefreshKey}/>}
-        </div>
-        {!loading && results && (<div style={{marginBottom:'.75rem',padding:'.5rem .75rem',background:'var(--green-soft)',border:'1px solid var(--green)',borderRadius:'.375rem',color:'var(--green)',fontSize:'.75rem',fontWeight:500}}>模式: {results.mode === 'llm' ? '大模型八分类' : 'NLP三分类'} · 共 {results.total_comments} 条评论</div>)}
+        </section>
+        {!loading && results && (<div className="app-alert app-alert--status">模式: {results.mode === 'llm' ? '大模型八分类' : 'NLP三分类'} · 共 {results.total_comments} 条评论</div>)}
 
         {loading && !results && (
-          <div className="flex flex-col items-center justify-center py-20">
-            <div className="pulse-dot" style={{width:'.875rem',height:'.875rem',marginBottom:'1.5rem'}}></div>
+          <div className="app-state flex flex-col items-center justify-center py-20">
+            <div className="pulse-dot app-state__pulse"></div>
             <p className="text-sm text-secondary mb-3">{statusText}</p>
             {progressMax > 0 && (
-              <div className="progress-bar-track" style={{width:'20rem',maxWidth:'80%'}}>
+              <div className="progress-bar-track app-state__progress" role="progressbar" aria-label="评论抓取进度"
+                aria-valuemin={0} aria-valuemax={progressMax} aria-valuenow={Math.min(progress, progressMax)}>
                 <div className="progress-bar-fill" style={{width:Math.min(progress/progressMax*100,100)+'%'}}/>
               </div>
             )}
-            <button onClick={handleStop} style={{marginTop:'1rem',padding:'.375rem 1rem',fontSize:'.75rem',color:'var(--text-muted)',background:'transparent',border:'1px solid var(--border)',borderRadius:'.375rem',cursor:'pointer'}}>取消分析</button>
+            <button onClick={handleStop} className="btn btn-ghost app-state__action">取消分析</button>
           </div>
         )}
 
         {/* Loading overlay for reanalysis (result already rendered, just updating) */}
         {loading && results && (
-          <div className="flex flex-col items-center justify-center py-20">
-            <div className="pulse-dot" style={{width:'.875rem',height:'.875rem',marginBottom:'1.5rem'}}></div>
+          <div className="app-state flex flex-col items-center justify-center py-20">
+            <div className="pulse-dot app-state__pulse"></div>
             <p className="text-sm text-secondary mb-3">{statusText}</p>
-            <button onClick={handleStop} style={{marginTop:'1rem',padding:'.375rem 1rem',fontSize:'.75rem',color:'var(--text-muted)',background:'transparent',border:'1px solid var(--border)',borderRadius:'.375rem',cursor:'pointer'}}>取消分析</button>
+            <button onClick={handleStop} className="btn btn-ghost app-state__action">取消分析</button>
           </div>
         )}
 
         {!loading && !results && (
-          <div className="flex flex-col items-center justify-center py-20 text-muted">
-            <svg className="w-12 h-12 mb-4" style={{opacity:.15}} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+          <div className="app-state flex flex-col items-center justify-center py-20 text-muted">
+            <svg className="app-state__empty-icon w-12 h-12 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
             <p className="text-sm">输入 BV 号开始分析</p>
           </div>
         )}
@@ -317,18 +329,18 @@ function App() {
 
         {/* Reanalyze confirmation modal */}
         {reanalyzeModal && (
-          <div style={{position:'fixed',inset:0,zIndex:200,display:'flex',alignItems:'center',justifyContent:'center',background:'rgba(0,0,0,.45)'}} onClick={()=>setReanalyzeModal(false)}>
-            <div style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:'.75rem',padding:'1.5rem',maxWidth:'28rem',width:'90%',boxShadow:'var(--shadow-modal)'}} onClick={e=>e.stopPropagation()}>
-              <h3 style={{fontSize:'1rem',fontWeight:700,color:'var(--text-primary)',marginBottom:'.75rem'}}>切换到大模型情感分析</h3>
-              <p style={{fontSize:'.8125rem',color:'var(--text-secondary)',lineHeight:1.6,marginBottom:'1.25rem'}}>
+          <div className="reanalyze-dialog" onClick={()=>setReanalyzeModal(false)}>
+            <div className="reanalyze-dialog__panel" role="dialog" aria-modal="true" aria-labelledby="reanalyze-title" onClick={e=>e.stopPropagation()}>
+              <h3 id="reanalyze-title">切换到大模型情感分析</h3>
+              <p className="reanalyze-dialog__copy">
                 当前分析结果使用 NLP 三分类模式生成。是否使用已保存的 {results?.total_comments} 条评论数据，重新进行大模型八分类情感分析？
               </p>
-              <p style={{fontSize:'.75rem',color:'var(--text-muted)',marginBottom:'1.25rem',padding:'.5rem',background:'var(--yellow-soft)',borderRadius:'.375rem'}}>
+              <p className="reanalyze-dialog__notice">
                 ⚠ 大模型分析将调用设置中选择的情绪分析供应商，可能产生少量费用。
               </p>
-              <div style={{display:'flex',gap:'.75rem',justifyContent:'flex-end'}}>
-                <button onClick={()=>setReanalyzeModal(false)} style={{padding:'.5rem 1rem',fontSize:'.8125rem',color:'var(--text-secondary)',background:'transparent',border:'1px solid var(--border)',borderRadius:'.375rem',cursor:'pointer'}}>取消</button>
-                <button onClick={handleReanalyzeConfirm} style={{padding:'.5rem 1rem',fontSize:'.8125rem',fontWeight:600,color:'#fff',background:'var(--accent)',border:'none',borderRadius:'.375rem',cursor:'pointer'}}>确认重新分析</button>
+              <div className="reanalyze-dialog__actions">
+                <button onClick={()=>setReanalyzeModal(false)} className="btn btn-ghost">取消</button>
+                <button onClick={handleReanalyzeConfirm} className="btn btn-primary">确认重新分析</button>
               </div>
             </div>
           </div>

@@ -22,11 +22,11 @@ async function req<T>(url: string, options?: RequestInit): Promise<T> {
   return res.json();
 }
 
-export function startAnalysis(bv: string, maxComments = 100, requestDelay = 3.0, mode: AnalysisMode = 'nlp') {
+export function startAnalysis(bv: string, maxComments = 100, requestDelay = 3.0) {
   return req<{ analysis_id: number; status: string }>('/analyze', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ bv, max_comments: maxComments, request_delay: requestDelay, mode }),
+    body: JSON.stringify({ bv, max_comments: maxComments, request_delay: requestDelay }),
   });
 }
 
