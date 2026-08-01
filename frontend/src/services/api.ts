@@ -81,6 +81,14 @@ export function testLLM(task: LLMTask, config?: Partial<LLMTaskUpdate>) {
   });
 }
 
+export function getLLMModels(task: LLMTask, config?: Partial<LLMTaskUpdate>) {
+  return req<{ ok: boolean; provider: string; models: string[] }>('/settings/models', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ task, config }),
+  });
+}
+
 export function getSummaries(analysisId: number) {
   return req<AISummary[]>('/summaries/' + analysisId);
 }

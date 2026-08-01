@@ -1,14 +1,29 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
+
+interface ViewTransitionHandle {
+  ready: Promise<void>;
+  finished: Promise<void>;
+}
+
+type ViewTransitionDocument = Document & {
+  startViewTransition?: (update: () => void) => ViewTransitionHandle;
+};
 
 export default function ThemeToggle() {
   const [dark, setDark] = useState(() => {
     if (typeof document !== 'undefined') {
+      const saved = localStorage.getItem('theme');
+      if (saved === 'dark' || saved === 'light') return saved === 'dark';
       return document.documentElement.dataset.theme === 'dark' ||
         (!document.documentElement.dataset.theme &&
          window.matchMedia('(prefers-color-scheme: dark)').matches);
     }
     return false;
   });
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const animatingRef = useRef(false);
+  const [transitioning, setTransitioning] = useState(false);
 
   useEffect(() => {
     document.documentElement.dataset.theme = dark ? 'dark' : 'light';
@@ -24,42 +39,74 @@ export default function ThemeToggle() {
     return () => mq.removeEventListener('change', handler);
   }, []);
 
-  const toggle = () => {
+  const toggle = async () => {
+    if (animatingRef.current || !buttonRef.current) return;
+    animatingRef.current = true;
+    setTransitioning(true);
+
     const goingDark = !dark;
-    const cx = window.innerWidth / 2;
-    const cy = window.innerHeight / 2;
-    const maxR = Math.hypot(cx, cy);
+    const rect = buttonRef.current.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const maxR = Math.hypot(
+      Math.max(cx, window.innerWidth - cx),
+      Math.max(cy, window.innerHeight - cy),
+    );
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const applyTheme = () => {
+      document.documentElement.dataset.theme = goingDark ? 'dark' : 'light';
+      localStorage.setItem('theme', goingDark ? 'dark' : 'light');
+      flushSync(() => setDark(goingDark));
+    };
 
-    // 1. 先切换 data-theme（页面立刻变为新主题）
-    setDark(goingDark);
+    try {
+      if (reduceMotion) {
+        applyTheme();
+        return;
+      }
 
-    // 2. 创建 overlay，颜色 = 旧主题背景色
-    // 旧主题的颜色作为遮罩"被推开"
-    const oldBg = goingDark ? '#F6F3F0' : '#070B14';
-    const overlay = document.createElement('div');
-    overlay.style.cssText = `
-      position: fixed;
-      inset: 0;
-      z-index: 9999;
-      pointer-events: none;
-      background: ${oldBg};
-      clip-path: circle(${maxR}px at ${cx}px ${cy}px);
-    `;
-    document.body.appendChild(overlay);
+      const transitionDocument = document as ViewTransitionDocument;
+      if (transitionDocument.startViewTransition) {
+        const transition = transitionDocument.startViewTransition(applyTheme);
+        await transition.ready;
+        const pseudoElement = goingDark ? '::view-transition-old(root)' : '::view-transition-new(root)';
+        const clipPath = goingDark
+          ? [`circle(${maxR}px at ${cx}px ${cy}px)`, `circle(0px at ${cx}px ${cy}px)`]
+          : [`circle(0px at ${cx}px ${cy}px)`, `circle(${maxR}px at ${cx}px ${cy}px)`];
+        await document.documentElement.animate(
+          { clipPath },
+          { duration: 560, easing: 'cubic-bezier(.4,0,.2,1)', fill:'forwards', pseudoElement },
+        ).finished;
+        await transition.finished;
+        return;
+      }
 
-    // 3. 下一帧启动动画：从全屏圆形收缩到圆心点
-    requestAnimationFrame(() => {
-      overlay.style.transition = 'clip-path .5s cubic-bezier(.4,0,.2,1)';
-      overlay.style.clipPath = `circle(0 at ${cx}px ${cy}px)`;
-    });
-
-    overlay.addEventListener('transitionend', () => overlay.remove());
+      const oldBackground = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
+      applyTheme();
+      const newBackground = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
+      const overlay = document.createElement('div');
+      const startRadius = goingDark ? maxR : 0;
+      const endRadius = goingDark ? 0 : maxR;
+      overlay.style.cssText = `position:fixed;inset:0;z-index:9999;pointer-events:none;background:${goingDark ? oldBackground : newBackground};clip-path:circle(${startRadius}px at ${cx}px ${cy}px);`;
+      document.body.appendChild(overlay);
+      await overlay.animate(
+        { clipPath:[`circle(${startRadius}px at ${cx}px ${cy}px)`,`circle(${endRadius}px at ${cx}px ${cy}px)`] },
+        { duration:560, easing:'cubic-bezier(.4,0,.2,1)' },
+      ).finished;
+      overlay.remove();
+    } finally {
+      animatingRef.current = false;
+      setTransitioning(false);
+    }
   };
 
   return (
     <button
+      ref={buttonRef}
       className="theme-toggle"
       onClick={toggle}
+      disabled={transitioning}
+      aria-label={dark ? '切换为浅色模式' : '切换为深色模式'}
       title={dark ? '切换为浅色模式' : '切换为深色模式'}
     >
       {dark ? (

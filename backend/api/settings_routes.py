@@ -4,7 +4,7 @@ from time import perf_counter
 
 from fastapi import APIRouter, HTTPException
 
-from services.llm_client import LLMRequestError, chat_completion
+from services.llm_client import LLMRequestError, chat_completion, list_models
 from services.settings_store import (
     get_task_config,
     public_settings,
@@ -50,6 +50,22 @@ async def test_llm(req: dict):
             "model": model,
             "latency_ms": round((perf_counter() - started) * 1000),
             "message": content[:40],
+        }
+    except (ValueError, LLMRequestError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/settings/models")
+async def get_llm_models(req: dict):
+    task = str(req.get("task", ""))
+    override = req.get("config")
+    try:
+        config = get_task_config(task, override if isinstance(override, dict) else None)
+        models = await list_models(config)
+        return {
+            "ok": True,
+            "provider": config["provider"],
+            "models": models,
         }
     except (ValueError, LLMRequestError) as exc:
         raise HTTPException(400, str(exc)) from exc

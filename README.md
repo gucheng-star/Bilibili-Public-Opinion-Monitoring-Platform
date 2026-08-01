@@ -112,6 +112,7 @@ cd backend && python -m uvicorn main:app --host 0.0.0.0 --port 8000
 | GET | `/api/history` | 历史记录列表 |
 | DELETE | `/api/history/{id}` | 删除历史 (级联删除) |
 | GET/PUT | `/api/settings` | 读取或更新本机设置（密钥仅返回掩码） |
+| POST | `/api/settings/models` | 从指定供应商获取可选模型列表 |
 | POST | `/api/settings/test-llm` | 测试某项 AI 任务的模型连接 |
 | GET | `/api/summaries/{id}` | 获取分析记录下已保存的智能总结 |
 | POST | `/api/summaries/{id}` | 按当前筛选生成或覆盖智能总结 |

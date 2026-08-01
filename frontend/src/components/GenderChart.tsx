@@ -36,8 +36,8 @@ export default function GenderChart({ male, female, unknown }: Props) {
 
   const toggle = (t: ChartType) => () => setType(t);
 
-  return <div className="card">
-    <div className="flex items-center justify-between mb-2">
+  return <div className="card distribution-chart-card">
+    <div className="flex items-center justify-between mb-2 distribution-chart-header">
       <h3 className="text-xs font-semibold text-secondary" style={{letterSpacing:'.05em'}}>性别分布</h3>
       <div className="flex items-center gap-2">
         <DownloadChartButton echartRefs={chartRef} />
@@ -48,6 +48,6 @@ export default function GenderChart({ male, female, unknown }: Props) {
         </div>
       </div>
     </div>
-    <ReactECharts ref={chartRef} option={option} style={{height:260}}/>
+    <ReactECharts ref={chartRef} option={option} style={{height:260,width:'100%'}}/>
   </div>;
 }

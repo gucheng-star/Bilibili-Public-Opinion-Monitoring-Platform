@@ -327,6 +327,17 @@ body {
   cursor:pointer; color:var(--text-secondary); transition:all .2s ease;
 }
 .theme-toggle:hover { border-color:var(--border-accent); color:var(--accent); }
+.theme-toggle:disabled { cursor:wait; opacity:.8; }
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+[data-theme='light']::view-transition-new(root),
+[data-theme='dark']::view-transition-old(root) { z-index: 2; }
+[data-theme='light']::view-transition-old(root),
+[data-theme='dark']::view-transition-new(root) { z-index: 1; }
 
 /* ---- 12. Progress Bar ---- */
 .progress-bar-track {
@@ -405,6 +416,16 @@ body {
   to { opacity:1; transform:translateY(0); }
 }
 
+/* Keep paired distribution charts inside equal, shrinkable grid tracks. */
+.paired-chart-grid { align-items: stretch; min-width: 0; }
+.paired-chart-grid > .card-enter { height: 100%; min-width: 0; }
+.distribution-chart-card {
+  height: 100%; min-width: 0; overflow: hidden;
+  display: flex; flex-direction: column;
+}
+.distribution-chart-header { min-height: 2.25rem; flex-wrap: wrap; gap: .5rem; }
+.distribution-chart-card .echarts-for-react { min-width: 0; flex: 1 1 auto; }
+
 /* ---- 16. Animations ---- */
 @keyframes btn-shimmer {
   0%, 100% { background-position: 200% 0; }
@@ -482,8 +503,8 @@ body {
 /* ---- 21. Responsive ---- */
 @media (min-width:768px) {
   .md\:col-span-2 { grid-column:span 2 / span 2; }
-  .md\:grid-cols-2 { grid-template-columns:repeat(2,1fr); }
-  .md\:grid-cols-3 { grid-template-columns:repeat(3,1fr); }
+  .md\:grid-cols-2 { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .md\:grid-cols-3 { grid-template-columns:repeat(3,minmax(0,1fr)); }
   .md\:grid-auto-rows-fr { grid-auto-rows: 1fr; }
 }
 @media (min-width:1024px) {
@@ -534,7 +555,178 @@ body {
   box-shadow: 0 1px 3px rgba(0,0,0,.25);
 }
 
-/* ---- 25. LLM Settings ---- */
+/* ---- 25. Date Range Picker ---- */
+.date-range-picker {
+  position:relative;
+  z-index:20;
+}
+.date-range-trigger {
+  display:inline-flex;
+  align-items:center;
+  min-height:2rem;
+  padding:.3rem .6rem;
+  color:var(--text-primary);
+  background:var(--input-bg);
+  border:1px solid var(--input-border);
+  border-radius:999px;
+  cursor:pointer;
+  transition:border-color .18s ease,box-shadow .18s ease,background .18s ease;
+}
+.date-range-trigger:hover,
+.date-range-trigger.open {
+  border-color:var(--border-accent);
+  box-shadow:0 0 0 2px var(--input-focus-glow);
+}
+.date-range-trigger > span {
+  padding-right:.55rem;
+  color:var(--text-muted);
+  font-size:.6875rem;
+  white-space:nowrap;
+}
+.date-range-trigger > strong {
+  padding:0 .6rem;
+  border-left:1px solid var(--border-strong);
+  font-size:.75rem;
+  font-weight:600;
+  white-space:nowrap;
+}
+.date-range-trigger svg {
+  flex:none;
+  color:var(--text-secondary);
+  transition:transform .18s ease;
+}
+.date-range-trigger.open svg { transform:rotate(180deg); }
+.date-range-popover {
+  position:absolute;
+  left:0;
+  top:calc(100% + .5rem);
+  display:grid;
+  grid-template-columns:8.5rem minmax(0,1fr);
+  width:min(43rem,calc(100vw - 3rem));
+  overflow:hidden;
+  color:var(--text-primary);
+  background:var(--bg-elevated);
+  border:1px solid var(--border-strong);
+  border-radius:var(--radius-lg);
+  box-shadow:var(--shadow-modal);
+  animation:date-popover-enter .16s ease-out;
+}
+@keyframes date-popover-enter {
+  from { opacity:0; transform:translateY(-5px) scale(.99); }
+  to { opacity:1; transform:translateY(0) scale(1); }
+}
+.date-range-presets {
+  display:flex;
+  flex-direction:column;
+  gap:.15rem;
+  padding:.55rem;
+  background:color-mix(in srgb,var(--bg) 72%,var(--bg-elevated));
+  border-right:1px solid var(--border);
+}
+.date-range-presets button {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  width:100%;
+  padding:.55rem .65rem;
+  color:var(--text-secondary);
+  background:transparent;
+  border:0;
+  border-radius:var(--radius-sm);
+  font-size:.75rem;
+  text-align:left;
+  cursor:pointer;
+}
+.date-range-presets button:hover { color:var(--text-primary); background:var(--bg-card-hover); }
+.date-range-presets button.active {
+  color:var(--text-primary);
+  background:var(--bg-card-hover);
+  font-weight:600;
+}
+.date-range-presets button.active span:last-child { color:var(--accent); }
+.date-range-calendars {
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:1rem;
+  padding:.8rem 1rem 1rem;
+}
+.calendar-month { min-width:0; }
+.calendar-month-header {
+  display:grid;
+  grid-template-columns:1.75rem 1fr 1.75rem;
+  align-items:center;
+  min-height:2rem;
+  margin-bottom:.35rem;
+}
+.calendar-month-header strong {
+  text-align:center;
+  font-size:.8125rem;
+  font-weight:700;
+}
+.calendar-month-header button {
+  width:1.75rem;
+  height:1.75rem;
+  color:var(--text-secondary);
+  background:transparent;
+  border:0;
+  border-radius:50%;
+  font-size:1.15rem;
+  cursor:pointer;
+}
+.calendar-month-header button:hover:not(:disabled) { color:var(--accent); background:var(--accent-soft); }
+.calendar-month-header button:disabled { color:var(--text-muted); opacity:.35; cursor:not-allowed; }
+.calendar-weekdays,
+.calendar-days {
+  display:grid;
+  grid-template-columns:repeat(7,minmax(0,1fr));
+}
+.calendar-weekdays span {
+  padding:.3rem 0;
+  color:var(--text-muted);
+  font-size:.625rem;
+  font-weight:650;
+  text-align:center;
+}
+.calendar-days { row-gap:.15rem; }
+.calendar-days button,
+.calendar-day-empty {
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  min-width:0;
+  height:1.95rem;
+}
+.calendar-days button {
+  position:relative;
+  color:var(--text-secondary);
+  background:transparent;
+  border:0;
+  border-radius:0;
+  font-size:.6875rem;
+  cursor:pointer;
+}
+.calendar-days button:hover:not(:disabled) {
+  color:var(--text-primary);
+  background:var(--accent-soft);
+}
+.calendar-days button.in-range {
+  color:var(--text-primary);
+  background:color-mix(in srgb,var(--accent) 14%,transparent);
+}
+.calendar-days button.range-endpoint {
+  color:#fff;
+  background:var(--accent);
+  border-radius:999px;
+  font-weight:700;
+  box-shadow:0 0 0 2px var(--accent-soft);
+}
+.calendar-days button:disabled {
+  color:var(--text-muted);
+  opacity:.35;
+  cursor:not-allowed;
+}
+
+/* ---- 26. LLM Settings ---- */
 .settings-panel {
   margin-top:.75rem;
   padding:1.25rem;
@@ -648,6 +840,11 @@ body {
   border-color:var(--accent);
   box-shadow:0 0 0 2px var(--input-focus-glow);
 }
+.llm-config-grid select:disabled {
+  cursor:not-allowed;
+  color:var(--text-muted);
+  opacity:.8;
+}
 .llm-base-url,
 .llm-api-key {
   grid-column:1 / -1;
@@ -662,6 +859,10 @@ body {
 .llm-config-actions .btn {
   padding:.375rem .7rem;
   font-size:.6875rem;
+}
+.llm-fetch-models {
+  border-color:var(--border-accent);
+  color:var(--accent);
 }
 .llm-clear-key {
   color:var(--red);
@@ -695,7 +896,7 @@ body {
   font-size:.6875rem;
 }
 
-/* ---- 26. AI Briefing ---- */
+/* ---- 27. AI Briefing ---- */
 .ai-summary-card {
   position:relative;
   overflow:hidden;
@@ -838,5 +1039,17 @@ body {
   .ai-summary-header .btn { flex:none; }
   .ai-summary-meta { flex-direction:column; gap:.2rem; }
   .ai-summary-meta span + span::before { display:none; }
+  .date-range-popover {
+    grid-template-columns:1fr;
+    width:min(21.5rem,calc(100vw - 2rem));
+  }
+  .date-range-presets {
+    display:grid;
+    grid-template-columns:repeat(3,minmax(0,1fr));
+    border-right:0;
+    border-bottom:1px solid var(--border);
+  }
+  .date-range-presets button { padding:.45rem .5rem; }
+  .date-range-calendars { grid-template-columns:1fr; }
 }
 

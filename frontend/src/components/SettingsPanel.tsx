@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { getSettings, testLLM, updateSettings } from '../services/api';
+import { getLLMModels, getSettings, testLLM, updateSettings } from '../services/api';
 import type { LLMProvider, LLMTask, LLMTaskSettings, LLMTaskUpdate, SettingsResponse } from '../types';
 
 interface Props {
@@ -38,6 +38,9 @@ const toEditor = (settings: LLMTaskSettings): EditorState => ({
   fallback_model: settings.fallback_model || '',
   api_key: '',
 });
+const currentModelOptions = (settings: LLMTaskSettings) => (
+  [...new Set([settings.model, settings.fallback_model].filter(Boolean))]
+);
 
 function LLMTaskEditor({ task, title, description, saved, onSaved }: {
   task: LLMTask;
@@ -47,16 +50,26 @@ function LLMTaskEditor({ task, title, description, saved, onSaved }: {
   onSaved: (settings: SettingsResponse) => void;
 }) {
   const [editor, setEditor] = useState<EditorState>(() => toEditor(saved));
-  const [busy, setBusy] = useState<'save' | 'test' | 'clear' | null>(null);
+  const [models, setModels] = useState<string[]>(() => currentModelOptions(saved));
+  const [busy, setBusy] = useState<'models' | 'save' | 'test' | 'clear' | null>(null);
   const [message, setMessage] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
   const storedKeyMatches = saved.provider === editor.provider && saved.has_api_key;
   const keyReady = storedKeyMatches || Boolean(editor.api_key.trim());
   const keyStatus = editor.api_key.trim() ? '已输入新密钥' : storedKeyMatches ? '密钥就绪' : '未配置密钥';
 
-  useEffect(() => setEditor(toEditor(saved)), [saved]);
+  useEffect(() => {
+    setEditor(toEditor(saved));
+    setModels(currentModelOptions(saved));
+  }, [saved]);
 
   const setProvider = (provider: LLMProvider) => {
-    setEditor({ provider, api_key: '', ...PROVIDER_DEFAULTS[provider] });
+    setEditor({ provider, api_key: '', ...PROVIDER_DEFAULTS[provider], model: '', fallback_model: '' });
+    setModels([]);
+    setMessage(null);
+  };
+  const setBaseUrl = (base_url: string) => {
+    setEditor(current => ({ ...current, base_url, model: '', fallback_model: '' }));
+    setModels([]);
     setMessage(null);
   };
   const payload = (): LLMTaskUpdate => ({
@@ -66,6 +79,21 @@ function LLMTaskEditor({ task, title, description, saved, onSaved }: {
     fallback_model: editor.fallback_model.trim(),
     ...(editor.api_key.trim() ? { api_key: editor.api_key.trim() } : {}),
   });
+  const fetchModels = async () => {
+    setBusy('models'); setMessage(null);
+    try {
+      const result = await getLLMModels(task, payload());
+      const nextModel = result.models.includes(editor.model) ? editor.model : result.models[0];
+      const nextFallback = result.models.includes(editor.fallback_model) && editor.fallback_model !== nextModel
+        ? editor.fallback_model
+        : '';
+      setModels(result.models);
+      setEditor(current => ({ ...current, model: nextModel, fallback_model: nextFallback }));
+      setMessage({ kind: 'ok', text: `已获取 ${result.models.length} 个可用模型` });
+    } catch (error) {
+      setMessage({ kind: 'error', text: error instanceof Error ? error.message : '获取模型列表失败' });
+    } finally { setBusy(null); }
+  };
   const save = async () => {
     setBusy('save'); setMessage(null);
     try {
@@ -111,30 +139,43 @@ function LLMTaskEditor({ task, title, description, saved, onSaved }: {
       </div>
       <div className="llm-config-grid">
         <label><span>供应商</span>
-          <select value={editor.provider} onChange={event => setProvider(event.target.value as LLMProvider)} className="select-sm">
+          <select value={editor.provider} onChange={event => setProvider(event.target.value as LLMProvider)} className="select-sm" disabled={busy !== null}>
             {(Object.keys(PROVIDER_NAMES) as LLMProvider[]).map(provider => (
               <option key={provider} value={provider}>{PROVIDER_NAMES[provider]}</option>
             ))}
           </select>
         </label>
         <label><span>模型</span>
-          <input value={editor.model} onChange={event => setEditor({ ...editor, model: event.target.value })} placeholder="输入模型 ID" />
+          <select value={editor.model} onChange={event => {
+            const model = event.target.value;
+            setEditor(current => ({ ...current, model, fallback_model: current.fallback_model === model ? '' : current.fallback_model }));
+          }} disabled={busy !== null || !models.length}>
+            {!models.length && <option value="">请先获取模型列表</option>}
+            {models.map(model => <option key={model} value={model}>{model}</option>)}
+          </select>
         </label>
         <label className="llm-base-url"><span>Base URL</span>
-          <input value={editor.base_url} onChange={event => setEditor({ ...editor, base_url: event.target.value })} placeholder="https://example.com/v1" />
+          <input value={editor.base_url} onChange={event => setBaseUrl(event.target.value)} placeholder="https://example.com/v1" disabled={busy !== null} />
         </label>
         <label><span>回退模型 <small>可选</small></span>
-          <input value={editor.fallback_model} onChange={event => setEditor({ ...editor, fallback_model: event.target.value })} placeholder="主模型失败时尝试" />
+          <select value={editor.fallback_model} onChange={event => setEditor({ ...editor, fallback_model: event.target.value })} disabled={busy !== null || !models.length}>
+            <option value="">不使用回退模型</option>
+            {models.filter(model => model !== editor.model).map(model => (
+              <option key={model} value={model}>{model}</option>
+            ))}
+          </select>
         </label>
         <label className="llm-api-key"><span>API Key</span>
           <input type="password" value={editor.api_key} autoComplete="off"
             onChange={event => setEditor({ ...editor, api_key: event.target.value })}
+            disabled={busy !== null}
             placeholder={storedKeyMatches ? saved.api_key_preview : 'sk-...'} />
         </label>
       </div>
       <div className="llm-config-actions">
-        <button type="button" className="btn btn-primary" onClick={save} disabled={busy !== null}>{busy === 'save' ? '保存中…' : '保存配置'}</button>
-        <button type="button" className="btn btn-ghost" onClick={test} disabled={busy !== null}>{busy === 'test' ? '测试中…' : '测试连接'}</button>
+        <button type="button" className="btn btn-ghost llm-fetch-models" onClick={fetchModels} disabled={busy !== null}>{busy === 'models' ? '获取中…' : '获取模型列表'}</button>
+        <button type="button" className="btn btn-primary" onClick={save} disabled={busy !== null || !editor.model}>{busy === 'save' ? '保存中…' : '保存配置'}</button>
+        <button type="button" className="btn btn-ghost" onClick={test} disabled={busy !== null || !editor.model}>{busy === 'test' ? '测试中…' : '测试连接'}</button>
         {storedKeyMatches && <button type="button" className="btn btn-ghost llm-clear-key" onClick={clearKey} disabled={busy !== null}>{busy === 'clear' ? '清除中…' : '清除密钥'}</button>}
         {message && <span role="status" className={`llm-config-message ${message.kind}`}>{message.text}</span>}
       </div>

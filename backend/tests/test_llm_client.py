@@ -21,6 +21,10 @@ class FakeClient:
         self.calls.append((url, kwargs))
         return self.response
 
+    async def get(self, url, **kwargs):
+        self.calls.append((url, kwargs))
+        return self.response
+
 
 class LLMClientTests(unittest.IsolatedAsyncioTestCase):
     def test_url_validation_rejects_non_public_targets(self):
@@ -89,6 +93,50 @@ class LLMClientTests(unittest.IsolatedAsyncioTestCase):
                 await llm_client.chat_completion(
                     config, [{"role": "user", "content": "test"}], check_dns=False, retries=0
                 )
+
+    async def test_list_models_uses_compatible_endpoint_and_deduplicates_ids(self):
+        calls = []
+        response = httpx.Response(
+            200,
+            json={"object": "list", "data": [
+                {"id": "model-b", "object": "model"},
+                {"id": "model-a", "object": "model"},
+                {"id": "model-a", "object": "model"},
+                {"id": " ", "object": "model"},
+                {"object": "model"},
+            ]},
+            request=httpx.Request("GET", "https://api.example.com/v1/models"),
+        )
+        config = {
+            "provider": "custom",
+            "base_url": "https://api.example.com/v1/chat/completions",
+            "model": "",
+            "fallback_model": "",
+            "api_key": "secret",
+        }
+        with patch.object(llm_client.httpx, "AsyncClient", return_value=FakeClient(response, calls)):
+            models = await llm_client.list_models(config, check_dns=False)
+
+        self.assertEqual(models, ["model-a", "model-b"])
+        self.assertEqual(calls[0][0], "https://api.example.com/v1/models")
+        self.assertEqual(calls[0][1]["headers"]["Authorization"], "Bearer secret")
+
+    async def test_list_models_rejects_incomplete_response(self):
+        response = httpx.Response(
+            200,
+            json={"object": "list"},
+            request=httpx.Request("GET", "https://api.example.com/v1/models"),
+        )
+        config = {
+            "provider": "custom",
+            "base_url": "https://api.example.com/v1",
+            "model": "",
+            "fallback_model": "",
+            "api_key": "secret",
+        }
+        with patch.object(llm_client.httpx, "AsyncClient", return_value=FakeClient(response, [])):
+            with self.assertRaisesRegex(llm_client.LLMRequestError, "模型列表返回格式不完整"):
+                await llm_client.list_models(config, check_dns=False)
 
 
 if __name__ == "__main__":

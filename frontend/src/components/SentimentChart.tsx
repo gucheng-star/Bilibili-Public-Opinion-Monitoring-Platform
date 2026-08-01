@@ -62,8 +62,8 @@ export default function SentimentChart({ positive, negative, neutral, mode, llm,
   const toggle = (t: ChartType) => () => setType(t);
 
   return (
-    <div className="card">
-      <div className="flex items-center justify-between mb-2" style={{flexWrap:'wrap',gap:'.25rem'}}>
+    <div className="card distribution-chart-card">
+      <div className="flex items-center justify-between mb-2 distribution-chart-header">
         <h3 className="text-xs font-semibold text-secondary" style={{letterSpacing:'.05em'}}>
           情感分布{isLLM ? '（大模型八分类）' : '（NLP 三分类）'}
         </h3>
@@ -86,7 +86,7 @@ export default function SentimentChart({ positive, negative, neutral, mode, llm,
           </select>
         </div>
       </div>
-      <ReactECharts ref={chartRef} option={option} style={{height:260}}/>
+      <ReactECharts ref={chartRef} option={option} style={{height:260,width:'100%'}}/>
     </div>
   );
 }

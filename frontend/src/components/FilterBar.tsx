@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import type { AnalysisMode, FilterState } from '../types';
+import DateRangePicker from './DateRangePicker';
 
 interface Props {
   filters: FilterState;
@@ -41,21 +42,11 @@ export default function FilterBar({ filters, onApply, availableRegions, mode }: 
         <button className={draft.gender === 'female' ? 'active' : ''} onClick={() => update({ gender: 'female' })}>仅女</button>
       </div>
 
-      <input type="date" value={draft.dateFrom}
-        onChange={e => update({ dateFrom: e.target.value })}
-        style={{
-          padding: '.25rem .5rem', fontSize: '.6875rem', background: 'var(--bg)',
-          color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: '.375rem',
-        }} />
-
-      <span style={{ fontSize: '.6875rem', color: 'var(--text-muted)' }}>至</span>
-
-      <input type="date" value={draft.dateTo}
-        onChange={e => update({ dateTo: e.target.value })}
-        style={{
-          padding: '.25rem .5rem', fontSize: '.6875rem', background: 'var(--bg)',
-          color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: '.375rem',
-        }} />
+      <DateRangePicker
+        dateFrom={draft.dateFrom}
+        dateTo={draft.dateTo}
+        onChange={range => update(range)}
+      />
 
       <select value={draft.region}
         onChange={e => update({ region: e.target.value })}

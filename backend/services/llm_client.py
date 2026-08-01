@@ -54,6 +54,73 @@ def _chat_url(base_url: str) -> str:
     return base_url if base_url.endswith("/chat/completions") else f"{base_url}/chat/completions"
 
 
+def _models_url(base_url: str) -> str:
+    chat_suffix = "/chat/completions"
+    root = base_url[:-len(chat_suffix)] if base_url.endswith(chat_suffix) else base_url
+    return root if root.endswith("/models") else f"{root}/models"
+
+
+def _status_error(status: int) -> LLMRequestError:
+    if status in {401, 403}:
+        message = "API Key 无效或没有模型权限"
+    elif status == 404:
+        message = "模型服务不支持该接口，请检查 Base URL"
+    elif status == 429:
+        message = "模型服务请求过于频繁，请稍后重试"
+    elif status >= 500:
+        message = "模型服务暂时不可用"
+    else:
+        message = f"模型服务拒绝了请求（HTTP {status}）"
+    return LLMRequestError(message)
+
+
+async def list_models(
+    config: dict[str, str],
+    *,
+    check_dns: bool = True,
+) -> list[str]:
+    """Return model IDs exposed by an OpenAI-compatible ``/models`` endpoint."""
+    api_key = config.get("api_key", "").strip()
+    if not api_key:
+        raise ValueError("尚未配置 API Key")
+    base_url = validate_base_url(config.get("base_url", ""))
+    if check_dns:
+        await _ensure_public_hostname(base_url)
+
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(30.0),
+            follow_redirects=False,
+        ) as client:
+            response = await client.get(
+                _models_url(base_url),
+                headers={"Authorization": f"Bearer {api_key}"},
+            )
+        if 300 <= response.status_code < 400:
+            raise LLMRequestError("模型服务返回重定向，已拒绝跟随")
+        response.raise_for_status()
+        data = response.json()
+        entries = data.get("data") if isinstance(data, dict) else None
+        if not isinstance(entries, list):
+            raise LLMRequestError("模型列表返回格式不完整")
+        models = sorted({
+            item["id"].strip()
+            for item in entries
+            if isinstance(item, dict) and isinstance(item.get("id"), str) and item["id"].strip()
+        })
+        if not models:
+            raise LLMRequestError("模型服务没有返回可用模型")
+        return models
+    except LLMRequestError:
+        raise
+    except httpx.TimeoutException as exc:
+        raise LLMRequestError("模型服务响应超时") from exc
+    except httpx.HTTPStatusError as exc:
+        raise _status_error(exc.response.status_code) from exc
+    except (httpx.HTTPError, ValueError, TypeError) as exc:
+        raise LLMRequestError("无法连接模型服务，请检查接口配置") from exc
+
+
 def _extract_content(data: Any) -> str:
     try:
         content = data["choices"][0]["message"]["content"]
@@ -141,16 +208,7 @@ async def chat_completion(
                 last_error = LLMRequestError("模型服务响应超时")
                 last_error.__cause__ = exc
             except httpx.HTTPStatusError as exc:
-                status = exc.response.status_code
-                if status in {401, 403}:
-                    message = "API Key 无效或没有模型权限"
-                elif status == 429:
-                    message = "模型服务请求过于频繁，请稍后重试"
-                elif status >= 500:
-                    message = "模型服务暂时不可用"
-                else:
-                    message = f"模型服务拒绝了请求（HTTP {status}）"
-                last_error = LLMRequestError(message)
+                last_error = _status_error(exc.response.status_code)
             except (httpx.HTTPError, ValueError, TypeError) as exc:
                 last_error = LLMRequestError("无法连接模型服务，请检查接口配置")
                 last_error.__cause__ = exc

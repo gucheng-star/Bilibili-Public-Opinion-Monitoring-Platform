@@ -301,7 +301,7 @@ function App() {
           {analysisId && <div className="card-enter mt-4">
             <AISummaryCard analysisId={analysisId} filters={filters} matchedCount={filteredComments.length} mode={results.mode}/>
           </div>}
-          <div className="grid grid-cols-1 md:grid-cols-2 md:grid-auto-rows-fr gap-4 mt-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 md:grid-auto-rows-fr gap-4 mt-4 paired-chart-grid">
             <div className="card-enter">
               <SentimentChart positive={filteredSentiment.positive} negative={filteredSentiment.negative} neutral={filteredSentiment.neutral} mode={analysisMode} llm={results.mode === 'llm' ? filteredLlmSentiment : null} onModeChange={handleModeChange}/>
             </div>
