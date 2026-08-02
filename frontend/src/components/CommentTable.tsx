@@ -4,6 +4,7 @@ import type { AnalysisMode, CommentData, SentimentLabel, SentimentLLM } from '..
 interface Props { comments: CommentData[]; mode: AnalysisMode; }
 
 type LlmSentimentLabel = keyof SentimentLLM;
+type CommentNode = { comment: CommentData; children: CommentNode[] };
 
 const COMMENT_PREVIEW_LENGTH = 72;
 
@@ -21,17 +22,22 @@ const TAG: Record<SentimentLabel, { label: string; bg: string; color: string }> 
 };
 
 const LLM_TAG: Record<LlmSentimentLabel, { label: string; bg: string; color: string }> = {
+  neutral: { label: '中性', bg: 'rgba(148,163,184,.10)', color: 'var(--text-muted)' },
   joy: { label: '喜悦', bg: 'rgba(251,191,36,.14)', color: '#B45309' },
+  support: { label: '支持', bg: 'var(--green-soft)', color: 'var(--green)' },
+  anticipation: { label: '期待', bg: 'rgba(6,182,212,.12)', color: '#0E7490' },
+  surprise: { label: '惊讶', bg: 'rgba(249,115,22,.12)', color: '#C2410C' },
   anger: { label: '愤怒', bg: 'var(--red-soft)', color: 'var(--red)' },
   sadness: { label: '悲伤', bg: 'rgba(99,102,241,.12)', color: '#4F46E5' },
-  surprise: { label: '惊讶', bg: 'rgba(249,115,22,.12)', color: '#C2410C' },
-  fear: { label: '恐惧', bg: 'rgba(139,92,246,.12)', color: '#7C3AED' },
+  concern: { label: '担忧', bg: 'rgba(139,92,246,.12)', color: '#7C3AED' },
   disgust: { label: '厌恶', bg: 'rgba(132,204,22,.14)', color: '#4D7C0F' },
-  anticipation: { label: '期待', bg: 'rgba(6,182,212,.12)', color: '#0E7490' },
-  trust: { label: '信任', bg: 'var(--green-soft)', color: 'var(--green)' },
 };
 
 const UNCLASSIFIED_TAG = { label: '未分类', bg: 'rgba(148,163,184,.06)', color: 'var(--text-muted)' };
+const STYLE_TAG: Record<string, { label: string; bg: string; color: string }> = {
+  meme: { label: '玩梗', bg: 'rgba(6,182,212,.10)', color: '#0E7490' },
+  sarcasm: { label: '反讽', bg: 'rgba(236,72,153,.10)', color: '#BE185D' },
+};
 
 export default function CommentTable({ comments, mode }: Props) {
   const [sortBy, setSortBy] = useState<'time'|'likes'>('time');
@@ -43,7 +49,7 @@ export default function CommentTable({ comments, mode }: Props) {
   const rafId = useRef(0);
   const hideTimer = useRef(0);
 
-  useEffect(() => { setPage(1); }, [mode, comments]);
+  useEffect(() => { setPage(1); }, [mode, comments, sortBy]);
 
   // Create persistent tooltip DOM element (portal style, command-style updates)
   useEffect(() => {
@@ -103,13 +109,58 @@ export default function CommentTable({ comments, mode }: Props) {
     return list;
   }, [comments, sortBy]);
 
-  const pages = Math.ceil(sorted.length/pageSize);
-  const paged = sorted.slice((page-1)*pageSize, page*pageSize);
+  const treeRoots = useMemo(() => {
+    const nodesByRpid = new Map<string, CommentNode>();
+    sorted.forEach(comment => nodesByRpid.set(String(comment.rpid), { comment, children: [] }));
+    const roots: CommentNode[] = [];
+    nodesByRpid.forEach(node => {
+      const parent = node.comment.parent_rpid ? nodesByRpid.get(String(node.comment.parent_rpid)) : undefined;
+      if (parent && parent !== node) parent.children.push(node);
+      else roots.push(node);
+    });
+    return roots;
+  }, [sorted]);
+
+  const pages = Math.max(1, Math.ceil(treeRoots.length/pageSize));
+  const pagedRoots = treeRoots.slice((page-1)*pageSize, page*pageSize);
+  const replyCount = sorted.length - treeRoots.length;
+
+  const renderNode = (node: CommentNode, depth = 0): React.ReactNode[] => {
+    const c = node.comment;
+    const t = mode === 'llm'
+      ? LLM_TAG[c.sentiment_llm_label as LlmSentimentLabel] || UNCLASSIFIED_TAG
+      : TAG[c.sentiment_label] || TAG.neutral;
+    const style = mode === 'llm' ? STYLE_TAG[c.sentiment_llm_style] : undefined;
+    return [
+      <tr key={c.id} className={depth ? 'comment-tree-row comment-tree-row--reply' : 'comment-tree-row'}>
+        <td style={{padding:'.6rem .5rem',color:'var(--text-primary)'}} className="truncate" title={c.username}>{c.username}</td>
+        <td style={{padding:'.6rem .5rem',color:'var(--text-muted)',fontSize:'.6875rem'}}>{c.ip_location||'-'}</td>
+        <td style={{padding:'.6rem .5rem',color:'var(--text-secondary)',cursor:'pointer'}}>
+          <div className="comment-tree__content" style={{paddingLeft: `${depth * 1.25}rem`}}
+            onMouseEnter={e=>{showTip(c.content,e.clientX,e.clientY);}}
+            onMouseLeave={hideTip}>
+            {depth > 0 && <span className="comment-tree__branch" aria-hidden="true">↳</span>}
+            <span className="comment-tree__text">{getCommentPreview(c.content)}</span>
+          </div>
+        </td>
+        <td style={{padding:'.6rem .5rem',textAlign:'center',color:'var(--text-secondary)',fontSize:'.8125rem'}}>{c.likes}</td>
+        <td style={{padding:'.6rem .5rem',textAlign:'center'}}>
+          <div style={{display:'inline-flex',gap:'.25rem',flexWrap:'wrap',justifyContent:'center'}}>
+            <span style={{fontSize:'.6875rem',padding:'.125rem .375rem',borderRadius:'.25rem',background:t.bg,color:t.color}}>{t.label}</span>
+            {style && <span style={{fontSize:'.6875rem',padding:'.125rem .375rem',borderRadius:'.25rem',background:style.bg,color:style.color}}>{style.label}</span>}
+          </div>
+        </td>
+        <td style={{padding:'.6rem .5rem',color:'var(--text-muted)',fontSize:'.6875rem'}}>{c.post_time?new Date(c.post_time).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}):'-'}</td>
+      </tr>,
+      ...node.children.flatMap(child => renderNode(child, depth + 1)),
+    ];
+  };
 
   return <div className="card" ref={cardRef} onMouseMove={onCardMove}>
     <div className="flex items-center justify-between mb-3">
       <h3 className="text-xs font-semibold text-secondary" style={{letterSpacing:'.05em'}}>评论列表 ({sorted.length})</h3>
       <div className="flex items-center gap-2">
+        <span className="comment-tree__legend">{treeRoots.length} 个根评论 · {replyCount} 条回复</span>
         <select value={sortBy} onChange={e=>setSortBy(e.target.value as any)} className="select-sm">
           <option value="time">按时间</option><option value="likes">按点赞</option>
         </select>
@@ -128,21 +179,7 @@ export default function CommentTable({ comments, mode }: Props) {
           </tr>
         </thead>
         <tbody>
-          {paged.map(c => {
-            const t = mode === 'llm'
-              ? LLM_TAG[c.sentiment_llm_label as LlmSentimentLabel] || UNCLASSIFIED_TAG
-              : TAG[c.sentiment_label] || TAG.neutral;
-            return <tr key={c.id} style={{borderBottom:'1px solid var(--border)'}} className="transition-colors">
-              <td style={{padding:'.5rem',color:'var(--text-primary)'}} className="truncate" title={c.username}>{c.username}</td>
-              <td style={{padding:'.5rem',color:'var(--text-muted)',fontSize:'.6875rem'}}>{c.ip_location||'-'}</td>
-              <td style={{padding:'.5rem',color:'var(--text-secondary)',cursor:'pointer'}} className="comment-table__content truncate"
-                onMouseEnter={e=>{showTip(c.content,e.clientX,e.clientY);}}
-                onMouseLeave={hideTip}>{getCommentPreview(c.content)}</td>
-              <td style={{padding:'.5rem',textAlign:'center',color:'var(--text-secondary)',fontSize:'.8125rem'}}>{c.likes}</td>
-              <td style={{padding:'.5rem',textAlign:'center'}}><span style={{fontSize:'.6875rem',padding:'.125rem .375rem',borderRadius:'.25rem',background:t.bg,color:t.color}}>{t.label}</span></td>
-              <td style={{padding:'.5rem',color:'var(--text-muted)',fontSize:'.6875rem'}}>{c.post_time?new Date(c.post_time).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}):'-'}</td>
-            </tr>;
-          })}
+          {pagedRoots.flatMap(root => renderNode(root))}
         </tbody>
       </table>
     </div>

@@ -43,6 +43,8 @@ class Comment(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     analysis_id = Column(Integer, ForeignKey("analyses.id"), nullable=False, index=True)
     rpid = Column(Integer, nullable=False)
+    root_rpid = Column(Integer)
+    parent_rpid = Column(Integer)
     username = Column(String(100))
     gender = Column(String(10))
     ip_location = Column(String(50))
@@ -51,6 +53,7 @@ class Comment(Base):
     sentiment_label = Column(String(10))
     sentiment_score = Column(Float)
     sentiment_llm_label = Column(String(20), default="")
+    sentiment_llm_style = Column(String(20), default="plain")
     post_time = Column(DateTime, nullable=False)
 
     analysis = relationship("Analysis", back_populates="comments")
@@ -64,13 +67,16 @@ class SentimentResult(Base):
     positive_count = Column(Integer, default=0)
     negative_count = Column(Integer, default=0)
     neutral_count = Column(Integer, default=0)
+    llm_neutral = Column(Integer, default=0)
     llm_joy = Column(Integer, default=0)
+    llm_support = Column(Integer, default=0)
     llm_anger = Column(Integer, default=0)
     llm_sadness = Column(Integer, default=0)
     llm_surprise = Column(Integer, default=0)
     llm_fear = Column(Integer, default=0)
     llm_disgust = Column(Integer, default=0)
     llm_anticipation = Column(Integer, default=0)
+    llm_concern = Column(Integer, default=0)
     llm_trust = Column(Integer, default=0)
 
     analysis = relationship("Analysis", back_populates="sentiment")
@@ -119,11 +125,17 @@ def _migrate(eng):
         cols = {c["name"] for c in inspector.get_columns("comments")}
         if "sentiment_llm_label" not in cols:
             migrations.append(("comments", "ALTER TABLE comments ADD COLUMN sentiment_llm_label VARCHAR(20) DEFAULT ''"))
+        if "sentiment_llm_style" not in cols:
+            migrations.append(("comments", "ALTER TABLE comments ADD COLUMN sentiment_llm_style VARCHAR(20) DEFAULT 'plain'"))
+        if "root_rpid" not in cols:
+            migrations.append(("comments", "ALTER TABLE comments ADD COLUMN root_rpid INTEGER"))
+        if "parent_rpid" not in cols:
+            migrations.append(("comments", "ALTER TABLE comments ADD COLUMN parent_rpid INTEGER"))
     if "sentiment_results" in inspector.get_table_names():
         cols = {c["name"] for c in inspector.get_columns("sentiment_results")}
         llm_fields = [
-            "llm_joy", "llm_anger", "llm_sadness", "llm_surprise",
-            "llm_fear", "llm_disgust", "llm_anticipation", "llm_trust",
+            "llm_neutral", "llm_joy", "llm_support", "llm_anger", "llm_sadness", "llm_surprise",
+            "llm_fear", "llm_disgust", "llm_anticipation", "llm_concern", "llm_trust",
         ]
         for field in llm_fields:
             if field not in cols:

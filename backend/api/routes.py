@@ -1,3 +1,4 @@
+import os
 import httpx
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from sqlalchemy import desc
@@ -9,8 +10,65 @@ from services.wordcloud_gen import generate_wordcloud, get_top_keywords
 from services.region import analyze_region
 from services.heat import analyze_heat
 from services.settings_store import get_task_config
+from services.sentiment_test_fixtures import (
+    FIXTURE_VIDEO_TITLE,
+    build_fixture_comments,
+    fixture_case_catalog,
+)
 
 router = APIRouter(prefix='/api')
+TEST_FIXTURES_ENABLED = os.getenv("BILI_ENABLE_TEST_FIXTURES", "").lower() == "1"
+
+
+def _require_test_fixtures_enabled():
+    if not TEST_FIXTURES_ENABLED:
+        raise HTTPException(404, 'Test fixtures are disabled')
+
+
+@router.get('/test-fixtures/sentiment')
+def get_sentiment_test_fixture_catalog():
+    """Return fixed expected labels for local manual evaluation."""
+    _require_test_fixtures_enabled()
+    return {'title': FIXTURE_VIDEO_TITLE, 'cases': fixture_case_catalog()}
+
+
+@router.post('/test-fixtures/sentiment')
+def create_sentiment_test_fixture():
+    """Persist fixed synthetic comments without calling any crawl endpoint."""
+    _require_test_fixtures_enabled()
+    comments = batch_analyze(build_fixture_comments())
+    summary = summarize_sentiment(comments)
+    db = SessionLocal()
+    try:
+        analysis = Analysis(
+            bv='TEST-SENTIMENT-24', avid=0, video_title=FIXTURE_VIDEO_TITLE,
+            video_cover='', video_play=0, status='done', mode='nlp',
+            total_comments=len(comments),
+        )
+        db.add(analysis)
+        db.flush()
+        for comment in comments:
+            db.add(Comment(
+                analysis_id=analysis.id, rpid=comment['rpid'], root_rpid=comment['root_rpid'],
+                parent_rpid=comment['parent_rpid'], username=comment['username'],
+                gender=comment['gender'], ip_location=comment['ip_location'], content=comment['content'],
+                likes=comment['likes'], sentiment_label=comment['sentiment_label'],
+                sentiment_score=comment['sentiment_score'], post_time=comment['post_time'],
+            ))
+        db.add(SentimentResult(
+            analysis_id=analysis.id, positive_count=summary['positive'],
+            negative_count=summary['negative'], neutral_count=summary['neutral'],
+        ))
+        db.commit()
+        return {
+            'analysis_id': analysis.id, 'status': 'done', 'mode': 'nlp',
+            'total_comments': len(comments), 'fixture_cases': fixture_case_catalog(),
+        }
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
 
 @router.get('/video/{bv}')
 async def get_video(bv: str):
@@ -49,20 +107,23 @@ async def _run_analysis(analysis_id: int, bv: str, avid: int, max_comments: int 
                 analysis.status = 'error'; analysis.error_msg = 'API Key not configured'; db.commit(); return
             comments_analyzed = await batch_analyze_llm(comments_raw, llm_config)
             for c in comments_analyzed:
-                db.add(Comment(analysis_id=analysis_id, rpid=c['rpid'], username=c['username'],
+                db.add(Comment(analysis_id=analysis_id, rpid=c['rpid'], root_rpid=c.get('root_rpid'),
+                    parent_rpid=c.get('parent_rpid'), username=c['username'],
                     gender=c['gender'], ip_location=c['ip_location'], content=c['content'],
                     likes=c['likes'], sentiment_label=c.get('sentiment_label', ''),
                     sentiment_score=c.get('sentiment_score', 0),
-                    sentiment_llm_label=c.get('sentiment_llm_label', ''), post_time=c['post_time']))
+                    sentiment_llm_label=c.get('sentiment_llm_label', ''),
+                    sentiment_llm_style=c.get('sentiment_llm_style', 'plain'), post_time=c['post_time']))
             s = summarize_sentiment_llm(comments_analyzed)
             db.add(SentimentResult(analysis_id=analysis_id, positive_count=0, negative_count=0, neutral_count=0,
-                llm_joy=s['joy'], llm_anger=s['anger'], llm_sadness=s['sadness'],
-                llm_surprise=s['surprise'], llm_fear=s['fear'], llm_disgust=s['disgust'],
-                llm_anticipation=s['anticipation'], llm_trust=s['trust']))
+                llm_neutral=s['neutral'], llm_joy=s['joy'], llm_support=s['support'],
+                llm_anger=s['anger'], llm_sadness=s['sadness'], llm_surprise=s['surprise'],
+                llm_disgust=s['disgust'], llm_anticipation=s['anticipation'], llm_concern=s['concern']))
         else:
             comments_analyzed = batch_analyze(comments_raw)
             for c in comments_analyzed:
-                db.add(Comment(analysis_id=analysis_id, rpid=c['rpid'], username=c['username'],
+                db.add(Comment(analysis_id=analysis_id, rpid=c['rpid'], root_rpid=c.get('root_rpid'),
+                    parent_rpid=c.get('parent_rpid'), username=c['username'],
                     gender=c['gender'], ip_location=c['ip_location'], content=c['content'],
                     likes=c['likes'], sentiment_label=c['sentiment_label'],
                     sentiment_score=c['sentiment_score'], post_time=c['post_time']))
@@ -130,7 +191,8 @@ async def reanalyze(analysis_id: int, background_tasks: BackgroundTasks):
         # Load existing comments
         comments_data = [
             {
-                'rpid': c.rpid, 'username': c.username, 'gender': c.gender,
+                'rpid': c.rpid, 'root_rpid': c.root_rpid, 'parent_rpid': c.parent_rpid,
+                'username': c.username, 'gender': c.gender,
                 'ip_location': c.ip_location, 'content': c.content, 'likes': c.likes,
                 'post_time': c.post_time,
             }
@@ -165,17 +227,20 @@ async def _run_reanalyze(analysis_id: int, comments_data: list[dict], llm_config
         if old_sr: db.delete(old_sr)
 
         # Update each comment's LLM label
-        label_map = {c['rpid']: c.get('sentiment_llm_label', '') for c in comments_analyzed}
+        label_map = {
+            c['rpid']: (c.get('sentiment_llm_label', ''), c.get('sentiment_llm_style', 'plain'))
+            for c in comments_analyzed
+        }
         for comment in db.query(Comment).filter_by(analysis_id=analysis_id).all():
             if comment.rpid in label_map:
-                comment.sentiment_llm_label = label_map[comment.rpid]
+                comment.sentiment_llm_label, comment.sentiment_llm_style = label_map[comment.rpid]
 
         # Save new sentiment result
         s = summarize_sentiment_llm(comments_analyzed)
         db.add(SentimentResult(analysis_id=analysis_id, positive_count=0, negative_count=0, neutral_count=0,
-            llm_joy=s['joy'], llm_anger=s['anger'], llm_sadness=s['sadness'],
-            llm_surprise=s['surprise'], llm_fear=s['fear'], llm_disgust=s['disgust'],
-            llm_anticipation=s['anticipation'], llm_trust=s['trust']))
+            llm_neutral=s['neutral'], llm_joy=s['joy'], llm_support=s['support'],
+            llm_anger=s['anger'], llm_sadness=s['sadness'], llm_surprise=s['surprise'],
+            llm_disgust=s['disgust'], llm_anticipation=s['anticipation'], llm_concern=s['concern']))
 
         db.query(Analysis).filter_by(id=analysis_id).update({
             'status': 'done', 'mode': 'llm', 'error_msg': None,
@@ -212,10 +277,12 @@ def get_results(analysis_id: int):
         if a.status != 'done': return {'status':a.status,'message':'Analysis not complete','mode':a.mode}
         comments = db.query(Comment).filter_by(analysis_id=analysis_id).all()
         s = db.query(SentimentResult).filter_by(analysis_id=analysis_id).first()
-        cl = [{'id':c.id,'rpid':c.rpid,'username':c.username,'gender':c.gender,
+        cl = [{'id':c.id,'rpid':c.rpid,'root_rpid':c.root_rpid,'parent_rpid':c.parent_rpid,
+            'username':c.username,'gender':c.gender,
             'ip_location':c.ip_location,'content':c.content,'likes':c.likes,
             'sentiment_label':c.sentiment_label,'sentiment_score':c.sentiment_score,
             'sentiment_llm_label':c.sentiment_llm_label if c.sentiment_llm_label else '',
+            'sentiment_llm_style':c.sentiment_llm_style or 'plain',
             'post_time':c.post_time.isoformat() if c.post_time else None} for c in comments]
         result = {'analysis_id':a.id,'bv':a.bv,'video_title':a.video_title,
             'video_cover':a.video_cover,'video_play':a.video_play,
@@ -226,9 +293,9 @@ def get_results(analysis_id: int):
             'keywords':get_top_keywords(cl, top_n=500),'comments':cl}
         if a.mode == 'llm' and s:
             result['sentiment_llm'] = {
-                'joy':s.llm_joy,'anger':s.llm_anger,'sadness':s.llm_sadness,
-                'surprise':s.llm_surprise,'fear':s.llm_fear,'disgust':s.llm_disgust,
-                'anticipation':s.llm_anticipation,'trust':s.llm_trust,
+                'neutral':s.llm_neutral,'joy':s.llm_joy,'support':s.llm_support or s.llm_trust,
+                'anticipation':s.llm_anticipation,'surprise':s.llm_surprise,'anger':s.llm_anger,
+                'sadness':s.llm_sadness,'concern':s.llm_concern or s.llm_fear,'disgust':s.llm_disgust,
             }
         return result
     finally: db.close()

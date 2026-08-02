@@ -47,19 +47,19 @@ class AISummaryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             normalize_filters({"sentiment": "joy"}, "nlp")
 
-    def test_llm_mode_uses_eight_category_labels(self):
+    def test_llm_mode_uses_new_main_emotion_labels(self):
         comments = [
-            make_comment(1, llm_label="trust"),
+            make_comment(1, llm_label="support"),
             make_comment(2, llm_label="anger"),
         ]
-        filters = normalize_filters({"sentiment": "trust"}, "llm")
+        filters = normalize_filters({"sentiment": "support"}, "llm")
 
         matched = apply_filters(comments, filters, "llm")
 
         self.assertEqual([comment["id"] for comment in matched], [1])
 
     def test_sampling_is_deterministic_bounded_and_private(self):
-        labels = ["joy", "anger", "sadness", "surprise", "fear", "disgust", "anticipation", "trust"]
+        labels = ["neutral", "joy", "support", "anticipation", "surprise", "anger", "sadness", "concern", "disgust"]
         comments = [make_comment(i, llm_label=labels[i % len(labels)]) for i in range(1, 121)]
 
         first = select_representative_comments(comments, "llm")

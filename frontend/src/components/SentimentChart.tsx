@@ -14,13 +14,13 @@ interface Props {
 type ChartType = 'donut' | 'pie' | 'rose';
 
 const LLM_COLORS: Record<string, string> = {
-  joy: '#FBBF24', anger: '#EF4444', sadness: '#6366F1', surprise: '#F97316',
-  fear: '#8B5CF6', disgust: '#84CC16', anticipation: '#06B6D4', trust: '#22C55E',
+  neutral: '#94A3B8', joy: '#FBBF24', support: '#22C55E', anticipation: '#06B6D4',
+  surprise: '#F97316', anger: '#EF4444', sadness: '#6366F1', concern: '#8B5CF6', disgust: '#84CC16',
 };
 
 const LLM_LABELS: Record<string, string> = {
-  joy: '喜悦', anger: '愤怒', sadness: '悲伤', surprise: '惊讶',
-  fear: '恐惧', disgust: '厌恶', anticipation: '期待', trust: '信任',
+  neutral: '中性', joy: '喜悦', support: '支持', anticipation: '期待', surprise: '惊讶',
+  anger: '愤怒', sadness: '悲伤', concern: '担忧', disgust: '厌恶',
 };
 
 export default function SentimentChart({ positive, negative, neutral, mode, llm, onModeChange }: Props) {
@@ -65,7 +65,7 @@ export default function SentimentChart({ positive, negative, neutral, mode, llm,
     <div className="card distribution-chart-card">
       <div className="flex items-center justify-between mb-2 distribution-chart-header">
         <h3 className="text-xs font-semibold text-secondary" style={{letterSpacing:'.05em'}}>
-          情感分布{isLLM ? '（大模型八分类）' : '（NLP 三分类）'}
+          情感分布{isLLM ? '（大模型九类主情感）' : '（NLP 三分类）'}
         </h3>
         <div className="flex items-center gap-2">
           <DownloadChartButton echartRefs={chartRef} />
@@ -82,7 +82,7 @@ export default function SentimentChart({ positive, negative, neutral, mode, llm,
               cursor: 'pointer', outline: 'none',
             }}>
             <option value="nlp">NLP 三分类</option>
-            <option value="llm">大模型 八分类</option>
+            <option value="llm">大模型 九类主情感</option>
           </select>
         </div>
       </div>

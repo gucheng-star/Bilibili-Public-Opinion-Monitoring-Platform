@@ -523,6 +523,16 @@ a:focus-visible {
 .comment-table { table-layout:fixed; }
 .comment-table__content-column { width:50%; }
 .comment-table__content { max-width:0; }
+.comment-tree__legend { color:var(--text-muted); font-size:.6875rem; white-space:nowrap; }
+.comment-tree-row { border-bottom:1px solid var(--border); transition:background .16s ease; }
+.comment-tree-row:hover { background:var(--bg-card-hover); }
+.comment-tree-row--reply td { background:color-mix(in srgb,var(--accent-soft) 36%,transparent); }
+.comment-tree__content { position:relative; display:flex; align-items:flex-start; min-width:0; line-height:1.55; }
+.comment-tree__branch { position:relative; flex:0 0 1rem; width:1rem; margin-right:.3rem; color:var(--accent); font-family:var(--font-data); font-size:.875rem; line-height:1.35; }
+.comment-tree__branch::before { content:''; position:absolute; left:.32rem; bottom:50%; width:.45rem; height:1.45rem; border-left:1px solid var(--border-accent); border-bottom:1px solid var(--border-accent); border-radius:0 0 0 .3rem; transform:translateY(50%); }
+.comment-tree__branch { color:transparent; }
+.comment-tree__branch::after { content:'↳'; position:relative; color:var(--accent); }
+.comment-tree__text { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
 /* ---- 18. Form Elements ---- */
 .select-sm {

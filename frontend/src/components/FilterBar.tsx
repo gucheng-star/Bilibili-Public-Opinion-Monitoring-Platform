@@ -13,8 +13,8 @@ const NLP_SENTIMENTS = [
   ['positive', '正面'], ['neutral', '中性'], ['negative', '负面'],
 ] as const;
 const LLM_SENTIMENTS = [
-  ['joy', '喜悦'], ['anger', '愤怒'], ['sadness', '悲伤'], ['surprise', '惊讶'],
-  ['fear', '恐惧'], ['disgust', '厌恶'], ['anticipation', '期待'], ['trust', '信任'],
+  ['neutral', '中性'], ['joy', '喜悦'], ['support', '支持'], ['anticipation', '期待'],
+  ['surprise', '惊讶'], ['anger', '愤怒'], ['sadness', '悲伤'], ['concern', '担忧'], ['disgust', '厌恶'],
 ] as const;
 
 export default function FilterBar({ filters, onApply, availableRegions, mode }: Props) {

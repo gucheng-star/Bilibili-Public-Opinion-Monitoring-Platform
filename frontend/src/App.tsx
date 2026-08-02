@@ -18,7 +18,7 @@ import type { AnalysisResult, FilterState, AnalysisMode, SentimentLLM } from './
 import './AppShell.css';
 
 const PROVINCES = new Set(['北京','天津','上海','重庆','河北','山西','辽宁','吉林','黑龙江','江苏','浙江','安徽','福建','江西','山东','河南','湖北','湖南','广东','海南','四川','贵州','云南','陕西','甘肃','青海','台湾','内蒙古','广西','西藏','宁夏','新疆','香港','澳门']);
-const LLM_EMOTIONS: (keyof SentimentLLM)[] = ['joy', 'anger', 'sadness', 'surprise', 'fear', 'disgust', 'anticipation', 'trust'];
+const LLM_EMOTIONS: (keyof SentimentLLM)[] = ['neutral', 'joy', 'support', 'anticipation', 'surprise', 'anger', 'sadness', 'concern', 'disgust'];
 const LLM_CONCURRENCY = 3;
 const LLM_SECONDS_PER_COMMENT = 1.29;
 
@@ -179,7 +179,7 @@ function App() {
   }), [filteredComments]);
 
   const filteredLlmSentiment = useMemo<SentimentLLM>(() => {
-    const counts: SentimentLLM = { joy:0, anger:0, sadness:0, surprise:0, fear:0, disgust:0, anticipation:0, trust:0 };
+    const counts: SentimentLLM = { neutral:0, joy:0, support:0, anticipation:0, surprise:0, anger:0, sadness:0, concern:0, disgust:0 };
     filteredComments.forEach(comment => {
       const label = comment.sentiment_llm_label as keyof SentimentLLM;
       if (LLM_EMOTIONS.includes(label)) counts[label]++;
@@ -276,7 +276,7 @@ function App() {
           </button>
           {showHistory && <HistoryPanel onSelect={handleViewHistory} selectedId={analysisId} refreshKey={historyRefreshKey}/>}
         </section>
-        {!loading && results && (<div className="app-alert app-alert--status">模式: {results.mode === 'llm' ? '大模型八分类' : 'NLP三分类'} · 共 {results.total_comments} 条评论</div>)}
+        {!loading && results && (<div className="app-alert app-alert--status">模式: {results.mode === 'llm' ? '大模型九类主情感' : 'NLP三分类'} · 共 {results.total_comments} 条评论</div>)}
 
         {loading && !results && (
           <div className="app-state flex flex-col items-center justify-center py-20">
@@ -333,7 +333,7 @@ function App() {
             <div className="reanalyze-dialog__panel" role="dialog" aria-modal="true" aria-labelledby="reanalyze-title" onClick={e=>e.stopPropagation()}>
               <h3 id="reanalyze-title">切换到大模型情感分析</h3>
               <p className="reanalyze-dialog__copy">
-                当前分析结果使用 NLP 三分类模式生成。是否使用已保存的 {results?.total_comments} 条评论数据，重新进行大模型八分类情感分析？
+                当前分析结果使用 NLP 三分类模式生成。是否使用已保存的 {results?.total_comments} 条评论数据，重新进行大模型九类主情感分析？
               </p>
               <p className="reanalyze-dialog__notice">
                 ⚠ 大模型分析将调用设置中选择的情绪分析供应商，可能产生少量费用。

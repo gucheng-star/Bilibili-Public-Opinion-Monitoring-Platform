@@ -18,7 +18,10 @@ MAX_SAMPLE_COMMENTS = 40
 MAX_SAMPLE_CHARACTERS = 12_000
 MAX_COMMENT_CHARACTERS = 300
 NLP_LABELS = ("positive", "negative", "neutral")
-LLM_LABELS = ("joy", "anger", "sadness", "surprise", "fear", "disgust", "anticipation", "trust")
+LLM_LABELS = (
+    "neutral", "joy", "support", "anticipation", "surprise",
+    "anger", "sadness", "concern", "disgust",
+)
 
 
 def normalize_filters(value: Any, mode: str) -> dict[str, str]:

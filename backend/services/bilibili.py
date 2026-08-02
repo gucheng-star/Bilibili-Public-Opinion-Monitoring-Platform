@@ -23,8 +23,11 @@ async def get_video_info(client: httpx.AsyncClient, bv: str):
 def _extract_comment(r: dict) -> dict:
     m = r.get('member',{})
     ctrl = r.get('reply_control',{})
+    rpid = r.get('rpid', 0)
+    root_rpid = r.get('root') or rpid
+    parent_rpid = r.get('parent') or None
     return {
-        'rpid':r.get('rpid',0),'username':m.get('uname',''),
+        'rpid':rpid,'root_rpid':root_rpid,'parent_rpid':parent_rpid,'username':m.get('uname',''),
         'gender':_map_gender(m.get('sex','')),'ip_location':ctrl.get('location',''),
         'content':r.get('content',{}).get('message',''),'likes':r.get('like',0),
         'post_time':datetime.fromtimestamp(r.get('ctime',0)),

@@ -13,6 +13,8 @@ export type SentimentLabel = "positive" | "negative" | "neutral";
 export interface CommentData {
   id: number;
   rpid: number;
+  root_rpid: number | null;
+  parent_rpid: number | null;
   username: string;
   gender: string;
   ip_location: string;
@@ -21,13 +23,14 @@ export interface CommentData {
   sentiment_label: SentimentLabel;
   sentiment_score: number;
   sentiment_llm_label: string;
+  sentiment_llm_style: string;
   post_time: string | null;
 }
 
-/** LLM 8-category sentiment counts */
+/** LLM main-emotion distribution; expression style is stored per comment. */
 export interface SentimentLLM {
-  joy: number; anger: number; sadness: number; surprise: number;
-  fear: number; disgust: number; anticipation: number; trust: number;
+  neutral: number; joy: number; support: number; anticipation: number; surprise: number;
+  anger: number; sadness: number; concern: number; disgust: number;
 }
 
 /** Region distribution item */
