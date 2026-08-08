@@ -74,7 +74,7 @@ cd frontend && pnpm run dev
 - 总结只在用户点击“生成总结”或“重新生成”时调用模型，应用筛选不会自动产生费用。
 - 后端对全部筛选结果计算精确统计，再选取最多 40 条、合计不超过 12,000 字的高赞与分层代表评论。
 - 同一分析、同一筛选条件只保存最新总结；评论内容或情绪标签变化后，旧总结会标记为过期。
-- API Key 保存在本机 `backend/settings.json`（已 gitignore），接口仅返回掩码，日志和总结记录不保存完整密钥。
+- API Key 保存在本机设置文件中，Windows 桌面版使用当前用户的 DPAPI 加密；接口仅返回掩码，日志和总结记录不保存完整密钥。
 - 自定义接口必须使用公网 HTTPS Base URL；本机和私网模型端点暂不支持。
 
 ### 生产构建
@@ -84,6 +84,30 @@ cd frontend && pnpm run build
 # 构建产物在 frontend/dist/，后端自动服务
 cd backend && python -m uvicorn main:app --host 0.0.0.0 --port 8000
 ```
+
+### Windows 便携桌面版（Beta）
+
+桌面版采用 Tauri v2 外壳和 PyInstaller `onedir` 本地后端。抓取、Cookie、模型密钥、
+SQLite 数据库和分析过程均留在用户电脑；应用数据位于便携目录的 `data/`，不会上传到
+Vercel 或其他应用服务器。把目录复制到另一台电脑时历史记录仍可读取，但 Cookie 和模型
+密钥因 DPAPI 绑定当前 Windows 用户，需要重新登录和输入。
+
+```powershell
+# 后端 onedir
+cd backend
+.\build_portable_backend.ps1 -OutputDirectory dist
+
+# Tauri 可执行文件（不生成安装器）
+cd ..\frontend
+pnpm run tauri:build
+
+# 组装便携 ZIP
+cd ..
+.\scripts\assemble-portable.ps1 -Version 2.0.0-beta.1
+```
+
+开发架构、目录和更新安全协议见 `docs/DESKTOP_ARCHITECTURE.md`。正式在线更新还需要在
+GitHub Actions 中配置 Ed25519 私钥和对应公钥；未配置公钥的本地测试构建会禁用在线更新。
 
 ### 验证
 
@@ -116,7 +140,8 @@ pnpm run build -- --configLoader runner
     │   ├── components/      # 页面与数据可视化组件
     │   ├── services/api.ts  # API 客户端
     │   └── types/           # TypeScript 类型定义
-    └── public/china.json    # ECharts 中国地图数据
+    ├── public/china.json    # ECharts 中国地图数据
+    └── src-tauri/           # Windows 便携外壳与独立更新器
 ```
 
 ## API 路由
@@ -136,6 +161,7 @@ pnpm run build -- --configLoader runner
 | POST | `/api/settings/test-llm` | 按指定任务的真实调用链测试模型连接 |
 | GET | `/api/summaries/{id}` | 获取分析记录下已保存的智能总结 |
 | POST | `/api/summaries/{id}` | 按当前筛选生成或覆盖智能总结 |
+| GET/POST | `/api/runtime/*` | 桌面后端健康、任务状态与退出准备 |
 
 ## License
 

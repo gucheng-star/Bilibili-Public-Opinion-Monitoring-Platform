@@ -10,6 +10,7 @@ from services.wordcloud_gen import generate_wordcloud, get_top_keywords
 from services.region import analyze_region
 from services.heat import analyze_heat
 from services.settings_store import get_task_config
+from services.runtime_state import activity
 from services.sentiment_test_fixtures import (
     FIXTURE_VIDEO_TITLE,
     build_fixture_comments,
@@ -78,6 +79,11 @@ async def get_video(bv: str):
     return info
 
 async def _run_analysis(analysis_id: int, bv: str, avid: int, max_comments: int = 100, delay: float = 3.0, mode: str = "nlp"):
+    with activity("analysis"):
+        await _run_analysis_inner(analysis_id, bv, avid, max_comments, delay, mode)
+
+
+async def _run_analysis_inner(analysis_id: int, bv: str, avid: int, max_comments: int = 100, delay: float = 3.0, mode: str = "nlp"):
     db = SessionLocal()
     try:
         analysis = db.query(Analysis).filter_by(id=analysis_id).first()
@@ -217,6 +223,11 @@ async def reanalyze(analysis_id: int, background_tasks: BackgroundTasks):
 
 async def _run_reanalyze(analysis_id: int, comments_data: list[dict], llm_config: dict[str, str]):
     """Background task: re-analyze existing comments with LLM."""
+    with activity("llm_sentiment"):
+        await _run_reanalyze_inner(analysis_id, comments_data, llm_config)
+
+
+async def _run_reanalyze_inner(analysis_id: int, comments_data: list[dict], llm_config: dict[str, str]):
     db = SessionLocal()
     try:
         # Run LLM analysis

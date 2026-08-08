@@ -1,0 +1,31 @@
+[package]
+name = "bili-opinion-desktop"
+version = "2.0.0-beta.1"
+description = "Portable desktop shell for the Bilibili public-opinion monitor"
+authors = ["gucheng-star"]
+edition = "2021"
+rust-version = "1.77"
+default-run = "bili-opinion-desktop"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+anyhow = "1"
+base64 = "0.22"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+rand = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+semver = "1"
+sha2 = "0.10"
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-single-instance = "2"
+url = "2"
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
+[[bin]]
+name = "BiliOpinionUpdater"
+path = "src/bin/updater.rs"

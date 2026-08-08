@@ -1,11 +1,12 @@
 ﻿import { useEffect, useState } from 'react';
 import ThemeToggle from './ThemeToggle';
+import { getAuthAccounts, getQRCode, getQRCodeStatus, switchAuthAccount } from '../services/api';
 import './LoginPage.css';
 import './LoginWorkbench.css';
 
 interface Props { onLogin: () => void; }
 
-interface Account { cookie: string; name: string; }
+interface Account { name: string; }
 
 export default function LoginPage({ onLogin }: Props) {
   const [step, setStep] = useState<'welcome'|'qrcode'>('welcome');
@@ -16,12 +17,12 @@ export default function LoginPage({ onLogin }: Props) {
   const [loadingAcc, setLoadingAcc] = useState(false);
 
   useEffect(() => {
-    fetch('/api/auth/accounts').then(r=>r.json()).then(d=>setAccounts(d.accounts||[])).catch(()=>{});
+    getAuthAccounts().then(d=>setAccounts(d.accounts || [])).catch(()=>{});
   }, []);
 
   const startQrLogin = () => {
     setStep('qrcode'); setError(''); setStatus('正在生成二维码...');
-    fetch('/api/auth/qrcode').then(r=>r.json()).then(d=>{
+    getQRCode().then(d=>{
       if (d.error) { setError(d.error); return; }
       setQrUrl(d.url); setStatus('请使用B站App扫码登录');
       pollStatus(d.qrcode_key);
@@ -32,8 +33,7 @@ export default function LoginPage({ onLogin }: Props) {
     for (let i=0;i<120;i++) {
       await new Promise(r=>setTimeout(r,2000));
       try {
-        const r=await fetch('/api/auth/qrcode/status?qrcode_key='+key);
-        const d=await r.json();
+        const d=await getQRCodeStatus(key);
         if (d.status==='success'){onLogin();return;}
         if (d.status==='scanned')setStatus('已扫码，请在手机上确认...');
         if (d.status==='expired'){setError('二维码已过期');setStep('welcome');break;}
@@ -45,8 +45,7 @@ export default function LoginPage({ onLogin }: Props) {
   const switchAccount = async (index: number) => {
     setLoadingAcc(true);
     try {
-      const r = await fetch('/api/auth/accounts/' + index + '/switch', {method:'POST'});
-      const d = await r.json();
+      const d = await switchAuthAccount(index);
       if (d.ok) onLogin();
     } catch {}
     setLoadingAcc(false);

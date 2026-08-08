@@ -1,9 +1,10 @@
 """应用配置"""
 
 import os
+from services.runtime_paths import database_path
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATABASE_URL = f"sqlite+aiosqlite:///{os.path.join(BASE_DIR, 'data.db')}"
+DATABASE_URL = f"sqlite+aiosqlite:///{database_path()}"
 
 # B站 API 配置
 BILIBILI_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"

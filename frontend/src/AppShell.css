@@ -31,6 +31,9 @@
 .reanalyze-dialog__copy { margin-bottom:1.25rem; color:var(--text-secondary); font-size:.8125rem; line-height:1.7; }
 .reanalyze-dialog__notice { margin-bottom:1.25rem; padding:.65rem .75rem; color:var(--yellow); background:var(--yellow-soft); border:1px solid color-mix(in srgb,var(--yellow) 20%,transparent); border-radius:var(--radius-sm); font-size:.75rem; }
 .reanalyze-dialog__actions { display:flex; justify-content:flex-end; gap:.75rem; }
+.reanalyze-dialog__actions--three { flex-wrap:wrap; }
+.desktop-update-settings { align-items:center; justify-content:space-between; gap:1rem; }
+.desktop-update-settings p { margin:0; line-height:1.6; }
 .app-header button:focus-visible, .app-main button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 @media (max-width: 640px) { .app-header__bar { align-items: flex-start; gap: .75rem; } .command-deck { padding: .65rem; } .app-toast { width: calc(100% - 2rem); text-align: center; } }
 @media (prefers-reduced-motion: reduce) { .app-shell *, .app-shell *::before, .app-shell *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; } }

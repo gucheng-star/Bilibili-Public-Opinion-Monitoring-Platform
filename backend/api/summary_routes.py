@@ -16,6 +16,7 @@ from services.ai_summary import (
 )
 from services.llm_client import LLMRequestError
 from services.settings_store import get_task_config
+from services.runtime_state import activity
 
 
 router = APIRouter(prefix="/api")
@@ -106,7 +107,8 @@ async def create_summary(analysis_id: int, req: dict):
             raise HTTPException(400, str(exc)) from exc
         if not config.get("api_key"):
             raise HTTPException(400, "请先配置智能总结 API Key")
-        summary_text, used_model, sampled_count = await generate_summary(matched, analysis.mode, config)
+        with activity("ai_summary"):
+            summary_text, used_model, sampled_count = await generate_summary(matched, analysis.mode, config)
         if existing:
             existing.filter_json = filter_json
             existing.input_hash = current_input_hash

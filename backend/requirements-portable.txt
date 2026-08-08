@@ -1,0 +1,11 @@
+# Runtime dependencies for the Windows portable backend (PyInstaller onedir).
+fastapi==0.139.0
+uvicorn==0.51.0
+SQLAlchemy==2.0.51
+aiosqlite==0.22.1
+httpx==0.28.1
+jieba==0.42.1
+snownlp==0.12.3
+wordcloud==1.9.6
+matplotlib==3.11.0
+PyInstaller>=6.0,<7.0

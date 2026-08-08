@@ -1,5 +1,13 @@
 ﻿from fastapi import APIRouter
-from services.auth import generate_qrcode, poll_qrcode, get_cookie, clear_cookie, get_accounts, switch_account
+from services.auth import (
+    credential_reentry_required,
+    generate_qrcode,
+    poll_qrcode,
+    get_cookie,
+    clear_cookie,
+    get_accounts,
+    switch_account,
+)
 
 router = APIRouter(prefix='/api/auth')
 
@@ -10,7 +18,11 @@ async def qr_generate(): return await generate_qrcode()
 async def qr_status(qrcode_key: str): return await poll_qrcode(qrcode_key)
 
 @router.get('/status')
-def auth_status(): return {'logged_in': bool(get_cookie())}
+def auth_status():
+    return {
+        'logged_in': bool(get_cookie()),
+        'credential_reentry_required': credential_reentry_required(),
+    }
 
 @router.post('/logout')
 def logout():
@@ -18,7 +30,16 @@ def logout():
     return {'ok': True}
 
 @router.get('/accounts')
-def list_accounts(): return {'accounts': get_accounts()}
+def list_accounts():
+    # Cookies are kept only inside the local credential store.  The UI needs
+    # display names and stable list positions, never session material.
+    return {
+        'accounts': [
+            {'index': index, 'name': str(account.get('name') or 'B站用户')}
+            for index, account in enumerate(get_accounts())
+            if isinstance(account, dict)
+        ]
+    }
 
 @router.post('/accounts/{index}/switch')
 def account_switch(index: int):

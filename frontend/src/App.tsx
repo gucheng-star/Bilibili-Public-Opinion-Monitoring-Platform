@@ -13,7 +13,8 @@ import LoginPage from './components/LoginPage';
 import FilterBar from './components/FilterBar';
 import SettingsPanel from './components/SettingsPanel';
 import AISummaryCard from './components/AISummaryCard';
-import { startAnalysis, getStatus, getResults, getSettings, reanalyze } from './services/api';
+import { getAuthStatus, getResults, getRuntimeActivity, getSettings, getStatus, logout, prepareRuntimeExit, reanalyze, startAnalysis } from './services/api';
+import { checkForUpdates, downloadUpdate, installDownloadedUpdate, isDesktopRuntime, onCloseRequested, respondToCloseRequest } from './services/desktop';
 import type { AnalysisResult, FilterState, AnalysisMode, SentimentLLM } from './types';
 import './AppShell.css';
 
@@ -60,14 +61,68 @@ function App() {
   const [hasApiKey, setHasApiKey] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [reanalyzeModal, setReanalyzeModal] = useState(false);
+  const [updateInfo, setUpdateInfo] = useState<{ version?: string; notes?: string; notesUrl?: string } | null>(null);
+  const [updateBusy, setUpdateBusy] = useState(false);
+  const [closeRequest, setCloseRequest] = useState<{ requestId?: string } | null>(null);
 
-  useEffect(() => { fetch('/api/auth/status').then(r=>r.json()).then(d=>setLoggedIn(d.logged_in)).catch(()=>setLoggedIn(false)); }, []);
+  useEffect(() => { getAuthStatus().then(d=>setLoggedIn(d.logged_in)).catch(()=>setLoggedIn(false)); }, []);
   useEffect(() => { getSettings().then(s => { setHasApiKey(s.llm.sentiment.has_api_key); }).catch(() => {}); }, []);
   useEffect(() => {
     setFilters(current => current.sentiment === 'all' ? current : { ...current, sentiment: 'all' });
   }, [results?.mode]);
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(()=>setToast(null), 4000); };
+
+  const checkUpdate = useCallback(async (manual = false) => {
+    if (!isDesktopRuntime()) return;
+    try {
+      const update = await checkForUpdates();
+      if (update.enabled === false && update.message) throw new Error(update.message);
+      if (update.available) setUpdateInfo(update);
+      else if (manual) showToast('当前已是最新版本');
+    } catch (e) {
+      if (manual) showToast(e instanceof Error ? e.message : '检查更新失败');
+    }
+  }, []);
+
+  const installUpdate = async () => {
+    setUpdateBusy(true);
+    try {
+      await downloadUpdate();
+      await installDownloadedUpdate();
+    } catch (e) {
+      setUpdateBusy(false);
+      showToast(e instanceof Error ? e.message : '下载更新失败');
+    }
+  };
+
+  useEffect(() => {
+    if (!isDesktopRuntime()) return;
+    const timer = window.setTimeout(() => { void checkUpdate(); }, 5000);
+    return () => window.clearTimeout(timer);
+  }, [checkUpdate]);
+
+  useEffect(() => {
+    if (!isDesktopRuntime()) return;
+    return onCloseRequested(requestId => {
+      void (async () => {
+        try {
+          const activity = await getRuntimeActivity();
+          if (!loading && !activity.active) {
+            await prepareRuntimeExit();
+            await respondToCloseRequest('exit', requestId);
+            return;
+          }
+        } catch {
+          if (!loading) {
+            await respondToCloseRequest('exit', requestId).catch(() => {});
+            return;
+          }
+        }
+        setCloseRequest({ requestId });
+      })();
+    });
+  }, [loading]);
 
   const handleModeChange = (mode: AnalysisMode) => {
     if (mode === 'llm' && !hasApiKey) { showToast('请先在设置面板配置情绪分析模型的 API Key'); return; }
@@ -152,9 +207,14 @@ function App() {
     setLoading(false);
   }, []);
 
-  const handleLogout = async () => { await fetch('/api/auth/logout',{method:'POST'}); setLoggedIn(false); setResults(null); };
+  const handleLogout = async () => { await logout(); setLoggedIn(false); setResults(null); };
   const handleStop = () => { cancelRef.current = true; };
   const handleApplyFilters = (f: FilterState) => { setFilters(f); };
+  const resolveClose = async (action: 'exit' | 'tray' | 'cancel') => {
+    if (action === 'exit') await prepareRuntimeExit().catch(() => {});
+    await respondToCloseRequest(action, closeRequest?.requestId).catch(() => {});
+    setCloseRequest(null);
+  };
 
   const filteredComments = useMemo(() => {
     if (!results) return [];
@@ -263,7 +323,8 @@ function App() {
       {showSettings && (
         <div className="settings-drawer max-w-7xl mx-auto px-4">
           <SettingsPanel maxComments={maxComments} onMaxCommentsChange={setMaxComments} delay={delay} onDelayChange={setDelay}
-            onSettingsChanged={settings => setHasApiKey(settings.llm.sentiment.has_api_key)}/>
+            onSettingsChanged={settings => setHasApiKey(settings.llm.sentiment.has_api_key)}
+            desktopMode={isDesktopRuntime()} onCheckUpdate={() => { void checkUpdate(true); }}/>
         </div>
       )}
       <main className="app-main max-w-7xl mx-auto px-4 py-6">
@@ -341,6 +402,32 @@ function App() {
               <div className="reanalyze-dialog__actions">
                 <button onClick={()=>setReanalyzeModal(false)} className="btn btn-ghost">取消</button>
                 <button onClick={handleReanalyzeConfirm} className="btn btn-primary">确认重新分析</button>
+              </div>
+            </div>
+          </div>
+        )}
+        {updateInfo && (
+          <div className="reanalyze-dialog" role="presentation">
+            <div className="reanalyze-dialog__panel" role="dialog" aria-modal="true" aria-labelledby="update-title">
+              <h3 id="update-title">发现新版本 {updateInfo.version || ''}</h3>
+              <p className="reanalyze-dialog__copy">新版本已准备好下载。更新只会替换程序文件，保留当前目录中的数据、登录信息和模型设置。</p>
+              {updateInfo.notes && <p className="reanalyze-dialog__notice">{updateInfo.notes}</p>}
+              <div className="reanalyze-dialog__actions">
+                <button onClick={() => setUpdateInfo(null)} className="btn btn-ghost" disabled={updateBusy}>暂不更新</button>
+                <button onClick={() => { void installUpdate(); }} className="btn btn-primary" disabled={updateBusy}>{updateBusy ? '下载更新中…' : '下载并重启'}</button>
+              </div>
+            </div>
+          </div>
+        )}
+        {closeRequest && (
+          <div className="reanalyze-dialog" role="presentation">
+            <div className="reanalyze-dialog__panel" role="dialog" aria-modal="true" aria-labelledby="desktop-close-title">
+              <h3 id="desktop-close-title">后台任务仍在进行</h3>
+              <p className="reanalyze-dialog__copy">关闭窗口会中断正在执行的抓取或分析。你可以停止任务后退出，或让应用继续在系统托盘中运行。</p>
+              <div className="reanalyze-dialog__actions reanalyze-dialog__actions--three">
+                <button onClick={() => { void resolveClose('cancel'); }} className="btn btn-ghost">取消</button>
+                <button onClick={() => { void resolveClose('tray'); }} className="btn btn-ghost">继续在托盘运行</button>
+                <button onClick={() => { void resolveClose('exit'); }} className="btn btn-primary">停止并退出</button>
               </div>
             </div>
           </div>

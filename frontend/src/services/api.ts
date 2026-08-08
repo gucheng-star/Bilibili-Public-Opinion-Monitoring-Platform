@@ -10,11 +10,21 @@ import type {
   StatusResponse,
   VideoInfoResponse,
 } from '../types';
+import { getDesktopRuntimeConfig } from './desktop';
 
-const BASE = '/api';
+function apiBase(): string {
+  return getDesktopRuntimeConfig()?.apiBase || '/api';
+}
+
+function apiHeaders(headers?: HeadersInit): Headers {
+  const merged = new Headers(headers);
+  const localToken = getDesktopRuntimeConfig()?.localToken;
+  if (localToken) merged.set('X-Bili-Local-Token', localToken);
+  return merged;
+}
 
 async function req<T>(url: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(BASE + url, options);
+  const res = await fetch(apiBase() + url, { ...options, headers: apiHeaders(options?.headers) });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(err.detail || 'Request failed');
@@ -47,10 +57,7 @@ export function getHistory(limit = 20) {
 }
 
 export function deleteHistory(analysisId: number) {
-  return fetch(BASE + '/history/' + analysisId, { method: 'DELETE' }).then(r => {
-    if (!r.ok) throw new Error('Delete failed');
-    return r.json();
-  });
+  return req<{ ok: boolean }>('/history/' + analysisId, { method: 'DELETE' });
 }
 
 export function getVideoInfo(bv: string) {
@@ -103,4 +110,36 @@ export function generateSummary(analysisId: number, filters: FilterState, regene
 
 export function reanalyze(analysisId: number) {
   return req<{ analysis_id: number; status: string }>('/reanalyze/' + analysisId, { method: 'POST' });
+}
+
+export function getAuthStatus() {
+  return req<{ logged_in: boolean }>('/auth/status');
+}
+
+export function logout() {
+  return req<{ ok?: boolean }>('/auth/logout', { method: 'POST' });
+}
+
+export function getAuthAccounts() {
+  return req<{ accounts: { name: string }[] }>('/auth/accounts');
+}
+
+export function getQRCode() {
+  return req<{ url: string; qrcode_key: string; error?: string }>('/auth/qrcode');
+}
+
+export function getQRCodeStatus(key: string) {
+  return req<{ status: string }>('/auth/qrcode/status?qrcode_key=' + encodeURIComponent(key));
+}
+
+export function switchAuthAccount(index: number) {
+  return req<{ ok: boolean }>('/auth/accounts/' + index + '/switch', { method: 'POST' });
+}
+
+export function getRuntimeActivity() {
+  return req<{ active: boolean; active_tasks?: number; can_exit?: boolean }>('/runtime/activity');
+}
+
+export function prepareRuntimeExit() {
+  return req<{ ok: boolean }>('/runtime/prepare-exit', { method: 'POST' });
 }

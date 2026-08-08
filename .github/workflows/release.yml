@@ -1,0 +1,88 @@
+name: Portable Windows release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  portable-windows-x64:
+    runs-on: windows-2022
+    env:
+      BILI_PORTABLE_UPDATE_PUBLIC_KEY: ${{ secrets.PORTABLE_UPDATE_PUBLIC_KEY_B64 }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: Install backend test and packaging dependencies
+        shell: pwsh
+        run: |
+          python -m venv backend\venv
+          backend\venv\Scripts\python.exe -m pip install --upgrade pip
+          backend\venv\Scripts\python.exe -m pip install -r backend\requirements-portable.txt
+      - name: Run backend tests
+        shell: pwsh
+        run: |
+          Set-Location backend
+          .\venv\Scripts\python.exe -m unittest discover -s tests -v
+      - name: Install and validate frontend
+        shell: pwsh
+        run: |
+          pnpm --dir frontend install --frozen-lockfile
+          pnpm --dir frontend run lint
+          pnpm --dir frontend run build
+      - name: Build Python sidecar (onedir)
+        shell: pwsh
+        run: .\backend\build_portable_backend.ps1 -OutputDirectory dist
+      - name: Build Tauri executables without installer bundle
+        shell: pwsh
+        run: pnpm --dir frontend run tauri:build
+      - name: Run Rust unit tests
+        shell: pwsh
+        run: cargo test --manifest-path frontend\src-tauri\Cargo.toml --bins
+      - name: Check Rust formatting
+        shell: pwsh
+        run: cargo fmt --manifest-path frontend\src-tauri\Cargo.toml -- --check
+      - name: Assemble portable ZIP
+        id: package
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart('v')
+          .\scripts\assemble-portable.ps1 -Version $version
+          "version=$version" >> $env:GITHUB_OUTPUT
+      - name: Sign portable manifest payload
+        shell: pwsh
+        env:
+          PORTABLE_UPDATE_PRIVATE_KEY_PEM_B64: ${{ secrets.PORTABLE_UPDATE_PRIVATE_KEY_PEM_B64 }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:PORTABLE_UPDATE_PRIVATE_KEY_PEM_B64)) { throw "Missing PORTABLE_UPDATE_PRIVATE_KEY_PEM_B64" }
+          $privateKey = Join-Path $env:RUNNER_TEMP "portable-update-private.pem"
+          [IO.File]::WriteAllBytes($privateKey, [Convert]::FromBase64String($env:PORTABLE_UPDATE_PRIVATE_KEY_PEM_B64))
+          $archive = Get-ChildItem dist\portable\*.zip | Select-Object -First 1
+          $hash = (Get-FileHash $archive.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          $payload = "1|${{ steps.package.outputs.version }}|$($archive.Name)|$($archive.Length)|$hash"
+          $payloadPath = Join-Path $env:RUNNER_TEMP "portable-manifest-payload.txt"
+          $signaturePath = Join-Path $env:RUNNER_TEMP "portable-manifest.sig"
+          [IO.File]::WriteAllText($payloadPath, $payload, [Text.UTF8Encoding]::new($false))
+          openssl pkeyutl -sign -rawin -inkey $privateKey -in $payloadPath -out $signaturePath
+          $signature = [Convert]::ToBase64String([IO.File]::ReadAllBytes($signaturePath))
+          .\scripts\new-portable-manifest.ps1 -Version "${{ steps.package.outputs.version }}" -ArchivePath $archive.FullName -ReleaseBaseUrl "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}" -NotesUrl "https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}" -SignatureBase64 $signature -OutputPath "dist\portable\latest-portable.json"
+      - name: Publish GitHub Release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/portable/*.zip
+            dist/portable/latest-portable.json

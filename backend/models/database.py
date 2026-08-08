@@ -2,14 +2,27 @@
 
 from datetime import datetime
 import os
+import shutil
+from pathlib import Path
 
-from sqlalchemy import Column, Integer, String, Text, Float, DateTime, ForeignKey, UniqueConstraint, create_engine
+from sqlalchemy import Column, Integer, String, Text, Float, DateTime, ForeignKey, UniqueConstraint, create_engine, event
 from sqlalchemy.orm import DeclarativeBase, relationship, sessionmaker
 
-DEFAULT_DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data.db")
-DB_PATH = os.environ.get("BILI_DB_PATH", DEFAULT_DB_PATH)
+from services.runtime_paths import database_path
+
+
+DB_PATH = str(database_path())
 DB_URL = f"sqlite:///{DB_PATH}"
-engine = create_engine(DB_URL, echo=False)
+engine = create_engine(DB_URL, echo=False, connect_args={"check_same_thread": False})
+
+
+@event.listens_for(engine, "connect")
+def _configure_sqlite_connection(dbapi_connection, _connection_record):
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.execute("PRAGMA busy_timeout=5000")
+    cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.close()
 SessionLocal = sessionmaker(bind=engine)
 
 
@@ -108,6 +121,35 @@ def init_db():
     """Initialize database tables"""
     Base.metadata.create_all(engine)
     _migrate(engine)
+    _mark_interrupted_jobs()
+
+
+def _backup_database() -> None:
+    """Create a bounded, best-effort backup before altering an existing DB."""
+    source = Path(DB_PATH)
+    if not source.exists():
+        return
+    backup_dir = source.parent / "backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+    destination = backup_dir / f"{source.stem}-{stamp}.db"
+    shutil.copy2(source, destination)
+    backups = sorted(backup_dir.glob(f"{source.stem}-*.db"), key=lambda item: item.stat().st_mtime, reverse=True)
+    for stale in backups[3:]:
+        stale.unlink(missing_ok=True)
+
+
+def _mark_interrupted_jobs() -> None:
+    """A portable app may be closed by Windows before background work ends."""
+    from sqlalchemy import text
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE analyses SET status = 'interrupted', "
+                "error_msg = COALESCE(error_msg, '应用上次关闭时任务被中断') "
+                "WHERE status IN ('pending', 'fetching', 'analyzing')"
+            )
+        )
 
 def _migrate(eng):
     """Add missing columns to existing tables (best-effort, errors logged)."""
@@ -140,6 +182,12 @@ def _migrate(eng):
         for field in llm_fields:
             if field not in cols:
                 migrations.append(("sentiment_results", f"ALTER TABLE sentiment_results ADD COLUMN {field} INTEGER DEFAULT 0"))
+
+    if migrations:
+        try:
+            _backup_database()
+        except OSError as exc:
+            logger.warning("Database backup skipped before migration: %s", exc)
 
     for table, sql in migrations:
         try:

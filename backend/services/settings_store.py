@@ -8,14 +8,15 @@ import threading
 from copy import deepcopy
 from typing import Any
 
+from services.runtime_paths import settings_path
+from services.secure_store import SecretUnavailableError, is_encrypted, protect, unprotect
 
-DEFAULT_SETTINGS_FILE = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "settings.json",
-)
+
+DEFAULT_SETTINGS_FILE = str(settings_path())
 SETTINGS_FILE = os.environ.get("BILI_SETTINGS_PATH", DEFAULT_SETTINGS_FILE)
 SETTINGS_LOCK = threading.RLock()
 LLM_TASKS = ("sentiment", "summary")
+_unavailable_secrets: set[str] = set()
 
 PROVIDER_DEFAULTS: dict[str, dict[str, str]] = {
     "bailian": {
@@ -59,8 +60,15 @@ def _write_raw(data: dict[str, Any]) -> None:
     directory = os.path.dirname(SETTINGS_FILE)
     os.makedirs(directory, exist_ok=True)
     temporary = SETTINGS_FILE + ".tmp"
+    persisted = deepcopy(data)
+    llm = persisted.get("llm")
+    if isinstance(llm, dict):
+        for task in LLM_TASKS:
+            config = llm.get(task)
+            if isinstance(config, dict) and config.get("api_key"):
+                config["api_key"] = protect(str(config["api_key"]))
     with open(temporary, "w", encoding="utf-8") as file:
-        json.dump(data, file, ensure_ascii=False, indent=2)
+        json.dump(persisted, file, ensure_ascii=False, indent=2)
     os.replace(temporary, SETTINGS_FILE)
 
 
@@ -71,12 +79,18 @@ def _normalize_task_config(task: str, value: Any) -> dict[str, str]:
         provider = "custom"
     defaults = PROVIDER_DEFAULTS[provider]
     config = _default_task_config(task)
+    api_key_value = source.get("api_key", "")
+    try:
+        api_key, _ = unprotect(api_key_value)
+    except SecretUnavailableError:
+        _unavailable_secrets.add(f"llm.{task}")
+        api_key = ""
     config.update({
         "provider": provider,
         "base_url": str(source.get("base_url") or defaults["base_url"]).strip().rstrip("/"),
         "model": str(source.get("model") or defaults["model"]).strip(),
         "fallback_model": str(source.get("fallback_model", config["fallback_model"]) or "").strip(),
-        "api_key": str(source.get("api_key", "") or "").strip(),
+        "api_key": api_key.strip(),
     })
     if provider != "bailian" and "fallback_model" not in source:
         config["fallback_model"] = ""
@@ -86,9 +100,16 @@ def _normalize_task_config(task: str, value: Any) -> dict[str, str]:
 def load_settings() -> dict[str, Any]:
     """Load normalized settings and migrate the legacy single Bailian key."""
     with SETTINGS_LOCK:
+        _unavailable_secrets.clear()
         raw = _read_raw()
         llm = raw.get("llm") if isinstance(raw.get("llm"), dict) else {}
-        legacy_key = str(raw.get("api_key", "") or "").strip()
+        legacy_key_value = raw.get("api_key", "")
+        try:
+            legacy_key, _ = unprotect(legacy_key_value)
+        except SecretUnavailableError:
+            _unavailable_secrets.add("legacy_api_key")
+            legacy_key = ""
+        legacy_key = legacy_key.strip()
         normalized_llm: dict[str, dict[str, str]] = {}
         for task in LLM_TASKS:
             task_source = deepcopy(llm.get(task, {})) if isinstance(llm, dict) else {}
@@ -103,9 +124,30 @@ def load_settings() -> dict[str, Any]:
         }
         normalized["analysis_mode"] = raw.get("analysis_mode", "nlp")
         normalized["llm"] = normalized_llm
-        if normalized != raw:
+        # A DPAPI value from another Windows user/computer must remain on disk
+        # until the user explicitly replaces or clears it.  Rewriting the
+        # normalized in-memory blank value would silently destroy that state.
+        if normalized != raw and not _unavailable_secrets:
             _write_raw(normalized)
         return normalized
+
+
+def _retain_unavailable_ciphertexts(current: dict[str, Any]) -> dict[str, Any]:
+    """Merge inaccessible persisted API keys back into a non-secret update."""
+    merged = deepcopy(current)
+    raw_llm = _read_raw().get("llm")
+    if not isinstance(raw_llm, dict):
+        return merged
+    for task in LLM_TASKS:
+        marker = f"llm.{task}"
+        config = merged.get("llm", {}).get(task)
+        raw_config = raw_llm.get(task)
+        if marker not in _unavailable_secrets or not isinstance(config, dict) or not isinstance(raw_config, dict):
+            continue
+        encrypted = raw_config.get("api_key")
+        if not config.get("api_key") and is_encrypted(encrypted):
+            config["api_key"] = encrypted
+    return merged
 
 
 def _mask_key(api_key: str) -> str:
@@ -136,6 +178,7 @@ def public_settings(settings: dict[str, Any] | None = None) -> dict[str, Any]:
         # Backward-compatible fields for older frontends.
         "has_api_key": sentiment["has_api_key"],
         "api_key_preview": sentiment["api_key_preview"],
+        "credential_reentry_required": bool(_unavailable_secrets),
     }
 
 
@@ -186,7 +229,9 @@ def update_settings(patch: dict[str, Any]) -> dict[str, Any]:
         # Legacy writes continue to update the sentiment task.
         if str(patch.get("api_key", "") or "").strip():
             current["llm"]["sentiment"]["api_key"] = str(patch["api_key"]).strip()
-        _write_raw(current)
+        persisted = _retain_unavailable_ciphertexts(current)
+        _write_raw(persisted)
+        _unavailable_secrets.clear()
         return current
 
 

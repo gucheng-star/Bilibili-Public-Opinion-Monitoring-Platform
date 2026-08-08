@@ -9,6 +9,11 @@ data.db
 # Frontend
 frontend/node_modules/
 frontend/dist/
+frontend/src-tauri/target/
+
+# Local desktop packaging outputs
+backend/dist/
+dist/
 
 # Environment & Secrets
 .env
