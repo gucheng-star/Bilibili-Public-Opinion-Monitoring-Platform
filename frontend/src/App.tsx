@@ -324,7 +324,7 @@ function App() {
           <div className="card-enter mt-4">
             <HeatTimeline timeline={filteredHeat.timeline} hourlyDistribution={filteredHeat.hourly_distribution} peakHour={filteredHeat.peak_hour} peakCount={filteredHeat.peak_count}/>
           </div>
-          <div className="card-enter mt-4"><CommentTable comments={filteredComments} mode={results.mode}/></div>
+          <div className="card-enter mt-4"><CommentTable comments={filteredComments} mode={analysisMode}/></div>
         </>}
 
         {/* Reanalyze confirmation modal */}

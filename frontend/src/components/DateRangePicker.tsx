@@ -180,7 +180,7 @@ export default function DateRangePicker({ dateFrom, dateTo, onChange }: Props) {
   };
 
   return (
-    <div className="date-range-picker" ref={rootRef}>
+    <div className={`date-range-picker${open ? ' is-open' : ''}`} ref={rootRef}>
       <button
         type="button"
         className={`date-range-trigger ${open ? 'open' : ''}`}

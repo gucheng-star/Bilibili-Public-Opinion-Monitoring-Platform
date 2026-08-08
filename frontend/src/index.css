@@ -619,7 +619,10 @@ a:focus-visible {
 /* ---- 25. Date Range Picker ---- */
 .date-range-picker {
   position:relative;
-  z-index:20;
+}
+.date-range-picker.is-open {
+  /* Keep the calendar above nearby cards without covering the sticky page header. */
+  z-index:9;
 }
 .date-range-trigger {
   display:inline-flex;
