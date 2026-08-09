@@ -1,26 +1,21 @@
 # Windows 便携桌面架构
 
 本文档是桌面版本的跨模块契约。桌面版本采用 Tauri v2 外壳、React 静态前端和
-PyInstaller `onedir` Python 后端，目标平台为 Windows 10 1803+ / Windows 11 x64。
+PyInstaller `onefile` Python 后端，目标平台为 Windows 10 1803+ / Windows 11 x64。
 
 ## 边界与目标
 
 - 抓取、情绪分析、SQLite 数据库、Cookie 和模型配置均在用户电脑上运行和保存。
 - B 站请求由本机 Python 后端直接发出，因此使用用户当前网络的出口 IP 和本机 Cookie。
 - Vercel 不参与应用运行；未来如需官网，仅用于展示和下载引导。
-- 首个版本只发布 GitHub Release 便携 ZIP，不生成 MSI、NSIS 或 ARM64 包。
+- 首个版本只发布 GitHub Release 单文件便携 EXE，不生成 MSI、NSIS 或 ARM64 包。
 - 普通浏览器开发模式继续可用，不要求开发者必须通过 Tauri 调试前端。
 
-## 便携目录
+## 单文件与数据目录
 
 ```text
-BiliOpinionMonitor.exe
-BiliOpinionUpdater.exe
-backend/
-data/
-portable.ini
-README.txt
-LICENSE
+BiliOpinionMonitor-2.0.0-beta.1-windows-x64.exe
+data/  # 首次启动自动创建，不属于发布包
 ```
 
 应用拥有的所有可写数据必须位于程序目录下的 `data/`：
@@ -33,15 +28,21 @@ data/logs/
 data/webview/
 data/update-cache/
 data/update-runner/
+data/runtime/BiliOpinionBackend.exe
+data/runtime/tmp/
 ```
 
 程序启动时必须检查程序目录可写。只允许 Windows、WebView2 和系统组件维护自己的系统级
 缓存；应用自身不得主动把数据库、Cookie、设置或更新包写入 C 盘用户目录。
 
+主 EXE 内嵌前端、Tauri 外壳、Python onefile 后端和更新 runner 代码。运行时必须把后端
+按版本和 SHA-256 校验后原子释放到 `data/runtime/`；运行组件被删除时，下次启动自动恢复。
+SQLite、Cookie 和设置不能写回正在运行的 EXE，因此删除 `data/` 仍会丢失用户数据。
+
 ## 后端启动协议
 
-桌面外壳生成随机 256 位本地令牌并启动相邻的
-`backend/BiliOpinionBackend.exe`。外壳通过以下环境变量传递运行参数：
+桌面外壳生成随机 256 位本地令牌，校验并启动从主 EXE 释放的
+`data/runtime/BiliOpinionBackend.exe`。外壳通过以下环境变量传递运行参数：
 
 | 变量 | 含义 |
 | --- | --- |
@@ -52,6 +53,10 @@ data/update-runner/
 | `BILI_SETTINGS_PATH` | 模型设置文件绝对路径 |
 | `BILI_LOCAL_TOKEN` | 当前进程生命周期内的随机令牌 |
 | `BILI_HANDSHAKE_PATH` | 后端原子写入的握手文件绝对路径 |
+
+外壳同时把 `TEMP`、`TMP` 和 `TMPDIR` 指向 `data/runtime/tmp/`，使 PyInstaller onefile
+运行时文件留在便携目录所在磁盘，不默认占用系统盘临时目录。后端使用 Windows GUI 子系统，
+不得弹出命令行窗口；诊断信息写入 `data/logs/backend.log`。
 
 桌面后端必须绑定 `127.0.0.1:0`，由操作系统分配空闲端口。监听成功后原子写入：
 
@@ -126,8 +131,8 @@ Cookie 和每项 LLM 的 API Key 使用当前 Windows 用户的 DPAPI 加密，�
   "notes_url": "https://github.com/.../releases/tag/v2.0.0-beta.2",
   "minimum_windows": "10.0.17134",
   "asset": {
-    "name": "BiliOpinionMonitor-2.0.0-beta.2-windows-x64.zip",
-    "url": "https://github.com/.../download/...zip",
+    "name": "BiliOpinionMonitor-2.0.0-beta.2-windows-x64.exe",
+    "url": "https://github.com/.../download/...exe",
     "size": 123,
     "sha256": "..."
   },
@@ -141,13 +146,14 @@ Ed25519 签名文本固定为：
 schema|version|asset.name|asset.size|asset.sha256
 ```
 
-更新器必须验证 HTTPS 来源、大小、SHA-256、Ed25519 签名和 ZIP 路径安全；只能替换程序
-文件，永远不得覆盖 `data/` 或 `portable.ini`。替换前保留可回滚副本，更新后等待最多
+更新器必须验证 HTTPS 来源、大小、SHA-256、Ed25519 签名和 Windows EXE 文件头。安装时
+主 EXE 复制自身到 `data/update-runner/`，以内部 runner 模式等待父进程退出，只替换当前
+主 EXE，永远不得覆盖 `data/` 或同目录其他文件。替换前保留可回滚副本，更新后等待最多
 60 秒健康标记，失败则恢复旧版本。签名私钥只存在于 GitHub Actions Secret，仓库和发布包
 内只放公钥。
 
 ## 发布门禁
 
 发布工作流只能由 `v*` 标签触发，并依次完成：后端单元测试、前端 lint/build、Rust
-fmt/test/build、Python `onedir` 构建、便携目录组装、ZIP 校验、manifest 签名与 GitHub
+fmt/test/build、Python `onefile` 构建、单 EXE 组装、manifest 签名与 GitHub
 Release 上传。创建标签、推送分支或发布 Release 均需项目所有者单独确认。

@@ -1,16 +1,15 @@
 $ErrorActionPreference = "Stop"
 $FrontendRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $FrontendRoot
+$EmbeddedBackend = Join-Path $FrontendRoot "src-tauri/resources/BiliOpinionBackend.exe"
 
-# Tauri builds the configured default application binary and embeds dist/.
-& pnpm exec tauri build --no-bundle
-if ($LASTEXITCODE -ne 0) {
-    throw "Tauri 主程序构建失败，退出码: $LASTEXITCODE"
+if (-not (Test-Path -LiteralPath $EmbeddedBackend -PathType Leaf)) {
+    throw "Missing embedded backend: $EmbeddedBackend. Build the portable backend first."
 }
 
-# The portable updater is intentionally a separate process so it can replace
-# the main executable after the app exits.
-& cargo build --release --manifest-path .\src-tauri\Cargo.toml --bin BiliOpinionUpdater
+# Tauri builds the single portable executable and embeds both the frontend and
+# the prebuilt Python backend. The main executable also contains updater mode.
+& pnpm exec tauri build --no-bundle
 if ($LASTEXITCODE -ne 0) {
-    throw "便携更新器构建失败，退出码: $LASTEXITCODE"
+    throw "Tauri build failed with exit code $LASTEXITCODE"
 }

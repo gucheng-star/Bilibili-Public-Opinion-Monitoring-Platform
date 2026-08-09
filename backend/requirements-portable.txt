@@ -1,4 +1,4 @@
-# Runtime dependencies for the Windows portable backend (PyInstaller onedir).
+# Runtime dependencies for the embedded Windows backend (PyInstaller onefile).
 fastapi==0.139.0
 uvicorn==0.51.0
 SQLAlchemy==2.0.51

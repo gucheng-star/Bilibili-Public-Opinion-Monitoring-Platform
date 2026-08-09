@@ -6,6 +6,7 @@ authors = ["gucheng-star"]
 edition = "2021"
 rust-version = "1.77"
 default-run = "bili-opinion-desktop"
+autobins = false
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -23,9 +24,8 @@ sha2 = "0.10"
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-single-instance = "2"
 url = "2"
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
-zip = { version = "2", default-features = false, features = ["deflate"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_JobObjects", "Win32_System_Threading"] }
 
 [[bin]]
-name = "BiliOpinionUpdater"
-path = "src/bin/updater.rs"
+name = "bili-opinion-desktop"
+path = "src/main.rs"

@@ -1,18 +1,19 @@
 B站舆论监测平台（Windows x64 便携版）
 
 使用方式
-1. 将整个 ZIP 解压到一个可写目录，例如 F:\Apps\BiliOpinionMonitor。
-2. 不要单独移动 BiliOpinionMonitor.exe、portable.ini 或 backend 文件夹。
-3. 双击 BiliOpinionMonitor.exe 即可使用；无需安装。
+1. 将下载的 BiliOpinionMonitor-版本-windows-x64.exe 放到可写目录，例如 F:\Apps\BiliOpinionMonitor。
+2. 双击 EXE 即可使用；无需安装，也没有必须保留的程序文件夹。
+3. 首次启动会自动创建同级 data 目录，并从 EXE 恢复本地运行组件。
 
 数据与隐私
-- 评论抓取、Cookie、SQLite 数据库、模型配置和分析记录均保存在同级 data 文件夹。
+- 评论抓取、Cookie、SQLite 数据库、模型配置和分析记录均保存在 EXE 同级的 data 文件夹。
 - 抓取请求直接从本机发出，因此网站看到的是当前使用者的网络 IP 和登录 Cookie。
+- EXE 可单独移动并重新生成程序运行文件；data 被删除会丢失本地记录，建议定期备份。
 - 复制到另一台电脑时，历史数据可随 data 一同迁移；为保护安全，Cookie 和 API 密钥需要在新电脑重新输入或登录。
 
 更新
 - 启动后会检查 GitHub 便携版更新，并在您确认后下载。
-- 更新只替换程序文件，绝不覆盖 data 或 portable.ini。
+- 更新只替换主 EXE，绝不覆盖 data。
 - 有抓取或分析任务时，程序会阻止安装更新。
 
 系统要求

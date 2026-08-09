@@ -1,5 +1,0 @@
-; Presence of this file identifies a complete writable portable installation.
-; User data always lives in the adjacent data directory and is never replaced by updates.
-[portable]
-format_version=1
-data_directory=data

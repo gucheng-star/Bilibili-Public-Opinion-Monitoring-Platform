@@ -87,21 +87,21 @@ cd backend && python -m uvicorn main:app --host 0.0.0.0 --port 8000
 
 ### Windows 便携桌面版（Beta）
 
-桌面版采用 Tauri v2 外壳和 PyInstaller `onedir` 本地后端。抓取、Cookie、模型密钥、
-SQLite 数据库和分析过程均留在用户电脑；应用数据位于便携目录的 `data/`，不会上传到
-Vercel 或其他应用服务器。把目录复制到另一台电脑时历史记录仍可读取，但 Cookie 和模型
-密钥因 DPAPI 绑定当前 Windows 用户，需要重新登录和输入。
+桌面版采用 Tauri v2 外壳，并把 PyInstaller `onefile` 本地后端嵌入同一个 EXE。抓取、
+Cookie、模型密钥、SQLite 数据库和分析过程均留在用户电脑；应用数据位于 EXE 同级自动
+创建的 `data/`，不会上传到 Vercel 或其他应用服务器。把 EXE 与 data 复制到另一台电脑时
+历史记录仍可读取，但 Cookie 和模型密钥因 DPAPI 绑定当前 Windows 用户，需要重新登录和输入。
 
 ```powershell
-# 后端 onedir
+# 构建供 Tauri 嵌入的无控制台 onefile 后端
 cd backend
 .\build_portable_backend.ps1 -OutputDirectory dist
 
-# Tauri 可执行文件（不生成安装器）
+# Tauri 单文件可执行程序（不生成安装器）
 cd ..\frontend
 pnpm run tauri:build
 
-# 组装便携 ZIP
+# 输出单个便携 EXE
 cd ..
 .\scripts\assemble-portable.ps1 -Version 2.0.0-beta.1
 ```
@@ -141,7 +141,7 @@ pnpm run build -- --configLoader runner
     │   ├── services/api.ts  # API 客户端
     │   └── types/           # TypeScript 类型定义
     ├── public/china.json    # ECharts 中国地图数据
-    └── src-tauri/           # Windows 便携外壳与独立更新器
+    └── src-tauri/           # Windows 单文件便携外壳与内置更新模式
 ```
 
 ## API 路由

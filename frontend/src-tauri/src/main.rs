@@ -1,6 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod portable;
+#[path = "bin/updater.rs"]
+mod updater;
 
 use portable::{
     sha256_file, version_is_newer, BackendHandshake, PortableManifest, PortablePaths,
@@ -36,6 +38,10 @@ use windows_sys::Win32::{
 const LOCAL_TOKEN_HEADER: &str = "X-Bili-Local-Token";
 const HEALTH_WAIT: Duration = Duration::from_secs(18);
 const UPDATE_TIMEOUT: Duration = Duration::from_secs(30);
+const EMBEDDED_BACKEND: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/resources/BiliOpinionBackend.exe"
+));
 
 struct AppState {
     paths: PortablePaths,
@@ -83,28 +89,27 @@ struct UpdateCheck {
 #[serde(rename_all = "camelCase")]
 struct DownloadedUpdate {
     version: String,
-    archive_path: PathBuf,
+    executable_path: PathBuf,
+    sha256: String,
 }
 
 impl AppState {
     fn start(paths: PortablePaths, app_version: String) -> anyhow::Result<Self> {
         let token = random_hex(32);
         let job = create_kill_on_close_job()?;
-        let backend = paths.backend_executable();
-        if !backend.is_file() {
-            anyhow::bail!(
-                "未找到后端组件 {}。请重新解压完整便携包。",
-                backend.display()
-            );
-        }
+        paths.clear_abandoned_backend_temp()?;
+        let backend = paths.materialize_embedded_backend(EMBEDDED_BACKEND, &app_version)?;
         let _ = fs::remove_file(&paths.handshake_path);
         let mut command = Command::new(backend);
         command
-            .current_dir(&paths.install_root)
+            .current_dir(&paths.runtime_dir)
             .env("BILI_DATA_DIR", &paths.data_dir)
             .env("BILI_DB_PATH", paths.data_dir.join("database.sqlite3"))
             .env("BILI_AUTH_PATH", paths.data_dir.join("auth.json"))
             .env("BILI_SETTINGS_PATH", paths.data_dir.join("settings.json"))
+            .env("TEMP", &paths.backend_temp_dir)
+            .env("TMP", &paths.backend_temp_dir)
+            .env("TMPDIR", &paths.backend_temp_dir)
             .env("BILI_LOCAL_TOKEN", &token)
             .env("BILI_HANDSHAKE_PATH", &paths.handshake_path)
             .env("BILI_APP_VERSION", &app_version)
@@ -182,10 +187,14 @@ impl AppState {
 #[tauri::command]
 fn runtime_config(state: State<'_, AppState>) -> RuntimeConfig {
     RuntimeConfig {
-        api_base: state.api_base.clone(),
+        api_base: frontend_api_base(&state.api_base),
         local_token: state.token.clone(),
         app_version: state.app_version.clone(),
     }
+}
+
+fn frontend_api_base(origin: &str) -> String {
+    format!("{}/api", origin.trim_end_matches('/'))
 }
 
 #[tauri::command]
@@ -214,11 +223,14 @@ fn download_update(state: State<'_, AppState>) -> Result<DownloadedUpdate, Strin
     if !version_is_newer(&manifest.version, &state.app_version) {
         return Err("当前已是最新版本".into());
     }
+    if !manifest.asset.name.to_ascii_lowercase().ends_with(".exe") {
+        return Err("已签名更新清单的程序文件名无效".into());
+    }
+    let final_path = state.paths.update_cache_dir.join("BiliOpinionMonitor.exe");
     let part_path = state
         .paths
         .update_cache_dir
-        .join(format!("{}.part", manifest.asset.name));
-    let final_path = state.paths.update_cache_dir.join(&manifest.asset.name);
+        .join("BiliOpinionMonitor.exe.part");
     let client = secure_update_client().map_err(|error| error.to_string())?;
     let mut response = client
         .get(&manifest.asset.url)
@@ -257,12 +269,13 @@ fn download_update(state: State<'_, AppState>) -> Result<DownloadedUpdate, Strin
         let _ = fs::remove_file(&part_path);
         return Err("更新包校验失败，文件已删除".into());
     }
-    validate_zip(&part_path).map_err(|error| error.to_string())?;
+    validate_update_executable(&part_path).map_err(|error| error.to_string())?;
     let _ = fs::remove_file(&final_path);
     fs::rename(&part_path, &final_path).map_err(|error| error.to_string())?;
     let downloaded = DownloadedUpdate {
         version: manifest.version,
-        archive_path: final_path,
+        executable_path: final_path,
+        sha256: manifest.asset.sha256,
     };
     *state
         .downloaded_update
@@ -282,20 +295,28 @@ fn install_update(app: AppHandle, state: State<'_, AppState>) -> Result<(), Stri
         .map_err(|_| "更新状态锁定失败")?
         .clone()
         .ok_or("请先完整下载并校验更新包")?;
-    let installed_updater = state.paths.update_runner_dir.join("BiliOpinionUpdater.exe");
-    fs::copy(state.paths.updater_executable(), &installed_updater)
+    let installed_updater = state
+        .paths
+        .update_runner_dir
+        .join("BiliOpinionMonitor-update-runner.exe");
+    let current_executable =
+        std::env::current_exe().map_err(|error| format!("无法定位当前程序：{error}"))?;
+    fs::copy(&current_executable, &installed_updater)
         .map_err(|error| format!("无法准备更新器：{error}"))?;
     Command::new(installed_updater)
-        .arg("--staged-zip")
-        .arg(downloaded.archive_path)
-        .arg("--install-root")
-        .arg(&state.paths.install_root)
+        .arg(updater::RUNNER_ARGUMENT)
+        .arg("--staged-exe")
+        .arg(downloaded.executable_path)
+        .arg("--target-exe")
+        .arg(&current_executable)
         .arg("--data-dir")
         .arg(&state.paths.data_dir)
         .arg("--parent-pid")
         .arg(std::process::id().to_string())
         .arg("--expected-version")
         .arg(downloaded.version)
+        .arg("--expected-sha256")
+        .arg(downloaded.sha256)
         .spawn()
         .map_err(|error| format!("无法启动更新器：{error}"))?;
     app.exit(0);
@@ -333,6 +354,12 @@ fn resolve_close_request(
 }
 
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some(updater::RUNNER_ARGUMENT) {
+        if updater::run_update_runner().is_err() {
+            std::process::exit(1);
+        }
+        return;
+    }
     let result = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
             if let Some(window) = app.get_webview_window("main") {
@@ -488,15 +515,11 @@ fn assign_process_to_job(job: HANDLE, child: &Child) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn validate_zip(path: &PathBuf) -> anyhow::Result<()> {
-    let file = fs::File::open(path)?;
-    let mut archive = zip::ZipArchive::new(file)?;
-    for index in 0..archive.len() {
-        let file = archive.by_index(index)?;
-        let _ = portable::checked_extract_path(
-            std::path::Path::new("C:/portable-update"),
-            file.name(),
-        )?;
+fn validate_update_executable(path: &PathBuf) -> anyhow::Result<()> {
+    let mut header = [0_u8; 2];
+    fs::File::open(path)?.read_exact(&mut header)?;
+    if header != *b"MZ" {
+        anyhow::bail!("更新文件不是 Windows 可执行程序");
     }
     Ok(())
 }
@@ -542,4 +565,21 @@ fn random_hex(bytes: usize) -> String {
     let mut raw = vec![0_u8; bytes];
     rand::rngs::OsRng.fill_bytes(&mut raw);
     raw.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::frontend_api_base;
+
+    #[test]
+    fn desktop_frontend_receives_the_api_prefix() {
+        assert_eq!(
+            frontend_api_base("http://127.0.0.1:49152"),
+            "http://127.0.0.1:49152/api"
+        );
+        assert_eq!(
+            frontend_api_base("http://127.0.0.1:49152/"),
+            "http://127.0.0.1:49152/api"
+        );
+    }
 }
