@@ -572,6 +572,20 @@ mod tests {
     use super::frontend_api_base;
 
     #[test]
+    fn desktop_csp_allows_locally_generated_qr_data_images_only() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        let csp = config["app"]["security"]["csp"].as_str().unwrap();
+        let login_page = include_str!("../../src/components/LoginPage.tsx");
+
+        assert!(csp.contains("img-src"));
+        assert!(csp.contains("data:"));
+        assert!(!csp.contains("api.qrserver.com"));
+        assert!(login_page.contains("image_data_url"));
+        assert!(!login_page.contains("api.qrserver.com"));
+    }
+
+    #[test]
     fn desktop_frontend_receives_the_api_prefix() {
         assert_eq!(
             frontend_api_base("http://127.0.0.1:49152"),

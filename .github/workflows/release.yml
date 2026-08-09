@@ -44,9 +44,6 @@ jobs:
           pnpm --dir frontend install --frozen-lockfile
           pnpm --dir frontend run lint
           pnpm --dir frontend run build
-      - name: Build embedded Python backend (onefile)
-        shell: pwsh
-        run: .\backend\build_portable_backend.ps1 -OutputDirectory dist
       - name: Build single Tauri portable executable
         shell: pwsh
         run: pnpm --dir frontend run tauri:build
@@ -71,7 +68,10 @@ jobs:
           if ([string]::IsNullOrWhiteSpace($env:PORTABLE_UPDATE_PRIVATE_KEY_PEM_B64)) { throw "Missing PORTABLE_UPDATE_PRIVATE_KEY_PEM_B64" }
           $privateKey = Join-Path $env:RUNNER_TEMP "portable-update-private.pem"
           [IO.File]::WriteAllBytes($privateKey, [Convert]::FromBase64String($env:PORTABLE_UPDATE_PRIVATE_KEY_PEM_B64))
-          $asset = Get-ChildItem dist\portable\*.exe | Select-Object -First 1
+          $version = "${{ steps.package.outputs.version }}"
+          $assetPath = Join-Path "dist\portable" "BiliOpinionMonitor-$version-windows-x64.exe"
+          if (-not (Test-Path -LiteralPath $assetPath -PathType Leaf)) { throw "Missing expected versioned portable executable: $assetPath" }
+          $asset = Get-Item -LiteralPath $assetPath
           $hash = (Get-FileHash $asset.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
           $payload = "1|${{ steps.package.outputs.version }}|$($asset.Name)|$($asset.Length)|$hash"
           $payloadPath = Join-Path $env:RUNNER_TEMP "portable-manifest-payload.txt"

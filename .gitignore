@@ -5,9 +5,12 @@ __pycache__/
 *.egg-info/
 backend/venv/
 data.db
+*.db-shm
+*.db-wal
 
 # Frontend
 frontend/node_modules/
+.pnpm-store/
 frontend/dist/
 frontend/src-tauri/target/
 

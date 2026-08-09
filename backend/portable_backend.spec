@@ -6,6 +6,10 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 hiddenimports = (
     collect_submodules("uvicorn")
     + collect_submodules("sqlalchemy")
+    # qrcode loads its Pillow image backend lazily inside ``make_image``.
+    # Name it explicitly so a onefile build does not omit it, without bundling
+    # qrcode's own test suite.
+    + ["qrcode.image.pil"]
     + collect_submodules("jieba")
     + collect_submodules("snownlp")
 )

@@ -1,4 +1,6 @@
 ﻿from fastapi import APIRouter
+from pydantic import BaseModel, Field
+
 from services.auth import (
     credential_reentry_required,
     generate_qrcode,
@@ -11,11 +13,18 @@ from services.auth import (
 
 router = APIRouter(prefix='/api/auth')
 
+
+class QRCodeStatusRequest(BaseModel):
+    """Keep the short-lived QR key out of URLs and access logs."""
+
+    qrcode_key: str = Field(min_length=1, max_length=1024)
+
 @router.get('/qrcode')
 async def qr_generate(): return await generate_qrcode()
 
-@router.get('/qrcode/status')
-async def qr_status(qrcode_key: str): return await poll_qrcode(qrcode_key)
+@router.post('/qrcode/status')
+async def qr_status(payload: QRCodeStatusRequest):
+    return await poll_qrcode(payload.qrcode_key)
 
 @router.get('/status')
 def auth_status():
@@ -35,7 +44,10 @@ def list_accounts():
     # display names and stable list positions, never session material.
     return {
         'accounts': [
-            {'index': index, 'name': str(account.get('name') or 'B站用户')}
+            {
+                'index': int(account.get('index', index)),
+                'name': str(account.get('name') or 'B站用户'),
+            }
             for index, account in enumerate(get_accounts())
             if isinstance(account, dict)
         ]

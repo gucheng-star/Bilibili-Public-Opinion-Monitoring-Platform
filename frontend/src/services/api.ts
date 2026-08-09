@@ -121,15 +121,19 @@ export function logout() {
 }
 
 export function getAuthAccounts() {
-  return req<{ accounts: { name: string }[] }>('/auth/accounts');
+  return req<{ accounts: { index: number; name: string }[] }>('/auth/accounts');
 }
 
 export function getQRCode() {
-  return req<{ url: string; qrcode_key: string; error?: string }>('/auth/qrcode');
+  return req<{ image_data_url?: string; qrcode_key?: string; error?: string }>('/auth/qrcode');
 }
 
 export function getQRCodeStatus(key: string) {
-  return req<{ status: string }>('/auth/qrcode/status?qrcode_key=' + encodeURIComponent(key));
+  return req<{ status: string; message?: string }>('/auth/qrcode/status', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ qrcode_key: key }),
+  });
 }
 
 export function switchAuthAccount(index: number) {

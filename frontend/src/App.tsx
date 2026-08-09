@@ -207,7 +207,20 @@ function App() {
     setLoading(false);
   }, []);
 
-  const handleLogout = async () => { await logout(); setLoggedIn(false); setResults(null); };
+  const handleLogout = async () => {
+    try {
+      const result = await logout();
+      if (result.ok === false) {
+        showToast('退出登录失败，请稍后重试。');
+        return;
+      }
+      setLoggedIn(false);
+      setResults(null);
+      setAnalysisId(null);
+    } catch {
+      showToast('退出登录失败，请检查本地服务后重试。');
+    }
+  };
   const handleStop = () => { cancelRef.current = true; };
   const handleApplyFilters = (f: FilterState) => { setFilters(f); };
   const resolveClose = async (action: 'exit' | 'tray' | 'cancel') => {

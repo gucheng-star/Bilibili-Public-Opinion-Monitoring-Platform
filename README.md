@@ -43,7 +43,7 @@ Bilibili Public Opinion Monitoring Platform — 输入 BV 号，自动抓取评�
 cd backend
 python -m venv venv
 venv\Scripts\activate      # macOS/Linux: source venv/bin/activate
-pip install fastapi uvicorn httpx sqlalchemy jieba snownlp aiosqlite
+pip install -r requirements-portable.txt
 
 # 2. 前端
 cd frontend
@@ -93,12 +93,8 @@ Cookie、模型密钥、SQLite 数据库和分析过程均留在用户电脑；�
 历史记录仍可读取，但 Cookie 和模型密钥因 DPAPI 绑定当前 Windows 用户，需要重新登录和输入。
 
 ```powershell
-# 构建供 Tauri 嵌入的无控制台 onefile 后端
-cd backend
-.\build_portable_backend.ps1 -OutputDirectory dist
-
-# Tauri 单文件可执行程序（不生成安装器）
-cd ..\frontend
+# 重建无控制台 onefile 后端并嵌入 Tauri（不生成安装器）
+cd frontend
 pnpm run tauri:build
 
 # 输出单个便携 EXE

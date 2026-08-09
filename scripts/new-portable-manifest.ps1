@@ -9,8 +9,21 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+function Get-Sha256Hex([string]$Path) {
+    $stream = [IO.File]::OpenRead($Path)
+    try {
+        $algorithm = [Security.Cryptography.SHA256]::Create()
+        try {
+            return ([BitConverter]::ToString($algorithm.ComputeHash($stream))).Replace("-", "").ToLowerInvariant()
+        }
+        finally { $algorithm.Dispose() }
+    }
+    finally { $stream.Dispose() }
+}
+
 $asset = Get-Item -LiteralPath $AssetPath
-$hash = (Get-FileHash -LiteralPath $asset.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+$hash = Get-Sha256Hex $asset.FullName
 $manifest = [ordered]@{
     schema = 1
     version = $Version
@@ -25,4 +38,9 @@ $manifest = [ordered]@{
     minimum_windows = "10.0.17134"
     signature = $SignatureBase64
 }
-$manifest | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $OutputPath -Encoding utf8NoBOM
+$json = $manifest | ConvertTo-Json -Depth 4
+[IO.File]::WriteAllText(
+    [IO.Path]::GetFullPath($OutputPath),
+    $json,
+    [Text.UTF8Encoding]::new($false)
+)

@@ -79,11 +79,11 @@ class PortableRuntimeTests(unittest.TestCase):
 
     def test_public_account_list_never_exposes_cookie(self):
         with patch("api.auth_routes.get_accounts", return_value=[{
-            "name": "测试用户", "cookie": "SESSDATA=private-cookie",
+            "index": 3, "name": "测试用户", "cookie": "SESSDATA=private-cookie",
         }]):
             response = list_accounts()
         serialized = json.dumps(response, ensure_ascii=False)
-        self.assertEqual(response["accounts"], [{"index": 0, "name": "测试用户"}])
+        self.assertEqual(response["accounts"], [{"index": 3, "name": "测试用户"}])
         self.assertNotIn("private-cookie", serialized)
         self.assertNotIn("cookie", serialized)
 
