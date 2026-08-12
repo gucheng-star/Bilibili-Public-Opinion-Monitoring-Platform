@@ -1,164 +1,252 @@
 # B站舆论监测平台
 
-Bilibili Public Opinion Monitoring Platform — 输入 BV 号，自动抓取评论并进行多维度舆情分析。
+本地优先的 B站视频评论区舆情分析工具。输入 BV 号或视频链接后，应用使用你的网络 IP 和登录 Cookie 抓取评论，并在本机完成存储、统计、可视化与可选的大模型分析。
 
-## 功能
+> **当前版本：** `2.0.0-beta.1`，Windows x64 单 EXE 便携版。
 
-- **扫码登录** — B站 App 扫码，安全无侵入，Cookie 仅用于数据抓取
-- **多维度分析** — 情感倾向、词云、地域分布、性别结构、热度趋势
-- **NLP 优先的双引擎分析** — 新分析固定先运行本地 NLP 三分类，用户主动切换后才调用可配置的 LLM 八分类（Plutchik 情绪模型）
-- **批量 LLM 分析** — 每批 5 条评论、最多 3 批并发，按评论 ID 校验分类结果并自动重试失败批次
-- **AI 智能总结** — 对当前筛选统计和代表性评论生成一段舆情简报，并按筛选条件保存
-- **多模型供应商** — 情绪分析和智能总结可分别使用百炼、DeepSeek 或自定义 OpenAI 兼容接口；模型与回退模型从供应商列表中选择
-- **暗/亮双主题** — 跟随系统自动切换；手动切换以主题按钮为中心，浅色向外展开、深色向内收拢
-- **丰富的图表** — ECharts 饼图/玫瑰图/中国地图/词云/折线图，全部支持一键下载；成对图表保持等宽，地域地图按排名选择代表性省份标注
-- **筛选过滤** — 性别、时间维度、地域和情绪共同驱动图表、评论列表与 AI 总结；时间支持快捷范围和自定义双月日历，NLP/LLM 模式分别提供三分类和八分类标签
-- **历史管理** — 自动保存分析结果，随时回顾或删除
-- **可感知的任务进度** — 抓取进度按已获取评论数实时更新，AI 总结等待时循环显示打字机状态；长评论以定长摘要展示，完整内容由悬浮详情承载
-- **沉浸式登录页** — 全屏信号观测主题背景、左右分栏圆角工作台与登录区内昼夜切换
+## 项目特点
 
-## 技术栈
+- **本地抓取**：B站请求由用户电脑直接发出，不通过项目服务器中转。
+- **扫码登录**：后端在本机生成二维码 PNG，不依赖第三方二维码服务，不外传一次性授权地址。
+- **单 EXE 便携版**：Tauri、React 前端、Python 后端和更新 runner 集成到一个 EXE，无需安装。
+- **本地 NLP 优先**：新分析先运行正面、中性、负面三分类，不会自动产生大模型费用。
+- **九类主情感**：用户主动切换后，可分析中性、喜悦、支持、期待、惊讶、愤怒、悲伤、担忧、厌恶。
+- **表达方式识别**：玩梗和反讽作为独立标签，不与主情感混在一起。
+- **多维可视化**：情感、性别、地域、时间热度、关键词与词云。
+- **统一筛选**：性别、时间、地域和情感共同驱动图表、评论列表与 AI 简报。
+- **AI 舆情简报**：只在点击按钮时生成，使用精确统计和有限的代表性评论，并按筛选条件保存。
+- **多供应商模型**：情感分析与智能总结分别配置百炼、DeepSeek 或自定义 OpenAI 兼容服务。
+- **本地历史记录**：SQLite 保存分析结果，可回看和删除。
+- **安全更新**：GitHub Release 更新验证大小、SHA-256 与 Ed25519 签名，失败自动回滚。
 
-| 层 | 技术 |
-|----|------|
-| 后端 | FastAPI (Python 3.12) + SQLite + SQLAlchemy |
-| 前端 | React 19 + TypeScript + Vite |
-| NLP | jieba 分词 + SnowNLP 情感分析 |
-| LLM | 百炼 / DeepSeek / 自定义 OpenAI 兼容接口 |
-| 图表 | ECharts + echarts-for-react + echarts-wordcloud |
-| 样式 | 纯 CSS（CSS 变量双主题） |
+## 本地优先架构
 
-## 快速开始
-
-### 环境要求
-
-- Python 3.12+ + venv
-- Node.js 24+ + pnpm
-- (可选) 百炼、DeepSeek 或其他 OpenAI 兼容服务的 API Key
-
-### 安装运行
-
-```bash
-# 1. 后端
-cd backend
-python -m venv venv
-venv\Scripts\activate      # macOS/Linux: source venv/bin/activate
-pip install -r requirements-portable.txt
-
-# 2. 前端
-cd frontend
-pnpm install
-
-# 3. 启动开发服务
-# 终端 1 — 后端 (端口 8000)
-cd backend && venv\Scripts\activate && python -m uvicorn main:app --port 8000 --reload
-
-# 终端 2 — 前端 (端口 5173)
-cd frontend && pnpm run dev
+```mermaid
+flowchart LR
+    U["用户"] --> UI["React / Tauri 界面"]
+    UI -->|"127.0.0.1 + 随机令牌"| API["FastAPI 本地后端"]
+    API -->|"用户 IP + 本机 Cookie"| B["B站 API"]
+    API --> DB["本机 SQLite / 配置"]
+    API --> NLP["本地 NLP"]
+    API -->|"用户主动触发"| LLM["可选模型服务"]
 ```
 
-浏览器打开 **http://localhost:5173**。
+Vercel 不参与应用运行。如果以后建立官网，Vercel 只负责项目展示、说明和下载引导。
 
-### 大模型分析说明
+## 普通用户：下载即用
 
-- 首次提交分析不会调用大模型，而是先完成本地 NLP。只有用户在结果页主动切换到“大模型八分类”时，才会调用 `/api/reanalyze/{id}`。
-- 每个请求包含 5 条评论，最多并发 3 个批次。返回结果使用评论 ID 绑定并校验，单个失败批次最多重试 2 次。
-- LLM 重分析失败时保留已经完成的 NLP 结果和可用界面，不会把整条分析记录标记为不可用。
-- 情绪分析与智能总结拥有独立的供应商、模型、Base URL、API Key 和可选回退模型配置。
-- 配置供应商、Base URL 和 API Key 后，先点击“获取模型列表”，再从下拉列表选择主模型与回退模型，避免手工输入错误。切换供应商或修改 Base URL 后需要重新获取。
-- 百炼初始推荐 `qwen3.6-plus`，DeepSeek 初始推荐 `deepseek-v4-flash`；最终可用模型以供应商接口返回的列表为准。自定义接口需要兼容 OpenAI 的 `GET /models` 才能提供选择列表。
-- 百炼与 DeepSeek 请求会关闭思考模式，避免推理内容占满输出预算后返回空正文。设置页的“测试连接”会走与实际情感分析相同的结构化分类链路。
+1. 打开 [GitHub Releases](https://github.com/gucheng-star/Bilibili-Public-Opinion-Monitoring-Platform/releases)。
+2. 下载 `BiliOpinionMonitor-<版本>-windows-x64.exe`。
+3. 把 EXE 放在有写权限的位置，例如 `F:\Apps\BiliOpinionMonitor`。
+4. 双击运行，无需安装 Python、Node.js 或 Rust。
+5. 首次启动会在 EXE 同级创建 `data/`，然后打开应用窗口。
 
-### AI 智能总结
+发布给其他用户时只需要发送 EXE。`data/` 是运行后生成的用户数据，不是程序依赖。
 
-- 总结只在用户点击“生成总结”或“重新生成”时调用模型，应用筛选不会自动产生费用。
-- 后端对全部筛选结果计算精确统计，再选取最多 40 条、合计不超过 12,000 字的高赞与分层代表评论。
-- 同一分析、同一筛选条件只保存最新总结；评论内容或情绪标签变化后，旧总结会标记为过期。
-- API Key 保存在本机设置文件中，Windows 桌面版使用当前用户的 DPAPI 加密；接口仅返回掩码，日志和总结记录不保存完整密钥。
-- 自定义接口必须使用公网 HTTPS Base URL；本机和私网模型端点暂不支持。
+> **重要：** 删除 `data/` 会删除本机数据库、登录信息、模型设置与分析记录。移动到新电脑时可以携带 `data/`，但 Cookie 和 API Key 因 Windows DPAPI 绑定原用户，需要重新登录或输入。
 
-### 生产构建
+### 系统要求
 
-```bash
-cd frontend && pnpm run build
-# 构建产物在 frontend/dist/，后端自动服务
-cd backend && python -m uvicorn main:app --host 0.0.0.0 --port 8000
-```
+- Windows 10 1803（内部版本 17134）或更高版本，64 位。
+- Microsoft Edge WebView2 Runtime。多数 Windows 10/11 已自带。
+- 可访问 B站的网络。
 
-### Windows 便携桌面版（Beta）
+测试版可能未进行商业代码签名，因此 Windows SmartScreen 可能显示警告。请只从本仓库 Releases 下载，并核对发布页 SHA-256。
 
-桌面版采用 Tauri v2 外壳，并把 PyInstaller `onefile` 本地后端嵌入同一个 EXE。抓取、
-Cookie、模型密钥、SQLite 数据库和分析过程均留在用户电脑；应用数据位于 EXE 同级自动
-创建的 `data/`，不会上传到 Vercel 或其他应用服务器。把 EXE 与 data 复制到另一台电脑时
-历史记录仍可读取，但 Cookie 和模型密钥因 DPAPI 绑定当前 Windows 用户，需要重新登录和输入。
+## 登录与隐私
+
+扫码登录流程如下：
+
+1. 本机后端向 B站请求一次性登录地址。
+2. 后端使用 `qrcode` 和 Pillow 在本机生成 PNG。
+3. 前端直接显示 `data:image/png;base64,...`，不访问外部二维码图片站点。
+4. 扫码状态通过 `POST /api/auth/qrcode/status` 的 JSON 请求体轮询，短期 key 不进入访问日志 URL。
+5. 登录成功后，桌面版使用当前 Windows 用户的 DPAPI 加密凭据。
+
+应用不会把 Cookie 发送到项目自建服务器。Cookie 仅用于从本机访问 B站接口。
+
+## 分析流程
+
+### 本地 NLP
+
+首次分析固定使用 SnowNLP 三分类：
+
+- 正面（`positive`）
+- 中性（`neutral`）
+- 负面（`negative`）
+
+### 大模型情感分析
+
+只有用户主动切换到大模型模式时才调用模型。主情感为九类：
+
+`neutral`、`joy`、`support`、`anticipation`、`surprise`、`anger`、`sadness`、`concern`、`disgust`。
+
+表达方式独立为 `plain`、`meme`、`sarcasm`。为了理解回复语境，每条评论最多携带根评论和直接父评论；上下文只帮助理解指代、玩梗与反讽，不会把父评论情绪转移到当前评论。
+
+每批处理 5 条评论，最多并发 3 批，失败批次最多重试 2 次。服务端根据评论 ID、标签集合和返回数量校验结果。
+
+### AI 舆情简报
+
+- 只在点击“生成总结”或“重新生成”时调用模型。
+- 后端根据当前筛选重新计算精确统计，不信任前端提交的统计结果。
+- 最多发送 40 条、合计不超过 12,000 字的代表性评论。
+- 不发送用户名、评论 ID、Cookie 或 API Key。
+- 筛选变化不会自动调用模型或产生费用。
+
+## 开发环境
+
+### 要求
+
+| 工具 | 版本 |
+| --- | --- |
+| Python | 3.12 |
+| Node.js | 22 或更高 |
+| pnpm | 11 |
+| Rust | 1.77 或更高，仅桌面构建需要 |
+| Windows | Windows 10/11 x64，桌面构建需要 |
+
+### 安装依赖
 
 ```powershell
-# 重建无控制台 onefile 后端并嵌入 Tauri（不生成安装器）
+cd backend
+python -m venv venv
+.\venv\Scripts\python.exe -m pip install -r requirements-portable.txt
+
+cd ..\frontend
+pnpm install
+```
+
+### 启动网页开发环境
+
+终端 1：
+
+```powershell
+cd backend
+.\venv\Scripts\python.exe -m uvicorn main:app --host 127.0.0.1 --port 8000 --reload
+```
+
+终端 2：
+
+```powershell
+cd frontend
+pnpm run dev
+```
+
+浏览器打开 `http://localhost:5173`。
+
+> **验证点：** 登录页应能生成清晰二维码；浏览器网络记录中不应出现 `api.qrserver.com`，二维码状态请求不应把 `qrcode_key` 放在 URL 查询参数中。
+
+### 运行测试
+
+```powershell
+cd backend
+.\venv\Scripts\python.exe -m unittest discover -s tests -v
+
+cd ..\frontend
+pnpm run lint
+pnpm run build
+
+cd ..
+cargo fmt --manifest-path frontend\src-tauri\Cargo.toml -- --check
+cargo test --manifest-path frontend\src-tauri\Cargo.toml --bins
+```
+
+## 构建 Windows 单 EXE
+
+```powershell
 cd frontend
 pnpm run tauri:build
 
-# 输出单个便携 EXE
 cd ..
 .\scripts\assemble-portable.ps1 -Version 2.0.0-beta.1
 ```
 
-开发架构、目录和更新安全协议见 `docs/DESKTOP_ARCHITECTURE.md`。正式在线更新还需要在
-GitHub Actions 中配置 Ed25519 私钥和对应公钥；未配置公钥的本地测试构建会禁用在线更新。
+输出位置：
 
-### 验证
-
-```bash
-cd backend
-venv\Scripts\python.exe -m unittest discover -s tests -v
-
-cd ../frontend
-pnpm run lint
-pnpm run build -- --configLoader runner
+```text
+dist/portable/BiliOpinionMonitor-2.0.0-beta.1-windows-x64.exe
 ```
 
-### 常见问题
+`tauri:build` 会强制执行以下流程：
 
-- `attempt to write a readonly database`：这属于本机 SQLite 文件或目录写权限问题，不是 B站拒绝访问。请确认后端进程以正常用户权限运行，并且 `backend/` 与数据库文件可写。
-- `模型返回了空内容`：请先更新到包含 DeepSeek 关闭思考参数的版本，并在设置页重新测试情感分析配置；首次分析仍会优先使用本地 NLP。
+1. 删除旧 Python 后端产物。
+2. 使用固定依赖重新构建 PyInstaller onefile 后端。
+3. 校验后端产物与 Tauri 嵌入资源 SHA-256 一致。
+4. 构建 React 前端和 Tauri release 主程序。
+5. 由组装脚本校验 Cargo、Tauri 与发布版本一致后输出版本化 EXE。
 
-## 项目结构
+不要直接复用旧的 `frontend/src-tauri/resources/BiliOpinionBackend.exe`，否则可能把旧功能嵌入新桌面程序。
 
-```
-├── backend/
-│   ├── main.py              # FastAPI 入口
-│   ├── api/                 # 路由（分析、设置、智能总结、认证）
-│   ├── services/            # 业务逻辑（抓取、情绪、通用 LLM、总结、图表）
-│   ├── models/              # SQLAlchemy 模型 (database.py)
-│   └── venv/                # Python 虚拟环境 (gitignored)
-└── frontend/
-    ├── src/
-    │   ├── App.tsx          # 主应用
-    │   ├── components/      # 页面与数据可视化组件
-    │   ├── services/api.ts  # API 客户端
-    │   └── types/           # TypeScript 类型定义
-    ├── public/china.json    # ECharts 中国地图数据
-    └── src-tauri/           # Windows 单文件便携外壳与内置更新模式
-```
+## GitHub 上传与发布前必读
 
-## API 路由
+### 不得上传的内容
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET/POST | `/api/auth/*` | 扫码登录、状态、退出、账号管理 |
-| POST | `/api/analyze` | 提交 BV 号，异步抓取并执行本地 NLP |
-| POST | `/api/reanalyze/{id}` | 对已有结果用 LLM 重新分析 |
-| GET | `/api/status/{id}` | 查询分析进度 |
-| GET | `/api/results/{id}` | 获取完整分析结果 |
-| GET | `/api/wordcloud/{id}` | 词云图片 (base64) |
-| GET | `/api/history` | 历史记录列表 |
-| DELETE | `/api/history/{id}` | 删除历史 (级联删除) |
-| GET/PUT | `/api/settings` | 读取或更新本机设置（密钥仅返回掩码） |
-| POST | `/api/settings/models` | 从指定供应商获取可选模型列表 |
-| POST | `/api/settings/test-llm` | 按指定任务的真实调用链测试模型连接 |
-| GET | `/api/summaries/{id}` | 获取分析记录下已保存的智能总结 |
-| POST | `/api/summaries/{id}` | 按当前筛选生成或覆盖智能总结 |
-| GET/POST | `/api/runtime/*` | 桌面后端健康、任务状态与退出准备 |
+以下内容已在 `.gitignore` 中排除，提交前仍应使用 `git status` 复核：
 
-## License
+- `backend/auth.json`、`backend/settings.json`、`.env`
+- SQLite 数据库、`*.db-wal`、`*.db-shm`
+- `backend/venv/`、`frontend/node_modules/`
+- `backend/dist/`、`frontend/dist/`、`frontend/src-tauri/target/`、`dist/`
+- 本机 `.agents/`、`.codex/`、`.claude/` 与 `PROJECT.md`
+- 日志文件与本地缓存
 
-MIT
+### 发布版本必须一致
+
+发布前同时更新：
+
+- `frontend/src-tauri/Cargo.toml` 中的 `version`
+- `frontend/src-tauri/tauri.conf.json` 中的 `version`
+- Git 标签，例如 `v2.0.0-beta.1`
+
+组装脚本会拒绝版本不一致的构建。版本不一致还会导致更新健康检查失败并回滚。
+
+### 发布门禁
+
+1. 运行后端、前端和 Rust 全量测试。
+2. 在网页开发环境验证登录、筛选与图表。
+3. 重建最终单 EXE，并在真实 WebView 中再次验证二维码。
+4. 检查 EXE 为 Windows GUI 子系统，不会弹出命令行。
+5. 确认 GitHub Actions 已配置更新签名私钥，仓库只包含公钥。
+6. 先检查待推送提交和目标分支；未经项目所有者明确确认，不推送 `master`、标签或 Release。
+
+GitHub 工作流只由 `v*` 标签触发，发布资产为版本化 EXE 和 `latest-portable.json`。
+
+## 项目文档
+
+| 文件 | 内容 |
+| --- | --- |
+| [PORTABLE-README.txt](PORTABLE-README.txt) | 便携版用户使用、数据与更新说明 |
+| [docs/DESKTOP_ARCHITECTURE.md](docs/DESKTOP_ARCHITECTURE.md) | Tauri、后端、数据目录和更新安全协议 |
+| [frontend/README.md](frontend/README.md) | 前端开发与桌面运行契约 |
+| [backend/tests/sentiment-fixture-test-cases.md](backend/tests/sentiment-fixture-test-cases.md) | 九类情感与表达方式测试用例 |
+| [LICENSE](LICENSE) | MIT 许可证及中文参考译文 |
+
+`PROJECT.md` 与 `.agents/AGENTS.md` 是本机维护资料，默认不上传 GitHub。
+
+## 常见问题
+
+### 二维码显示为空白或破图
+
+更新到使用本地 PNG 二维码的版本。不要恢复第三方二维码图片 URL；Tauri CSP 只允许本地、asset、data 和 blob 图片。
+
+### 出现 `attempt to write a readonly database`
+
+这是 SQLite 文件或目录写权限问题，不是 B站或模型 API Key 问题。检查后端目录或桌面 EXE 同级 `data/` 是否可写。
+
+### 桌面接口出现 `/auth/*` 404
+
+检查桌面运行配置中的 `apiBase` 是否已经包含 `/api` 前缀。前端组件应统一通过 `src/services/api.ts` 请求。
+
+### 移动 EXE 后需要重新登录
+
+同一 Windows 用户移动位置通常不影响 DPAPI。复制到其他电脑或其他 Windows 用户后，Cookie 与模型密钥无法解密，需要重新登录和输入；历史 SQLite 数据仍可保留。
+
+## 合规说明
+
+本项目与哔哩哔哩官方无隶属或授权关系。使用者应遵守适用法律法规、B站服务条款和接口限制，合理设置抓取数量与请求间隔，并自行承担使用责任。
+
+## 许可证与版权
+
+Copyright © 2026 gucheng.
+
+本项目采用 MIT License，详见 [LICENSE](LICENSE)。中文译文仅供参考，许可证英文正文具有约束力。

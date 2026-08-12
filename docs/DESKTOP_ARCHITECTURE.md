@@ -89,6 +89,25 @@ interface RuntimeConfig {
 所有业务请求必须经过统一 API 客户端。桌面客户端将 `apiBase` 作为前缀，并自动加入本地
 令牌；组件不得直接请求 `/api/...`。`/china.json` 等前端静态资源不属于此限制。
 
+## 本地二维码协议
+
+扫码登录不得依赖第三方二维码图片服务。后端从 B站取得授权 URL 后，必须在本机生成 PNG，
+并通过 `GET /api/auth/qrcode` 返回 `data:image/png;base64,...` 格式的
+`image_data_url` 和 `qrcode_key`。前端只显示该本地 data URL；Tauri CSP 允许 `data:`
+图片，但不得为外部二维码域名放宽 `img-src`。
+
+轮询使用 `POST /api/auth/qrcode/status`，请求体为：
+
+```json
+{
+  "qrcode_key": "..."
+}
+```
+
+这样可以避免登录键出现在本地访问日志和 URL 历史中。返回、重试、组件卸载或二维码过期时，
+前端必须取消旧轮询，旧请求不得覆盖新二维码的界面状态。Cookie 只由本地后端保存，API 响应
+不得返回 Cookie 内容。
+
 ## 生命周期协议
 
 后端提供：
@@ -156,4 +175,16 @@ schema|version|asset.name|asset.size|asset.sha256
 
 发布工作流只能由 `v*` 标签触发，并依次完成：后端单元测试、前端 lint/build、Rust
 fmt/test/build、Python `onefile` 构建、单 EXE 组装、manifest 签名与 GitHub
-Release 上传。创建标签、推送分支或发布 Release 均需项目所有者单独确认。
+Release 上传。`frontend/build-tauri-portable.ps1` 必须先重建后端，再校验新产物与
+`src-tauri/resources/BiliOpinionBackend.exe` 的 SHA-256 一致，禁止复用旧内嵌资源。
+
+二维码、Pillow 和 PyInstaller 等影响单文件封装的依赖必须固定版本。发布前还要确认 Git
+标签、`Cargo.toml` 和 `tauri.conf.json` 的版本完全一致，并用最终 EXE 验证：后端健康、
+本地二维码 PNG 可生成、WebView 中二维码图片实际可见且没有 CSP 错误。创建标签、推送分支
+或发布 Release 均需项目所有者单独确认。
+
+## 相关文档
+
+- GitHub 项目入口：[`../README.md`](../README.md)
+- 项目实现说明：[`../PROJECT.md`](../PROJECT.md)
+- 用户便携版说明：[`../PORTABLE-README.txt`](../PORTABLE-README.txt)

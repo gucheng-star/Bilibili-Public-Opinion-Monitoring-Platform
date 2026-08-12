@@ -36,6 +36,7 @@ backend/settings.json
 .claude/
 skills/
 PROJECT.md
+plan/
 
 # OS
 .DS_Store
