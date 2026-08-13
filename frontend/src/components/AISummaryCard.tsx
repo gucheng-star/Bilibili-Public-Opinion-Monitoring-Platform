@@ -23,7 +23,8 @@ function sameFilters(left: FilterState, right: FilterState): boolean {
     && left.dateFrom === right.dateFrom
     && left.dateTo === right.dateTo
     && left.region === right.region
-    && left.sentiment === right.sentiment;
+    && left.sentiment === right.sentiment
+    && (left.duplicateMode || 'include') === (right.duplicateMode || 'include');
 }
 
 export default function AISummaryCard({ analysisId, filters, matchedCount, mode }: Props) {
@@ -94,7 +95,12 @@ export default function AISummaryCard({ analysisId, filters, matchedCount, mode 
     try {
       const result = await generateSummary(analysisId, filters, Boolean(exact));
       setSummaries(items => {
-        const others = items.filter(item => item.filter_hash !== result.filter_hash);
+        // Regenerating a legacy `include` summary can retain its database id while
+        // moving it to the new filter hash. Remove by both identities so the
+        // obsolete object cannot win the next exact-match lookup.
+        const others = items.filter(
+          item => item.id !== result.id && item.filter_hash !== result.filter_hash,
+        );
         return [...others, result];
       });
     } catch (reason) {

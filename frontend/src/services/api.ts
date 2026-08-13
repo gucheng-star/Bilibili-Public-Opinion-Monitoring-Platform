@@ -4,6 +4,7 @@ import type {
   AnalysisResult,
   FilterState,
   HistoryItem,
+  KeywordItem,
   LLMTask,
   LLMTaskUpdate,
   SettingsResponse,
@@ -46,6 +47,14 @@ export function getStatus(analysisId: number) {
 
 export function getResults(analysisId: number) {
   return req<AnalysisResult>('/results/' + analysisId);
+}
+
+export function getFilteredKeywords(analysisId: number, filters: FilterState) {
+  return req<{ matched_count: number; keywords: KeywordItem[] }>('/keywords/' + analysisId, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ filters }),
+  });
 }
 
 export function getWordCloud(analysisId: number) {

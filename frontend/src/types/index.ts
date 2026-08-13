@@ -8,6 +8,7 @@ export type LLMTask = "sentiment" | "summary";
 
 /** Sentiment label (traditional 3-class) */
 export type SentimentLabel = "positive" | "negative" | "neutral";
+export type DuplicateMode = "include" | "deduplicate" | "exclude_groups";
 
 /** Comment data */
 export interface CommentData {
@@ -25,6 +26,17 @@ export interface CommentData {
   sentiment_llm_label: string;
   sentiment_llm_style: string;
   post_time: string | null;
+  is_exact_duplicate: boolean;
+  duplicate_group_size: number;
+  duplicate_group_key: string | null;
+  is_duplicate_canonical: boolean;
+}
+
+export interface DuplicateStatistics {
+  group_count: number;
+  involved_comments: number;
+  duplicate_excess: number;
+  involved_ratio: number;
 }
 
 /** LLM main-emotion distribution; expression style is stored per comment. */
@@ -73,6 +85,7 @@ export interface AnalysisResult {
     hourly_distribution: { hour: number; count: number }[];
   };
   keywords: KeywordItem[];
+  duplicate_statistics: DuplicateStatistics;
   comments: CommentData[];
 }
 
@@ -137,6 +150,7 @@ export interface FilterState {
   dateTo: string;
   region: string;
   sentiment: "all" | SentimentLabel | keyof SentimentLLM;
+  duplicateMode: DuplicateMode;
 }
 
 export interface AISummary {

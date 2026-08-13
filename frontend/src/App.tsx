@@ -16,9 +16,9 @@ import AISummaryCard from './components/AISummaryCard';
 import SettingsEntry from './components/SettingsEntry';
 import AnalysisProgress from './components/AnalysisProgress';
 import SettingsPage from './pages/SettingsPage';
-import { getAuthStatus, getResults, getRuntimeActivity, getSettings, getStatus, logout, prepareRuntimeExit, reanalyze, startAnalysis } from './services/api';
+import { getAuthStatus, getFilteredKeywords, getResults, getRuntimeActivity, getSettings, getStatus, logout, prepareRuntimeExit, reanalyze, startAnalysis } from './services/api';
 import { checkForUpdates, downloadUpdate, installDownloadedUpdate, isDesktopRuntime, onCloseRequested, respondToCloseRequest } from './services/desktop';
-import type { AnalysisResult, FilterState, AnalysisMode, SentimentLLM } from './types';
+import type { AnalysisResult, FilterState, AnalysisMode, KeywordItem, SentimentLLM } from './types';
 import './AppShell.css';
 
 const PROVINCES = new Set(['北京','天津','上海','重庆','河北','山西','辽宁','吉林','黑龙江','江苏','浙江','安徽','福建','江西','山东','河南','湖北','湖南','广东','海南','四川','贵州','云南','陕西','甘肃','青海','台湾','内蒙古','广西','西藏','宁夏','新疆','香港','澳门']);
@@ -59,7 +59,12 @@ function App() {
   const [analysisMode, setAnalysisMode] = useState<AnalysisMode>('nlp');
   const [maxComments, setMaxComments] = useState(100);
   const [delay, setDelay] = useState(3.0);
-  const [filters, setFilters] = useState<FilterState>({ gender: 'all', dateFrom: '', dateTo: '', region: '', sentiment: 'all' });
+  const [filters, setFilters] = useState<FilterState>({
+    gender: 'all', dateFrom: '', dateTo: '', region: '', sentiment: 'all', duplicateMode: 'include',
+  });
+  const [filteredKeywords, setFilteredKeywords] = useState<KeywordItem[]>([]);
+  const [keywordStatus, setKeywordStatus] = useState<'ready' | 'loading' | 'error'>('ready');
+  const keywordRequestRef = useRef(0);
   const [hasApiKey, setHasApiKey] = useState(false);
   const [reanalyzing, setReanalyzing] = useState(false);
   const [reanalyzeModal, setReanalyzeModal] = useState(false);
@@ -209,7 +214,7 @@ function App() {
   const handleViewHistory = useCallback(async (id: number) => {
     setReanalyzing(false);
     setLoading(true); setError(null); setStatusText('加载中...');
-    try { const data = await getResults(id); setResults(data); setAnalysisId(id); setAnalysisMode(data.mode); setFilters({ gender:'all',dateFrom:'',dateTo:'',region:'',sentiment:'all' }); } catch (e:any) { setError(e.message); }
+    try { const data = await getResults(id); setResults(data); setAnalysisId(id); setAnalysisMode(data.mode); setFilters({ gender:'all',dateFrom:'',dateTo:'',region:'',sentiment:'all',duplicateMode:'include' }); } catch (e:any) { setError(e.message); }
     setLoading(false);
   }, []);
 
@@ -238,21 +243,64 @@ function App() {
     setCloseRequest(null);
   };
 
-  const filteredComments = useMemo(() => {
+  const duplicateFilteredComments = useMemo(() => {
     if (!results) return [];
-    let comments = [...results.comments];
+    if (filters.duplicateMode === 'deduplicate') {
+      return results.comments.filter(comment => !comment.is_exact_duplicate || comment.is_duplicate_canonical);
+    }
+    if (filters.duplicateMode === 'exclude_groups') {
+      return results.comments.filter(comment => !comment.is_exact_duplicate);
+    }
+    return results.comments;
+  }, [results, filters.duplicateMode]);
+
+  const filteredComments = useMemo(() => {
+    let comments = [...duplicateFilteredComments];
     if (filters.gender === 'male') comments = comments.filter(c => c.gender === '男');
     if (filters.gender === 'female') comments = comments.filter(c => c.gender === '女');
     if (filters.dateFrom) comments = comments.filter(c => c.post_time && c.post_time.slice(0, 10) >= filters.dateFrom);
     if (filters.dateTo) comments = comments.filter(c => c.post_time && c.post_time.slice(0, 10) <= filters.dateTo);
     if (filters.region) { comments = comments.filter(c => normalizeProvince(c.ip_location) === filters.region); }
     if (filters.sentiment !== 'all') {
-      comments = results.mode === 'llm'
+      comments = results?.mode === 'llm'
         ? comments.filter(c => c.sentiment_llm_label === filters.sentiment)
         : comments.filter(c => c.sentiment_label === filters.sentiment);
     }
     return comments;
-  }, [results, filters]);
+  }, [results, filters, duplicateFilteredComments]);
+
+  const duplicateGroups = useMemo(() => {
+    if (!results) return [];
+    const groups = new Map<string, typeof results.comments>();
+    for (const comment of results.comments) {
+      if (!comment.duplicate_group_key) continue;
+      const members = groups.get(comment.duplicate_group_key) || [];
+      members.push(comment);
+      groups.set(comment.duplicate_group_key, members);
+    }
+    return Array.from(groups.entries()).map(([key, members]) => {
+      let firstPostTime: string | null = null;
+      let lastPostTime: string | null = null;
+      for (const member of members) {
+        const postTime = member.post_time;
+        if (!postTime) continue;
+        if (!firstPostTime || postTime < firstPostTime) firstPostTime = postTime;
+        if (!lastPostTime || postTime > lastPostTime) lastPostTime = postTime;
+      }
+      return {
+        key,
+        content: members[0]?.content || '',
+        count: members.length,
+        firstPostTime,
+        lastPostTime,
+      };
+    }).sort((left, right) => right.count - left.count || left.key.localeCompare(right.key));
+  }, [results]);
+
+  const allCommentRpids = useMemo(
+    () => new Set((results?.comments || []).map(comment => String(comment.rpid))),
+    [results],
+  );
 
   const filteredSentiment = useMemo(() => ({
     positive: filteredComments.filter(c => c.sentiment_label === 'positive').length,
@@ -293,19 +341,42 @@ function App() {
     return { timeline, peak_hour: pi>=0?String(pi).padStart(2,'0')+':00':null, peak_count: pk, hourly_distribution: hd.map((c,h)=>({hour:h,count:c})) };
   }, [filteredComments]);
 
-  const filteredKeywords = useMemo(() => {
-    if (!results) return [];
-    return results.keywords
-      .map(keyword => ({
-        ...keyword,
-        count: filteredComments.reduce(
-          (total, comment) => total + Math.max(0, comment.content.split(keyword.word).length - 1),
-          0,
-        ),
-      }))
-      .filter(keyword => keyword.count > 0)
-      .sort((left, right) => right.count - left.count);
-  }, [results, filteredComments]);
+  useEffect(() => {
+    const requestId = ++keywordRequestRef.current;
+    if (!results || !analysisId) {
+      setFilteredKeywords([]);
+      setKeywordStatus('ready');
+      return;
+    }
+    const isFullCollection = filters.gender === 'all'
+      && !filters.dateFrom
+      && !filters.dateTo
+      && !filters.region
+      && filters.sentiment === 'all'
+      && filters.duplicateMode === 'include';
+    if (isFullCollection) {
+      setFilteredKeywords(results.keywords);
+      setKeywordStatus('ready');
+      return;
+    }
+    setFilteredKeywords([]);
+    setKeywordStatus('loading');
+    const expectedMatchedCount = filteredComments.length;
+    getFilteredKeywords(analysisId, filters)
+      .then(response => {
+        if (keywordRequestRef.current !== requestId) return;
+        if (response.matched_count !== expectedMatchedCount) {
+          throw new Error('筛选集合计数不一致');
+        }
+        setFilteredKeywords(response.keywords);
+        setKeywordStatus('ready');
+      })
+      .catch(() => {
+        if (keywordRequestRef.current !== requestId) return;
+        setFilteredKeywords([]);
+        setKeywordStatus('error');
+      });
+  }, [analysisId, filteredComments.length, filters, results]);
 
   const availableRegions = useMemo(() => {
     if (!results) return [];
@@ -404,7 +475,16 @@ function App() {
         )}
         {results && <>
           <VideoInfo title={results.video_title} play={results.video_play} totalComments={results.total_comments}/>
-          <FilterBar filters={filters} onApply={handleApplyFilters} availableRegions={availableRegions} mode={results.mode}/>
+          <FilterBar
+            filters={filters}
+            onApply={handleApplyFilters}
+            availableRegions={availableRegions}
+            mode={results.mode}
+            duplicateStatistics={results.duplicate_statistics}
+            duplicateGroups={duplicateGroups}
+            originalCount={results.comments.length}
+            duplicateRetainedCount={duplicateFilteredComments.length}
+          />
           {analysisId && <div className="card-enter mt-4">
             <AISummaryCard analysisId={analysisId} filters={filters} matchedCount={filteredComments.length} mode={results.mode}/>
           </div>}
@@ -423,11 +503,24 @@ function App() {
             <div className="card-enter"><GenderChart male={filteredGender.male} female={filteredGender.female} unknown={filteredGender.unknown}/></div>
           </div>
           <div className="card-enter mt-4"><RegionMap data={filteredRegion}/></div>
-          <div className="card-enter mt-4"><WordCloudCard keywords={filteredKeywords}/></div>
+          <div className="card-enter mt-4">
+            {keywordStatus === 'ready' ? (
+              <WordCloudCard keywords={filteredKeywords}/>
+            ) : (
+              <div className="card">
+                <h3 className="text-xs font-semibold text-secondary mb-2" style={{letterSpacing:'.05em'}}>词云</h3>
+                <div className="flex items-center justify-center h-64 text-muted text-sm" role="status">
+                  {keywordStatus === 'loading'
+                    ? '正在按当前筛选重新统计关键词…'
+                    : '当前筛选的关键词加载失败，请重新应用筛选。该过程不会调用付费模型。'}
+                </div>
+              </div>
+            )}
+          </div>
           <div className="card-enter mt-4">
             <HeatTimeline timeline={filteredHeat.timeline} hourlyDistribution={filteredHeat.hourly_distribution} peakHour={filteredHeat.peak_hour} peakCount={filteredHeat.peak_count}/>
           </div>
-          <div className="card-enter mt-4"><CommentTable comments={filteredComments} mode={analysisMode}/></div>
+          <div className="card-enter mt-4"><CommentTable comments={filteredComments} mode={analysisMode} allCommentRpids={allCommentRpids}/></div>
         </>}
 
         {/* Reanalyze confirmation modal */}

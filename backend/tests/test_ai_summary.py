@@ -1,12 +1,17 @@
+import asyncio
 from datetime import datetime, timedelta
 import json
 import unittest
+from unittest.mock import AsyncMock, patch
 
 from services.ai_summary import (
     MAX_SAMPLE_CHARACTERS,
     MAX_SAMPLE_COMMENTS,
     apply_filters,
+    build_statistics,
     build_summary_messages,
+    filter_signature,
+    generate_summary,
     input_signature,
     normalize_filters,
     select_representative_comments,
@@ -46,6 +51,39 @@ class AISummaryTests(unittest.TestCase):
         self.assertEqual([comment["id"] for comment in matched], [1])
         with self.assertRaises(ValueError):
             normalize_filters({"sentiment": "joy"}, "nlp")
+
+    def test_duplicate_mode_defaults_to_include_and_applies_before_other_filters(self):
+        comments = [
+            make_comment(1, gender="男", region="广东"),
+            make_comment(2, gender="女", region="广东"),
+            make_comment(3, gender="女", region="北京"),
+        ]
+        comments[0]["content"] = comments[1]["content"] = "完全相同的评论"
+
+        old_filters = normalize_filters({"gender": "all"}, "nlp")
+        self.assertEqual(old_filters["duplicateMode"], "include")
+        combined_filters = normalize_filters({
+            "gender": "female",
+            "region": "广东",
+            "sentiment": "positive",
+            "duplicateMode": "deduplicate",
+        }, "nlp")
+
+        matched = apply_filters(comments, combined_filters, "nlp")
+
+        # The canonical member is male, so duplicate filtering before gender
+        # filtering intentionally leaves no matching female duplicate member.
+        self.assertEqual(matched, [])
+        with self.assertRaises(ValueError):
+            normalize_filters({"duplicateMode": "unknown"}, "nlp")
+
+    def test_duplicate_modes_produce_three_distinct_filter_hashes(self):
+        hashes = {
+            filter_signature(normalize_filters({"duplicateMode": mode}, "nlp"))[1]
+            for mode in ("include", "deduplicate", "exclude_groups")
+        }
+
+        self.assertEqual(len(hashes), 3)
 
     def test_llm_mode_uses_new_main_emotion_labels(self):
         comments = [
@@ -91,6 +129,51 @@ class AISummaryTests(unittest.TestCase):
         self.assertIn("不可信", prompt)
         self.assertNotIn("user-1", prompt)
         self.assertIn("120至220字", prompt)
+
+    def test_summary_quality_context_is_sent_without_identity_or_credentials(self):
+        comments = [make_comment(1)]
+        quality_context = {
+            "original_comment_count": 2,
+            "duplicate_group_count": 1,
+            "duplicate_involved_comments": 2,
+            "duplicate_mode": "deduplicate",
+            "after_duplicate_filter_count": 1,
+            "final_matched_count": 1,
+        }
+        captured_messages = []
+
+        async def fake_chat_completion(_config, messages, **_kwargs):
+            captured_messages.extend(messages)
+            return "基于样本的总结", "mock-model"
+
+        with patch("services.ai_summary.chat_completion", new=AsyncMock(side_effect=fake_chat_completion)):
+            summary, model, sampled_count = asyncio.run(
+                generate_summary(
+                    comments,
+                    "nlp",
+                    {"api_key": "very-secret-key"},
+                    quality_context,
+                )
+            )
+
+        system_prompt = captured_messages[0]["content"]
+        request_payload = captured_messages[1]["content"]
+        self.assertEqual((summary, model, sampled_count), ("基于样本的总结", "mock-model", 1))
+        self.assertIn('"data_quality"', request_payload)
+        self.assertIn('"duplicate_mode":"deduplicate"', request_payload)
+        self.assertIn("重复内容不等于水军", system_prompt)
+        self.assertNotIn("user-1", request_payload)
+        self.assertNotIn("very-secret-key", request_payload)
+        self.assertNotIn('"id":1', request_payload)
+
+    def test_statistics_only_uses_the_final_filtered_collection(self):
+        comments = [make_comment(1), make_comment(2, label="negative")]
+        comments[0]["content"] = comments[1]["content"] = "重复"
+        filters = normalize_filters({"duplicateMode": "deduplicate"}, "nlp")
+
+        final_comments = apply_filters(comments, filters, "nlp")
+
+        self.assertEqual(build_statistics(final_comments, "nlp")["total"], 1)
 
 
 if __name__ == "__main__":

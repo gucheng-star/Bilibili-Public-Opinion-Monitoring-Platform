@@ -17,6 +17,11 @@ from services.ai_summary import (
 from services.llm_client import LLMRequestError
 from services.settings_store import get_task_config
 from services.runtime_state import activity
+from services.comment_quality import (
+    annotate_exact_duplicates,
+    apply_duplicate_mode,
+    build_duplicate_statistics,
+)
 
 
 router = APIRouter(prefix="/api")
@@ -25,6 +30,7 @@ router = APIRouter(prefix="/api")
 def _comment_dict(comment: Comment) -> dict:
     return {
         "id": comment.id,
+        "rpid": comment.rpid,
         "content": comment.content or "",
         "likes": comment.likes or 0,
         "gender": comment.gender or "",
@@ -35,11 +41,15 @@ def _comment_dict(comment: Comment) -> dict:
     }
 
 
-def _serialize(summary: AISummary, current_input_hash: str | None = None) -> dict:
+def _serialize(
+    summary: AISummary,
+    current_input_hash: str | None = None,
+    normalized_filters: dict[str, str] | None = None,
+) -> dict:
     return {
         "id": summary.id,
         "analysis_id": summary.analysis_id,
-        "filters": json.loads(summary.filter_json),
+        "filters": normalized_filters or json.loads(summary.filter_json),
         "filter_hash": summary.filter_hash,
         "summary_text": summary.summary_text,
         "provider": summary.provider,
@@ -59,7 +69,9 @@ def list_summaries(analysis_id: int):
         analysis = db.query(Analysis).filter_by(id=analysis_id).first()
         if not analysis:
             raise HTTPException(404, "分析记录不存在")
-        comments = [_comment_dict(comment) for comment in db.query(Comment).filter_by(analysis_id=analysis_id).all()]
+        comments = annotate_exact_duplicates([
+            _comment_dict(comment) for comment in db.query(Comment).filter_by(analysis_id=analysis_id).all()
+        ])
         response = []
         for summary in db.query(AISummary).filter_by(analysis_id=analysis_id).all():
             try:
@@ -68,7 +80,7 @@ def list_summaries(analysis_id: int):
                 current_hash = input_signature(matched, analysis.mode)
             except (ValueError, json.JSONDecodeError):
                 current_hash = ""
-            response.append(_serialize(summary, current_hash))
+            response.append(_serialize(summary, current_hash, filters if current_hash else None))
         return response
     finally:
         db.close()
@@ -88,7 +100,9 @@ async def create_summary(analysis_id: int, req: dict):
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         filter_json, filter_hash = filter_signature(filters)
-        comments = [_comment_dict(comment) for comment in db.query(Comment).filter_by(analysis_id=analysis_id).all()]
+        comments = annotate_exact_duplicates([
+            _comment_dict(comment) for comment in db.query(Comment).filter_by(analysis_id=analysis_id).all()
+        ])
         matched = apply_filters(comments, filters, analysis.mode)
         if not matched:
             raise HTTPException(400, "当前筛选条件下没有可总结的评论")
@@ -97,9 +111,16 @@ async def create_summary(analysis_id: int, req: dict):
             analysis_id=analysis_id,
             filter_hash=filter_hash,
         ).first()
+        if not existing and filters["duplicateMode"] == "include":
+            legacy_filters = {key: value for key, value in filters.items() if key != "duplicateMode"}
+            _, legacy_hash = filter_signature(legacy_filters)
+            existing = db.query(AISummary).filter_by(
+                analysis_id=analysis_id,
+                filter_hash=legacy_hash,
+            ).first()
         regenerate = bool(req.get("regenerate", False))
         if existing and existing.input_hash == current_input_hash and not regenerate:
-            return _serialize(existing, current_input_hash)
+            return _serialize(existing, current_input_hash, filters)
 
         try:
             config = get_task_config("summary")
@@ -108,9 +129,22 @@ async def create_summary(analysis_id: int, req: dict):
         if not config.get("api_key"):
             raise HTTPException(400, "请先配置智能总结 API Key")
         with activity("ai_summary"):
-            summary_text, used_model, sampled_count = await generate_summary(matched, analysis.mode, config)
+            duplicate_statistics = build_duplicate_statistics(comments)
+            after_duplicate_count = len(apply_duplicate_mode(comments, filters["duplicateMode"]))
+            quality_context = {
+                "original_comment_count": len(comments),
+                "duplicate_group_count": duplicate_statistics["group_count"],
+                "duplicate_involved_comments": duplicate_statistics["involved_comments"],
+                "duplicate_mode": filters["duplicateMode"],
+                "after_duplicate_filter_count": after_duplicate_count,
+                "final_matched_count": len(matched),
+            }
+            summary_text, used_model, sampled_count = await generate_summary(
+                matched, analysis.mode, config, quality_context
+            )
         if existing:
             existing.filter_json = filter_json
+            existing.filter_hash = filter_hash
             existing.input_hash = current_input_hash
             existing.summary_text = summary_text
             existing.provider = config["provider"]
@@ -133,7 +167,7 @@ async def create_summary(analysis_id: int, req: dict):
             db.add(record)
         db.commit()
         db.refresh(record)
-        return _serialize(record, current_input_hash)
+        return _serialize(record, current_input_hash, filters)
     except HTTPException:
         db.rollback()
         raise

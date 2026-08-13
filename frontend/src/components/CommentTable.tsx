@@ -1,10 +1,10 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import type { AnalysisMode, CommentData, SentimentLabel, SentimentLLM } from '../types';
 
-interface Props { comments: CommentData[]; mode: AnalysisMode; }
+interface Props { comments: CommentData[]; mode: AnalysisMode; allCommentRpids: ReadonlySet<string>; }
 
 type LlmSentimentLabel = keyof SentimentLLM;
-type CommentNode = { comment: CommentData; children: CommentNode[] };
+type CommentNode = { comment: CommentData; children: CommentNode[]; parentHidden: boolean };
 
 const COMMENT_PREVIEW_LENGTH = 72;
 
@@ -39,7 +39,7 @@ const STYLE_TAG: Record<string, { label: string; bg: string; color: string }> = 
   sarcasm: { label: '反讽', bg: 'rgba(236,72,153,.10)', color: '#BE185D' },
 };
 
-export default function CommentTable({ comments, mode }: Props) {
+export default function CommentTable({ comments, mode, allCommentRpids }: Props) {
   const [sortBy, setSortBy] = useState<'time'|'likes'>('time');
   const [page, setPage] = useState(1);
   const pageSize = 30;
@@ -111,15 +111,22 @@ export default function CommentTable({ comments, mode }: Props) {
 
   const treeRoots = useMemo(() => {
     const nodesByRpid = new Map<string, CommentNode>();
-    sorted.forEach(comment => nodesByRpid.set(String(comment.rpid), { comment, children: [] }));
+    sorted.forEach(comment => nodesByRpid.set(String(comment.rpid), { comment, children: [], parentHidden: false }));
     const roots: CommentNode[] = [];
     nodesByRpid.forEach(node => {
       const parent = node.comment.parent_rpid ? nodesByRpid.get(String(node.comment.parent_rpid)) : undefined;
       if (parent && parent !== node) parent.children.push(node);
-      else roots.push(node);
+      else {
+        node.parentHidden = Boolean(
+          node.comment.parent_rpid
+          && allCommentRpids.has(String(node.comment.parent_rpid))
+          && !parent,
+        );
+        roots.push(node);
+      }
     });
     return roots;
-  }, [sorted]);
+  }, [sorted, allCommentRpids]);
 
   const pages = Math.max(1, Math.ceil(treeRoots.length/pageSize));
   const pagedRoots = treeRoots.slice((page-1)*pageSize, page*pageSize);
@@ -141,6 +148,12 @@ export default function CommentTable({ comments, mode }: Props) {
             onMouseLeave={hideTip}>
             {depth > 0 && <span className="comment-tree__branch" aria-hidden="true">↳</span>}
             <span className="comment-tree__text">{getCommentPreview(c.content)}</span>
+            {c.is_exact_duplicate && (
+              <span className="duplicate-comment-tag" title="仅表示原始评论文本逐字符完全一致，不代表水军或异常账号">
+                相同内容 × {c.duplicate_group_size}
+              </span>
+            )}
+            {node.parentHidden && <span className="comment-parent-hidden">父评论已被当前筛选隐藏</span>}
           </div>
         </td>
         <td style={{padding:'.6rem .5rem',textAlign:'center',color:'var(--text-secondary)',fontSize:'.8125rem'}}>{c.likes}</td>

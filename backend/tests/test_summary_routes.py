@@ -1,4 +1,5 @@
 from datetime import datetime
+import json
 import unittest
 from unittest.mock import AsyncMock, patch
 
@@ -9,6 +10,7 @@ from sqlalchemy.pool import StaticPool
 
 from api import summary_routes
 from models.database import AISummary, Analysis, Base, Comment
+from services.ai_summary import filter_signature, input_signature
 
 
 class SummaryRouteTests(unittest.IsolatedAsyncioTestCase):
@@ -118,6 +120,153 @@ class SummaryRouteTests(unittest.IsolatedAsyncioTestCase):
         db = self.sessions()
         self.assertEqual(db.query(AISummary).count(), 0)
         db.close()
+
+    async def test_duplicate_mode_is_recomputed_server_side_and_quality_context_is_complete(self):
+        db = self.sessions()
+        original = db.query(Comment).first()
+        db.add_all([
+            Comment(
+                analysis_id=self.analysis_id,
+                rpid=2,
+                username="第二个重复账号",
+                gender="女",
+                ip_location="北京",
+                content=original.content,
+                likes=999,
+                sentiment_label="negative",
+                sentiment_score=0.1,
+                post_time=datetime(2026, 7, 2, 12, 0),
+            ),
+            Comment(
+                analysis_id=self.analysis_id,
+                rpid=3,
+                username="独立账号",
+                gender="女",
+                ip_location="北京",
+                content="独立的真实评论",
+                likes=1,
+                sentiment_label="neutral",
+                sentiment_score=0.5,
+                post_time=datetime(2026, 7, 3, 12, 0),
+            ),
+        ])
+        db.commit()
+        db.close()
+        config = {
+            "provider": "custom", "base_url": "https://example.com/v1",
+            "model": "mock-model", "fallback_model": "", "api_key": "secret",
+        }
+        received = {}
+
+        async def fake_generate(comments, mode, _config, quality_context):
+            received["comment_ids"] = [item["id"] for item in comments]
+            received["mode"] = mode
+            received["quality_context"] = quality_context
+            return "模拟总结", "mock-model", len(comments)
+
+        filters = {"duplicateMode": "deduplicate"}
+        with patch.object(summary_routes, "get_task_config", return_value=config), patch.object(
+            summary_routes, "generate_summary", new=AsyncMock(side_effect=fake_generate)
+        ):
+            response = await summary_routes.create_summary(self.analysis_id, {
+                "filters": filters,
+                # Deliberately untrusted client data must not become model input.
+                "comments": [{"id": 999, "content": "伪造评论", "username": "泄漏对象"}],
+            })
+
+        self.assertEqual(response["matched_count"], 2)
+        self.assertEqual(received["mode"], "nlp")
+        self.assertNotIn(999, received["comment_ids"])
+        self.assertEqual(len(received["comment_ids"]), 2)
+        self.assertEqual(received["quality_context"], {
+            "original_comment_count": 3,
+            "duplicate_group_count": 1,
+            "duplicate_involved_comments": 2,
+            "duplicate_mode": "deduplicate",
+            "after_duplicate_filter_count": 2,
+            "final_matched_count": 2,
+        })
+
+    async def test_all_three_duplicate_modes_have_isolated_cache_records(self):
+        db = self.sessions()
+        original = db.query(Comment).first()
+        db.add(Comment(
+            analysis_id=self.analysis_id,
+            rpid=2,
+            content=original.content,
+            likes=1,
+            sentiment_label="positive",
+            sentiment_score=0.9,
+            post_time=datetime(2026, 7, 2, 12, 0),
+        ))
+        db.add(Comment(
+            analysis_id=self.analysis_id,
+            rpid=3,
+            content="不重复的评论",
+            likes=1,
+            sentiment_label="neutral",
+            sentiment_score=0.5,
+            post_time=datetime(2026, 7, 3, 12, 0),
+        ))
+        db.commit()
+        db.close()
+        config = {
+            "provider": "custom", "base_url": "https://example.com/v1",
+            "model": "mock-model", "fallback_model": "", "api_key": "secret",
+        }
+        generator = AsyncMock(return_value=("模拟总结", "mock-model", 1))
+
+        with patch.object(summary_routes, "get_task_config", return_value=config), patch.object(
+            summary_routes, "generate_summary", generator
+        ):
+            responses = [
+                await summary_routes.create_summary(self.analysis_id, {"filters": {"duplicateMode": mode}})
+                for mode in ("include", "deduplicate", "exclude_groups")
+            ]
+
+        self.assertEqual(generator.await_count, 3)
+        self.assertEqual(len({item["filter_hash"] for item in responses}), 3)
+        self.assertEqual([item["matched_count"] for item in responses], [3, 2, 1])
+
+    async def test_legacy_cache_without_duplicate_mode_is_reused_as_include(self):
+        db = self.sessions()
+        comment = db.query(Comment).first()
+        legacy_filters = {
+            "gender": "all", "dateFrom": "", "dateTo": "", "region": "", "sentiment": "all",
+        }
+        _, legacy_hash = filter_signature(legacy_filters)
+        comments = [{
+            "id": comment.id, "rpid": comment.rpid, "content": comment.content,
+            "likes": comment.likes, "gender": comment.gender, "ip_location": comment.ip_location,
+            "post_time": comment.post_time, "sentiment_label": comment.sentiment_label,
+            "sentiment_llm_label": "",
+        }]
+        db.add(AISummary(
+            analysis_id=self.analysis_id,
+            filter_json=json.dumps(legacy_filters),
+            filter_hash=legacy_hash,
+            input_hash=input_signature(comments, "nlp"),
+            summary_text="历史总结",
+            provider="custom",
+            model="legacy-model",
+            matched_count=1,
+            sampled_count=1,
+        ))
+        db.commit()
+        db.close()
+
+        listed = summary_routes.list_summaries(self.analysis_id)
+        self.assertEqual(listed[0]["filters"]["duplicateMode"], "include")
+
+        with patch.object(summary_routes, "get_task_config") as config, patch.object(
+            summary_routes, "generate_summary", new=AsyncMock()
+        ) as generator:
+            response = await summary_routes.create_summary(self.analysis_id, {"filters": {}})
+
+        self.assertEqual(response["summary_text"], "历史总结")
+        self.assertEqual(response["filters"]["duplicateMode"], "include")
+        config.assert_not_called()
+        generator.assert_not_awaited()
 
 
 if __name__ == "__main__":

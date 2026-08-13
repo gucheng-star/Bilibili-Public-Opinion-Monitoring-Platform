@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import type { AnalysisMode, FilterState } from '../types';
+import type { AnalysisMode, DuplicateStatistics, FilterState } from '../types';
 import DateRangePicker from './DateRangePicker';
 import FilterSelect, { type FilterSelectOption } from './FilterSelect';
 
@@ -8,6 +8,16 @@ interface Props {
   onApply: (f: FilterState) => void;
   availableRegions: string[];
   mode: AnalysisMode;
+  duplicateStatistics: DuplicateStatistics;
+  duplicateGroups: Array<{
+    key: string;
+    content: string;
+    count: number;
+    firstPostTime: string | null;
+    lastPostTime: string | null;
+  }>;
+  originalCount: number;
+  duplicateRetainedCount: number;
 }
 
 const NLP_SENTIMENTS = [
@@ -18,16 +28,29 @@ const LLM_SENTIMENTS = [
   ['surprise', '惊讶'], ['anger', '愤怒'], ['sadness', '悲伤'], ['concern', '担忧'], ['disgust', '厌恶'],
 ] as const;
 
-export default function FilterBar({ filters, onApply, availableRegions, mode }: Props) {
+const DUPLICATE_OPTIONS: FilterSelectOption<FilterState['duplicateMode']>[] = [
+  { value: 'include', label: '包含全部' },
+  { value: 'deduplicate', label: '每组保留一条' },
+  { value: 'exclude_groups', label: '排除整组' },
+];
+
+function formatTime(value: string | null): string {
+  return value ? new Date(value).toLocaleString('zh-CN') : '未知';
+}
+
+export default function FilterBar({
+  filters, onApply, availableRegions, mode, duplicateStatistics, duplicateGroups,
+  originalCount, duplicateRetainedCount,
+}: Props) {
   const [draft, setDraft] = useState<FilterState>(filters);
   useEffect(() => { setDraft(filters); }, [filters]);
 
   const update = (patch: Partial<FilterState>) => setDraft(prev => ({ ...prev, ...patch }));
   const changed = draft.gender !== filters.gender || draft.dateFrom !== filters.dateFrom
     || draft.dateTo !== filters.dateTo || draft.region !== filters.region
-    || draft.sentiment !== filters.sentiment;
+    || draft.sentiment !== filters.sentiment || draft.duplicateMode !== filters.duplicateMode;
   const hasActiveFilter = filters.gender !== 'all' || Boolean(filters.dateFrom || filters.dateTo || filters.region)
-    || filters.sentiment !== 'all';
+    || filters.sentiment !== 'all' || filters.duplicateMode !== 'include';
   const sentimentOptions = mode === 'llm' ? LLM_SENTIMENTS : NLP_SENTIMENTS;
   const regionOptions: FilterSelectOption<string>[] = [
     { value: '', label: '全部地域' },
@@ -62,6 +85,13 @@ export default function FilterBar({ filters, onApply, availableRegions, mode }: 
       />
 
       <FilterSelect
+        ariaLabel="重复内容筛选"
+        value={draft.duplicateMode}
+        options={DUPLICATE_OPTIONS}
+        onChange={duplicateMode => update({ duplicateMode })}
+      />
+
+      <FilterSelect
         ariaLabel="情绪筛选"
         value={draft.sentiment}
         options={sentimentFilterOptions}
@@ -81,7 +111,7 @@ export default function FilterBar({ filters, onApply, availableRegions, mode }: 
       </button>
 
       {(changed || hasActiveFilter) && (
-        <button onClick={() => onApply({ gender: 'all', dateFrom: '', dateTo: '', region: '', sentiment: 'all' })}
+        <button onClick={() => onApply({ gender: 'all', dateFrom: '', dateTo: '', region: '', sentiment: 'all', duplicateMode: 'include' })}
           style={{
             padding: '.25rem .5rem', fontSize: '.6875rem', color: 'var(--text-muted)',
             background: 'transparent', border: '1px solid var(--border)', borderRadius: '.375rem', cursor: 'pointer',
@@ -89,6 +119,28 @@ export default function FilterBar({ filters, onApply, availableRegions, mode }: 
           重置
         </button>
       )}
+      <details className="duplicate-quality" open={false}>
+        <summary>
+          {duplicateStatistics.group_count > 0
+            ? `发现 ${duplicateStatistics.group_count} 组完全相同内容，共涉及 ${duplicateStatistics.involved_comments} 条评论`
+            : '未发现完全相同的评论内容'}
+        </summary>
+        <div className="duplicate-quality__panel">
+          <p>当前重复内容模式保留 {duplicateRetainedCount} / {originalCount} 条，排除 {originalCount - duplicateRetainedCount} 条。</p>
+          <p className="duplicate-quality__notice">重复内容不一定是异常账号或水军，仅供数据清洗参考。</p>
+          {duplicateGroups.length > 0 && (
+            <ol className="duplicate-quality__groups">
+              {duplicateGroups.map(group => (
+                <li key={group.key}>
+                  <strong>相同内容 × {group.count}</strong>
+                  <span>{group.content}</span>
+                  <small>{formatTime(group.firstPostTime)} — {formatTime(group.lastPostTime)}</small>
+                </li>
+              ))}
+            </ol>
+          )}
+        </div>
+      </details>
     </div>
   );
 }

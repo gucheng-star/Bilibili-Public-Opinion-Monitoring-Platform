@@ -11,6 +11,8 @@ from services.region import analyze_region
 from services.heat import analyze_heat
 from services.settings_store import get_task_config
 from services.runtime_state import activity
+from services.comment_quality import annotate_exact_duplicates, build_duplicate_statistics
+from services.ai_summary import apply_filters, normalize_filters
 from services.sentiment_test_fixtures import (
     FIXTURE_VIDEO_TITLE,
     build_fixture_comments,
@@ -308,13 +310,15 @@ def get_results(analysis_id: int):
             'sentiment_llm_label':c.sentiment_llm_label if c.sentiment_llm_label else '',
             'sentiment_llm_style':c.sentiment_llm_style or 'plain',
             'post_time':c.post_time.isoformat() if c.post_time else None} for c in comments]
+        cl = annotate_exact_duplicates(cl)
         result = {'analysis_id':a.id,'bv':a.bv,'video_title':a.video_title,
             'video_cover':a.video_cover,'video_play':a.video_play,
             'mode':a.mode,
             'total_comments':a.total_comments,'created_at':a.created_at.isoformat() if a.created_at else None,
             'sentiment':{'positive':s.positive_count if s else 0,'negative':s.negative_count if s else 0,'neutral':s.neutral_count if s else 0},
             'gender':_calc_gender(cl),'region':analyze_region(cl),'heat':analyze_heat(cl),
-            'keywords':get_top_keywords(cl, top_n=500),'comments':cl}
+            'keywords':get_top_keywords(cl, top_n=500),
+            'duplicate_statistics':build_duplicate_statistics(cl),'comments':cl}
         if a.mode == 'llm' and s:
             result['sentiment_llm'] = {
                 'neutral':s.llm_neutral,'joy':s.llm_joy,'support':s.llm_support or s.llm_trust,
@@ -323,6 +327,44 @@ def get_results(analysis_id: int):
             }
         return result
     finally: db.close()
+
+
+@router.post('/keywords/{analysis_id}')
+def get_filtered_keywords(analysis_id: int, req: dict):
+    """Rebuild keywords from the same final collection used by filtered views.
+
+    This endpoint is entirely local: it only reads SQLite and runs the existing
+    deterministic duplicate/filter/word-segmentation services. It never calls
+    either configured LLM task.
+    """
+    db = SessionLocal()
+    try:
+        analysis = db.query(Analysis).filter_by(id=analysis_id).first()
+        if not analysis:
+            raise HTTPException(404, 'Not found')
+        if analysis.status != 'done':
+            raise HTTPException(400, 'Analysis not complete')
+        try:
+            filters = normalize_filters(req.get('filters'), analysis.mode)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        comments = annotate_exact_duplicates([{
+            'id': comment.id,
+            'rpid': comment.rpid,
+            'content': comment.content,
+            'gender': comment.gender,
+            'ip_location': comment.ip_location,
+            'post_time': comment.post_time,
+            'sentiment_label': comment.sentiment_label,
+            'sentiment_llm_label': comment.sentiment_llm_label or '',
+        } for comment in db.query(Comment).filter_by(analysis_id=analysis_id).all()])
+        matched = apply_filters(comments, filters, analysis.mode)
+        return {
+            'matched_count': len(matched),
+            'keywords': get_top_keywords(matched, top_n=500),
+        }
+    finally:
+        db.close()
 
 @router.get('/wordcloud/{analysis_id}')
 def get_wordcloud(analysis_id: int):
