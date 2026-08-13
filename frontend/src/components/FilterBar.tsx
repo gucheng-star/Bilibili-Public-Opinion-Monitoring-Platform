@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import type { AnalysisMode, FilterState } from '../types';
 import DateRangePicker from './DateRangePicker';
+import FilterSelect, { type FilterSelectOption } from './FilterSelect';
 
 interface Props {
   filters: FilterState;
@@ -28,12 +29,17 @@ export default function FilterBar({ filters, onApply, availableRegions, mode }: 
   const hasActiveFilter = filters.gender !== 'all' || Boolean(filters.dateFrom || filters.dateTo || filters.region)
     || filters.sentiment !== 'all';
   const sentimentOptions = mode === 'llm' ? LLM_SENTIMENTS : NLP_SENTIMENTS;
+  const regionOptions: FilterSelectOption<string>[] = [
+    { value: '', label: '全部地域' },
+    ...availableRegions.map(region => ({ value: region, label: region })),
+  ];
+  const sentimentFilterOptions: FilterSelectOption<FilterState['sentiment']>[] = [
+    { value: 'all', label: '全部情绪' },
+    ...sentimentOptions.map(([value, label]) => ({ value, label })),
+  ];
 
   return (
-    <div style={{
-      display: 'flex', alignItems: 'center', gap: '.75rem', padding: '.5rem 0',
-      flexWrap: 'wrap', borderBottom: '1px solid var(--border)', marginBottom: '.75rem',
-    }}>
+    <div className="filter-bar">
       <span style={{ fontSize: '.75rem', color: 'var(--text-muted)', fontWeight: 500 }}>筛选</span>
 
       <div className="segmented" style={{ fontSize: '.6875rem' }}>
@@ -48,22 +54,19 @@ export default function FilterBar({ filters, onApply, availableRegions, mode }: 
         onChange={range => update(range)}
       />
 
-      <select value={draft.region}
-        onChange={e => update({ region: e.target.value })}
-        style={{
-          padding: '.25rem .5rem', fontSize: '.6875rem', background: 'var(--bg)',
-          color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: '.375rem',
-        }}>
-        <option value="">全部地域</option>
-        {availableRegions.map(r => <option key={r} value={r}>{r}</option>)}
-      </select>
+      <FilterSelect
+        ariaLabel="地域筛选"
+        value={draft.region}
+        options={regionOptions}
+        onChange={region => update({ region })}
+      />
 
-      <select value={draft.sentiment}
-        onChange={e => update({ sentiment: e.target.value as FilterState['sentiment'] })}
-        className="select-sm" aria-label="情绪筛选">
-        <option value="all">全部情绪</option>
-        {sentimentOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-      </select>
+      <FilterSelect
+        ariaLabel="情绪筛选"
+        value={draft.sentiment}
+        options={sentimentFilterOptions}
+        onChange={sentiment => update({ sentiment })}
+      />
 
       <button onClick={() => onApply(draft)}
         disabled={!changed}

@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
-import SearchBar from './components/SearchBar';
+import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
+import SearchBar, { type SearchDraft } from './components/SearchBar';
 import VideoInfo from './components/VideoInfo';
 import SentimentChart from './components/SentimentChart';
 import GenderChart from './components/GenderChart';
@@ -11,8 +12,10 @@ import HistoryPanel from './components/HistoryPanel';
 import ThemeToggle from './components/ThemeToggle';
 import LoginPage from './components/LoginPage';
 import FilterBar from './components/FilterBar';
-import SettingsPanel from './components/SettingsPanel';
 import AISummaryCard from './components/AISummaryCard';
+import SettingsEntry from './components/SettingsEntry';
+import AnalysisProgress from './components/AnalysisProgress';
+import SettingsPage from './pages/SettingsPage';
 import { getAuthStatus, getResults, getRuntimeActivity, getSettings, getStatus, logout, prepareRuntimeExit, reanalyze, startAnalysis } from './services/api';
 import { checkForUpdates, downloadUpdate, installDownloadedUpdate, isDesktopRuntime, onCloseRequested, respondToCloseRequest } from './services/desktop';
 import type { AnalysisResult, FilterState, AnalysisMode, SentimentLLM } from './types';
@@ -20,15 +23,10 @@ import './AppShell.css';
 
 const PROVINCES = new Set(['北京','天津','上海','重庆','河北','山西','辽宁','吉林','黑龙江','江苏','浙江','安徽','福建','江西','山东','河南','湖北','湖南','广东','海南','四川','贵州','云南','陕西','甘肃','青海','台湾','内蒙古','广西','西藏','宁夏','新疆','香港','澳门']);
 const LLM_EMOTIONS: (keyof SentimentLLM)[] = ['neutral', 'joy', 'support', 'anticipation', 'surprise', 'anger', 'sadness', 'concern', 'disgust'];
-const LLM_CONCURRENCY = 3;
-const LLM_SECONDS_PER_COMMENT = 1.29;
+const EMPTY_SEARCH_DRAFT: SearchDraft = { rawInput: '', bv: '', videoInfo: null };
 
-function getLlmEstimateText(commentCount: number): string {
-  const totalSeconds = Math.ceil(Math.max(commentCount, 1) * LLM_SECONDS_PER_COMMENT);
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  const duration = minutes > 0 ? `${minutes}分${seconds}秒` : `${seconds}秒`;
-  return `大模型分析中，预计约 ${duration}（每轮最多并发 ${LLM_CONCURRENCY} 个单评论请求）`;
+function getLlmProgressText(processed: number, total: number): string {
+  return `正在分析评论 ${Math.min(processed, total)} / ${total}`;
 }
 
 function normalizeProvince(raw: string): string {
@@ -41,6 +39,9 @@ function normalizeProvince(raw: string): string {
 }
 
 function App() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const isWorkspacePage = location.pathname === '/';
   const [analysisId, setAnalysisId] = useState<number | null>(null);
   const [results, setResults] = useState<AnalysisResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -52,6 +53,7 @@ function App() {
   const [progressMax, setProgressMax] = useState(100);
   const [toast, setToast] = useState<string | null>(null);
   const [historyRefreshKey, setHistoryRefreshKey] = useState(0);
+  const [searchDraft, setSearchDraft] = useState<SearchDraft>(() => ({ ...EMPTY_SEARCH_DRAFT }));
   const cancelRef = useRef(false);
 
   const [analysisMode, setAnalysisMode] = useState<AnalysisMode>('nlp');
@@ -59,7 +61,7 @@ function App() {
   const [delay, setDelay] = useState(3.0);
   const [filters, setFilters] = useState<FilterState>({ gender: 'all', dateFrom: '', dateTo: '', region: '', sentiment: 'all' });
   const [hasApiKey, setHasApiKey] = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
+  const [reanalyzing, setReanalyzing] = useState(false);
   const [reanalyzeModal, setReanalyzeModal] = useState(false);
   const [updateInfo, setUpdateInfo] = useState<{ version?: string; notes?: string; notesUrl?: string } | null>(null);
   const [updateBusy, setUpdateBusy] = useState(false);
@@ -125,7 +127,7 @@ function App() {
   }, [loading]);
 
   const handleModeChange = (mode: AnalysisMode) => {
-    if (mode === 'llm' && !hasApiKey) { showToast('请先在设置面板配置情绪分析模型的 API Key'); return; }
+    if (mode === 'llm' && !hasApiKey) { showToast('请先在设置页面配置情绪分析模型的 API Key'); return; }
     // NLP → LLM：弹出确认弹窗
     if (mode === 'llm' && results && results.mode !== 'llm') { setReanalyzeModal(true); return; }
     setAnalysisMode(mode);
@@ -134,42 +136,45 @@ function App() {
   const handleReanalyzeConfirm = async () => {
     if (!analysisId) return;
     setReanalyzeModal(false);
+    setReanalyzing(true);
     setLoading(true); setError(null); cancelRef.current = false;
     setProgress(0); setProgressMax(results?.total_comments || 100);
-    setStatusText(getLlmEstimateText(results?.total_comments || 100));
-    setAnalysisMode('llm');
+    setStatusText(getLlmProgressText(0, results?.total_comments || 100));
     try {
       await reanalyze(analysisId);
       const poll = async () => {
         for (let i = 0; i < 300; i++) {
-          if (cancelRef.current) { setLoading(false); setStatusText('已取消'); return; }
+          if (cancelRef.current) { setReanalyzing(false); setLoading(false); setStatusText('已取消'); return; }
           await new Promise(r => setTimeout(r, 1500));
           try {
             const status = await getStatus(analysisId);
-            setProgress(status.total_comments);
+            const processed = status.processed_comments ?? 0;
+            setProgress(processed);
             if (status.status === 'done') {
               if (status.error_msg) {
                 setError(status.error_msg);
                 setAnalysisMode(results?.mode || 'nlp');
+                setReanalyzing(false);
                 setLoading(false);
                 showToast('大模型分析失败，已保留 NLP 结果');
                 return;
               }
               setStatusText(''); const data = await getResults(analysisId);
-              setResults(data); setAnalysisMode(data.mode); setLoading(false); setHistoryRefreshKey(k=>k+1); showToast('大模型分析完成');
+              setResults(data); setAnalysisMode(data.mode); setReanalyzing(false); setLoading(false); setHistoryRefreshKey(k=>k+1); showToast('大模型分析完成');
               return;
             }
-            if (status.status === 'error') { setError(status.error_msg || '分析失败'); setLoading(false); showToast('分析失败'); return; }
-            if (status.status === 'analyzing') setStatusText(getLlmEstimateText(status.total_comments || results?.total_comments || 100));
-          } catch { if (cancelRef.current) { setLoading(false); return; } }
+            if (status.status === 'error') { setError(status.error_msg || '分析失败'); setReanalyzing(false); setLoading(false); showToast('分析失败'); return; }
+            if (status.status === 'analyzing') setStatusText(getLlmProgressText(processed, status.total_comments || results?.total_comments || 100));
+          } catch { if (cancelRef.current) { setReanalyzing(false); setLoading(false); return; } }
         }
-        setError('超时'); setLoading(false);
+        setError('超时'); setReanalyzing(false); setLoading(false);
       };
       poll();
-    } catch (e: any) { setError(e.message || '重新分析失败'); setLoading(false); }
+    } catch (e: any) { setError(e.message || '重新分析失败'); setReanalyzing(false); setLoading(false); }
   };
 
   const handleAnalyze = useCallback(async (bv: string, _maxComments: number, _delay: number) => {
+    setReanalyzing(false);
     setLoading(true); setError(null); setResults(null); cancelRef.current = false;
     setAnalysisMode('nlp');
     setProgress(0); setProgressMax(_maxComments); setStatusText('正在获取视频信息...');
@@ -202,6 +207,7 @@ function App() {
   }, []);
 
   const handleViewHistory = useCallback(async (id: number) => {
+    setReanalyzing(false);
     setLoading(true); setError(null); setStatusText('加载中...');
     try { const data = await getResults(id); setResults(data); setAnalysisId(id); setAnalysisMode(data.mode); setFilters({ gender:'all',dateFrom:'',dateTo:'',region:'',sentiment:'all' }); } catch (e:any) { setError(e.message); }
     setLoading(false);
@@ -211,14 +217,17 @@ function App() {
     try {
       const result = await logout();
       if (result.ok === false) {
-        showToast('退出登录失败，请稍后重试。');
-        return;
+        throw new Error('退出登录失败，请稍后重试。');
       }
       setLoggedIn(false);
+      setReanalyzing(false);
       setResults(null);
       setAnalysisId(null);
-    } catch {
-      showToast('退出登录失败，请检查本地服务后重试。');
+      setSearchDraft({ ...EMPTY_SEARCH_DRAFT });
+      navigate('/', { replace: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '退出登录失败，请检查本地服务后重试。';
+      throw error instanceof Error ? error : new Error(message);
     }
   };
   const handleStop = () => { cancelRef.current = true; };
@@ -311,37 +320,49 @@ function App() {
   return (
     <div className="app-shell min-h-screen">
       <header className="app-header sticky top-0 z-10">
-        <div className="app-header__inner max-w-7xl mx-auto px-4 py-4">
-          <div className="app-header__bar flex items-center justify-between mb-3">
+        <div className="app-header__inner max-w-7xl mx-auto px-4 py-4" key={`header-${location.pathname}`}>
+          <div className="app-header__bar route-reveal-element flex items-center justify-between mb-3">
             <div className="app-brand flex items-center gap-2">
               <img className="app-brand__icon" src="/signal-observatory-icon.png" alt="" aria-hidden="true" />
               <span className="app-brand__mark">B站</span>
               <span className="app-brand__name">舆论监测平台</span>
             </div>
             <div className="app-header__actions flex items-center gap-3">
-              <button onClick={handleLogout} className="app-header__logout">退出</button>
-              <button onClick={() => setShowSettings(!showSettings)} className="theme-toggle" title="设置" style={{borderColor:showSettings?'var(--accent)':'var(--border)'}}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l-.06-.06a2 2 0 012.83 2.83l.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
-              </button>
+              {isWorkspacePage && <SettingsEntry />}
               <ThemeToggle/>
             </div>
           </div>
-          <section className="command-deck" aria-label="视频分析指令舱">
+          {isWorkspacePage && <section className="command-deck route-reveal-element" aria-label="视频分析指令舱">
             <div className="command-deck__label"><span aria-hidden="true"></span>VIDEO SIGNAL COMMAND</div>
-            <SearchBar onAnalyze={handleAnalyze} loading={loading} maxComments={maxComments} delay={delay}/>
-          </section>
+            <SearchBar
+              onAnalyze={handleAnalyze}
+              loading={loading}
+              maxComments={maxComments}
+              delay={delay}
+              draft={searchDraft}
+              onDraftChange={setSearchDraft}
+            />
+          </section>}
         </div>
       </header>
       <div className="header-accent-line" />
-      {showSettings && (
-        <div className="settings-drawer max-w-7xl mx-auto px-4">
-          <SettingsPanel maxComments={maxComments} onMaxCommentsChange={setMaxComments} delay={delay} onDelayChange={setDelay}
+      {toast && <div className="app-toast" role="status">{toast}</div>}
+      <div className="app-route-stage" key={location.pathname}>
+      <Routes location={location}>
+        <Route path="/settings" element={(
+          <SettingsPage
+            maxComments={maxComments}
+            onMaxCommentsChange={setMaxComments}
+            delay={delay}
+            onDelayChange={setDelay}
             onSettingsChanged={settings => setHasApiKey(settings.llm.sentiment.has_api_key)}
-            desktopMode={isDesktopRuntime()} onCheckUpdate={() => { void checkUpdate(true); }}/>
-        </div>
-      )}
-      <main className="app-main max-w-7xl mx-auto px-4 py-6">
-        {toast && <div className="app-toast" role="status">{toast}</div>}
+            desktopMode={isDesktopRuntime()}
+            onCheckUpdate={() => { void checkUpdate(true); }}
+            onLogout={handleLogout}
+          />
+        )} />
+        <Route path="/" element={(
+      <main className="app-main app-route-page max-w-7xl mx-auto px-4 py-6">
         {error && <div className="app-alert app-alert--error" role="alert">{error}</div>}
         <section className="history-rail mb-4" aria-label="历史记录">
           <button onClick={()=>setShowHistory(!showHistory)} className="history-rail__toggle flex items-center gap-1 text-xs text-muted mb-2" aria-expanded={showHistory}>
@@ -353,21 +374,21 @@ function App() {
         {!loading && results && (<div className="app-alert app-alert--status">模式: {results.mode === 'llm' ? '大模型九类主情感' : 'NLP三分类'} · 共 {results.total_comments} 条评论</div>)}
 
         {loading && !results && (
-          <div className="app-state flex flex-col items-center justify-center py-20">
-            <div className="pulse-dot app-state__pulse"></div>
-            <p className="text-sm text-secondary mb-3">{statusText}</p>
-            {progressMax > 0 && (
-              <div className="progress-bar-track app-state__progress" role="progressbar" aria-label="评论抓取进度"
-                aria-valuemin={0} aria-valuemax={progressMax} aria-valuenow={Math.min(progress, progressMax)}>
-                <div className="progress-bar-fill" style={{width:Math.min(progress/progressMax*100,100)+'%'}}/>
-              </div>
-            )}
-            <button onClick={handleStop} className="btn btn-ghost app-state__action">取消分析</button>
+          <div className="app-state flex items-center justify-center py-20">
+            <AnalysisProgress
+              current={progress}
+              total={progressMax}
+              statusText={statusText}
+              ariaLabel="评论抓取进度"
+              title="评论抓取进度"
+              detail="正在从本机连接的 B 站账号抓取公开评论"
+              variant="workspace"
+              action={<button onClick={handleStop} className="btn btn-ghost">取消分析</button>}
+            />
           </div>
         )}
 
-        {/* Loading overlay for reanalysis (result already rendered, just updating) */}
-        {loading && results && (
+        {loading && results && !reanalyzing && (
           <div className="app-state flex flex-col items-center justify-center py-20">
             <div className="pulse-dot app-state__pulse"></div>
             <p className="text-sm text-secondary mb-3">{statusText}</p>
@@ -389,7 +410,15 @@ function App() {
           </div>}
           <div className="grid grid-cols-1 md:grid-cols-2 md:grid-auto-rows-fr gap-4 mt-4 paired-chart-grid">
             <div className="card-enter">
-              <SentimentChart positive={filteredSentiment.positive} negative={filteredSentiment.negative} neutral={filteredSentiment.neutral} mode={analysisMode} llm={results.mode === 'llm' ? filteredLlmSentiment : null} onModeChange={handleModeChange}/>
+              <SentimentChart
+                positive={filteredSentiment.positive}
+                negative={filteredSentiment.negative}
+                neutral={filteredSentiment.neutral}
+                mode={analysisMode}
+                llm={results.mode === 'llm' ? filteredLlmSentiment : null}
+                onModeChange={handleModeChange}
+                reanalysis={{ active: reanalyzing, current: progress, total: progressMax, statusText }}
+              />
             </div>
             <div className="card-enter"><GenderChart male={filteredGender.male} female={filteredGender.female} unknown={filteredGender.unknown}/></div>
           </div>
@@ -419,7 +448,12 @@ function App() {
             </div>
           </div>
         )}
-        {updateInfo && (
+      </main>
+        )} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+      </div>
+      {updateInfo && (
           <div className="reanalyze-dialog" role="presentation">
             <div className="reanalyze-dialog__panel" role="dialog" aria-modal="true" aria-labelledby="update-title">
               <h3 id="update-title">发现新版本 {updateInfo.version || ''}</h3>
@@ -432,7 +466,7 @@ function App() {
             </div>
           </div>
         )}
-        {closeRequest && (
+      {closeRequest && (
           <div className="reanalyze-dialog" role="presentation">
             <div className="reanalyze-dialog__panel" role="dialog" aria-modal="true" aria-labelledby="desktop-close-title">
               <h3 id="desktop-close-title">后台任务仍在进行</h3>
@@ -444,8 +478,7 @@ function App() {
               </div>
             </div>
           </div>
-        )}
-      </main>
+      )}
     </div>
   );
 }

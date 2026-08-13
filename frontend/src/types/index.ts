@@ -92,6 +92,7 @@ export interface StatusResponse {
   analysis_id: number;
   status: AnalysisStatus;
   total_comments: number;
+  processed_comments: number;
   error_msg: string | null;
 }
 

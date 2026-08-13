@@ -1,17 +1,16 @@
-import { useState, useRef } from 'react';
+import { useRef } from 'react';
 import ReactECharts from 'echarts-for-react';
 import { chartTooltip, chartTextColor } from '../utils';
+import useDistributionChartTransition, { type DistributionChartType } from '../hooks/useDistributionChartTransition';
 import DownloadChartButton from './DownloadChartButton';
 
 interface Props { male: number; female: number; unknown: number; }
 
-type ChartType = 'donut' | 'pie' | 'rose';
-
 export default function GenderChart({ male, female, unknown }: Props) {
-  const [type, setType] = useState<ChartType>('donut');
+  const { type, selectType, animationDurationUpdate } = useDistributionChartTransition();
   const chartRef = useRef<ReactECharts | null>(null);
   const tt = chartTooltip(); const tc = chartTextColor();
-  const radiusMap: Record<ChartType, [string,string]> = { donut:['50%','75%'], pie:['0%','72%'], rose:['20%','80%'] };
+  const radiusMap: Record<DistributionChartType, [string,string]> = { donut:['50%','75%'], pie:['0%','72%'], rose:['20%','80%'] };
   const roseType = type === 'rose';
   const data = [
     { value:male, name:'男', itemStyle:{ color:'#38BDF8' } },
@@ -24,6 +23,8 @@ export default function GenderChart({ male, female, unknown }: Props) {
     : nonZeroData;
 
   const option = {
+    animationDurationUpdate,
+    animationEasingUpdate: 'cubicInOut',
     tooltip: { trigger:'item', formatter:'{b}: {c} ({d}%)', backgroundColor:tt.backgroundColor, borderColor:tt.borderColor, textStyle:tt.textStyle },
     legend: { bottom:0, textStyle:{ color:tc, fontSize:11 } },
     series: [{
@@ -34,7 +35,7 @@ export default function GenderChart({ male, female, unknown }: Props) {
     }],
   };
 
-  const toggle = (t: ChartType) => () => setType(t);
+  const toggle = (t: DistributionChartType) => () => selectType(t, chartRef.current?.getEchartsInstance());
 
   return <div className="card distribution-chart-card">
     <div className="flex items-center justify-between mb-2 distribution-chart-header">

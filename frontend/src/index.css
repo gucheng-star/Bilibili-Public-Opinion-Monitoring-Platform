@@ -353,11 +353,36 @@ body {
 
 /* ---- 11. Theme Toggle (specific) ---- */
 .theme-toggle {
-  width:2.25rem; height:2.25rem; padding:0; display:flex; align-items:center; justify-content:center;
-  background:transparent; border:1px solid var(--border); border-radius:var(--radius);
-  cursor:pointer; color:var(--text-secondary); transition:all .2s ease;
+  padding:0;
 }
-.theme-toggle:hover { border-color:var(--border-accent); color:var(--accent); }
+.header-icon-action {
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  width:2.25rem;
+  height:2.25rem;
+  padding:0;
+  color:var(--text-secondary);
+  border:0;
+  border-radius:0;
+  background:transparent;
+  cursor:pointer;
+  text-decoration:none;
+  transition:color .2s ease, transform .2s ease;
+}
+.header-icon-action svg {
+  width:1rem;
+  height:1rem;
+  fill:none;
+  stroke:currentColor;
+  stroke-linecap:round;
+  stroke-linejoin:round;
+  stroke-width:1.75;
+  transition:filter .2s ease;
+}
+.header-icon-action:hover { color:var(--accent); transform:translateY(-1px); }
+.header-icon-action:hover svg { filter:drop-shadow(0 0 .35rem color-mix(in srgb, var(--accent) 55%, transparent)); }
+.header-icon-action:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
 .theme-toggle:disabled { cursor:wait; opacity:.8; }
 
 ::view-transition-old(root),
@@ -543,6 +568,116 @@ a:focus-visible {
 }
 .select-sm:focus { border-color:var(--border-accent); }
 
+.filter-bar {
+  position:relative;
+  z-index:8;
+  display:flex;
+  align-items:center;
+  flex-wrap:wrap;
+  gap:.75rem;
+  margin-bottom:.75rem;
+  padding:.5rem 0;
+  border-bottom:1px solid var(--border);
+}
+.filter-select {
+  position:relative;
+  min-width:6.75rem;
+}
+.filter-select.is-open { z-index:9; }
+.filter-select__trigger {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:.55rem;
+  width:100%;
+  min-height:2rem;
+  padding:.3rem .6rem;
+  color:var(--text-primary);
+  background:var(--input-bg);
+  border:1px solid var(--input-border);
+  border-radius:var(--radius-sm);
+  font-size:.6875rem;
+  cursor:pointer;
+  transition:border-color .18s ease,box-shadow .18s ease,background .18s ease;
+}
+.filter-select__trigger:hover,
+.filter-select.is-open .filter-select__trigger {
+  border-color:var(--border-accent);
+  background:var(--bg-card-hover);
+  box-shadow:0 0 0 2px var(--input-focus-glow);
+}
+.filter-select__trigger:focus-visible {
+  outline:2px solid var(--accent);
+  outline-offset:2px;
+}
+.filter-select__trigger svg {
+  width:.75rem;
+  height:.75rem;
+  flex:none;
+  fill:none;
+  stroke:currentColor;
+  stroke-linecap:round;
+  stroke-linejoin:round;
+  stroke-width:1.5;
+  color:var(--text-secondary);
+  transition:transform .18s ease;
+}
+.filter-select.is-open .filter-select__trigger svg { transform:rotate(180deg); }
+.filter-select__menu {
+  position:absolute;
+  z-index:1;
+  top:calc(100% + .4rem);
+  left:0;
+  width:max-content;
+  min-width:100%;
+  max-width:calc(100vw - 2rem);
+  max-height:16rem;
+  overflow:auto;
+  padding:.3rem;
+  color:var(--text-primary);
+  background:var(--bg-elevated);
+  border:1px solid var(--border-strong);
+  border-radius:var(--radius-sm);
+  box-shadow:var(--shadow-modal);
+  animation:filter-select-enter .18s cubic-bezier(.16,1,.3,1);
+}
+.filter-select__option {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:1rem;
+  width:100%;
+  min-height:2rem;
+  padding:.35rem .55rem;
+  color:var(--text-secondary);
+  background:transparent;
+  border:0;
+  border-radius:.35rem;
+  font-size:.6875rem;
+  text-align:left;
+  white-space:nowrap;
+  cursor:pointer;
+}
+.filter-select__option:hover,
+.filter-select__option.is-active {
+  color:var(--text-primary);
+  background:var(--bg-card-hover);
+}
+.filter-select__option[aria-selected='true'] {
+  color:var(--accent);
+  background:var(--accent-soft);
+  font-weight:650;
+}
+.filter-select__option:focus-visible {
+  outline:2px solid var(--accent);
+  outline-offset:-2px;
+}
+.filter-select__check { color:var(--accent); font-weight:700; }
+@keyframes filter-select-enter {
+  from { opacity:0; transform:translateY(-4px) scale(.985); }
+  to { opacity:1; transform:translateY(0) scale(1); }
+}
+
 /* ---- 19. Tags ---- */
 .kw-tag {
   display:inline-flex; align-items:center;
@@ -662,11 +797,11 @@ a:focus-visible {
 .date-range-trigger.open svg { transform:rotate(180deg); }
 .date-range-popover {
   position:absolute;
+  z-index:1;
   left:0;
   top:calc(100% + .5rem);
-  display:grid;
-  grid-template-columns:8.5rem minmax(0,1fr);
-  width:min(43rem,calc(100vw - 3rem));
+  display:block;
+  width:10rem;
   overflow:hidden;
   color:var(--text-primary);
   background:var(--bg-elevated);
@@ -675,9 +810,28 @@ a:focus-visible {
   box-shadow:var(--shadow-modal);
   animation:date-popover-enter .16s ease-out;
 }
+.date-range-popover.is-custom {
+  display:grid;
+  grid-template-columns:10rem minmax(0,1fr);
+  width:min(43rem,calc(100vw - 3rem));
+  transform-origin:top left;
+  animation:date-custom-expand .75s cubic-bezier(.4,0,.2,1) both;
+}
 @keyframes date-popover-enter {
   from { opacity:0; transform:translateY(-5px) scale(.99); }
   to { opacity:1; transform:translateY(0) scale(1); }
+}
+@keyframes date-custom-expand {
+  from {
+    clip-path:inset(0 calc(100% - 10rem) calc(100% - 14.5rem) 0 round var(--radius-lg));
+  }
+  to {
+    clip-path:inset(0 0 0 0 round var(--radius-lg));
+  }
+}
+@keyframes date-custom-calendar-enter {
+  from { opacity:0; transform:translateX(-.8rem); }
+  to { opacity:1; transform:translateX(0); }
 }
 .date-range-presets {
   display:flex;
@@ -685,8 +839,8 @@ a:focus-visible {
   gap:.15rem;
   padding:.55rem;
   background:color-mix(in srgb,var(--bg) 72%,var(--bg-elevated));
-  border-right:1px solid var(--border);
 }
+.date-range-popover.is-custom .date-range-presets { border-right:1px solid var(--border); }
 .date-range-presets button {
   display:flex;
   align-items:center;
@@ -713,6 +867,9 @@ a:focus-visible {
   grid-template-columns:repeat(2,minmax(0,1fr));
   gap:1rem;
   padding:.8rem 1rem 1rem;
+}
+.date-range-popover.is-custom .date-range-calendars {
+  animation:date-custom-calendar-enter .75s cubic-bezier(.4,0,.2,1) both;
 }
 .calendar-month { min-width:0; }
 .calendar-month-header {
@@ -946,6 +1103,39 @@ a:focus-visible {
   padding-top:1rem;
   border-top:1px solid var(--border);
 }
+.crawl-settings--primary {
+  align-items:stretch;
+}
+.crawl-settings__header {
+  display:flex;
+  align-items:flex-end;
+  justify-content:space-between;
+  width:100%;
+  gap:1.5rem;
+}
+.crawl-settings__header h2 {
+  margin-top:.15rem;
+  color:var(--text-primary);
+  font-size:1rem;
+  font-weight:650;
+}
+.crawl-settings__header > p {
+  max-width:28rem;
+  color:var(--text-muted);
+  font-size:.75rem;
+  line-height:1.6;
+  text-align:right;
+}
+.crawl-settings__controls {
+  display:flex;
+  align-items:center;
+  flex-wrap:wrap;
+  width:100%;
+  gap:1.5rem;
+}
+.crawl-settings__field { min-width:0; }
+.crawl-settings__field--count { flex:1 1 14rem; }
+.crawl-settings__field--delay { flex:1 1 12rem; }
 .settings-number-input {
   width:5rem;
   text-align:center;
@@ -965,6 +1155,15 @@ a:focus-visible {
   border:1px solid var(--red);
   border-radius:var(--radius-sm);
   font-size:.6875rem;
+}
+
+@media (max-width: 640px) {
+  .crawl-settings__header {
+    align-items:flex-start;
+    flex-direction:column;
+    gap:.45rem;
+  }
+  .crawl-settings__header > p { text-align:left; }
 }
 
 /* ---- 27. AI Briefing ---- */
@@ -1111,10 +1310,23 @@ a:focus-visible {
   .ai-summary-meta { flex-direction:column; gap:.2rem; }
   .ai-summary-meta span + span::before { display:none; }
   .date-range-popover {
-    grid-template-columns:1fr;
-    width:min(21.5rem,calc(100vw - 2rem));
+    width:10rem;
   }
-  .date-range-presets {
+  .date-range-picker.is-custom { position:static; }
+  .date-range-popover.is-custom {
+    position:fixed;
+    top:var(--date-range-mobile-top,1rem);
+    right:1rem;
+    bottom:1rem;
+    left:1rem;
+    grid-template-columns:1fr;
+    width:auto;
+    max-width:none;
+    overflow-y:auto;
+    overscroll-behavior:contain;
+    animation-name:date-custom-mobile-expand;
+  }
+  .date-range-popover.is-custom .date-range-presets {
     display:grid;
     grid-template-columns:repeat(3,minmax(0,1fr));
     border-right:0;
@@ -1122,5 +1334,15 @@ a:focus-visible {
   }
   .date-range-presets button { padding:.45rem .5rem; }
   .date-range-calendars { grid-template-columns:1fr; }
+}
+@keyframes date-custom-mobile-expand {
+  from {
+    clip-path:inset(0 0 calc(100% - 14.5rem) 0 round var(--radius-lg));
+    transform:translateY(-.35rem) scale(.995);
+  }
+  to {
+    clip-path:inset(0 0 0 0 round var(--radius-lg));
+    transform:translateY(0) scale(1);
+  }
 }
 

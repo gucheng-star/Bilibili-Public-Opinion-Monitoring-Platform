@@ -1,4 +1,4 @@
-.app-shell { min-height: 100vh; background: transparent; color: var(--text-primary); }
+.app-shell { --route-reveal-duration: .75s; --route-reveal-easing: cubic-bezier(.16, 1, .3, 1); min-height: 100vh; background: transparent; color: var(--text-primary); }
 .app-shell--booting { display: grid; place-items: center; }
 .app-header { background: color-mix(in srgb, var(--bg) 92%, transparent); border-bottom: 1px solid var(--border); backdrop-filter: blur(16px); }
 .app-header__inner { position: relative; }
@@ -7,12 +7,9 @@
 .app-brand__icon { width: 2rem; height: 2rem; flex: 0 0 auto; border-radius: .55rem; box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent), 0 .35rem 1rem color-mix(in srgb, var(--accent) 16%, transparent); }
 .app-brand__mark { color:var(--accent); font-size:1.25rem; font-weight:750; }
 .app-brand__name { color:var(--text-primary); font-size:1rem; font-weight:650; }
-.app-header__logout { padding:.35rem .1rem; color:var(--text-muted); background:none; border:0; cursor:pointer; font-size:.75rem; }
-.app-header__logout:hover { color:var(--accent); }
 .command-deck { position: relative; padding: .8rem; border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--border)); border-radius: .75rem; background: linear-gradient(100deg, color-mix(in srgb, var(--accent) 8%, var(--bg-card)), var(--bg-card)); box-shadow: inset 0 1px 0 color-mix(in srgb, white 12%, transparent); }
 .command-deck__label { display: flex; align-items: center; gap: .45rem; margin: 0 0 .55rem .1rem; color: var(--text-muted); font: 600 .62rem/1 ui-monospace, SFMono-Regular, Consolas, monospace; letter-spacing: .14em; }
 .command-deck__label span { width: 1.65rem; height: 1px; background: var(--accent); }
-.settings-drawer { border-bottom: 1px solid var(--border); }
 .app-main { position: relative; }
 .app-toast { position: fixed; top: 1rem; left: 50%; z-index: 100; transform: translateX(-50%); padding: .55rem 1.25rem; color: var(--green); background: var(--green-soft); border: 1px solid var(--green); border-radius: .5rem; font-size: .8125rem; font-weight: 600; box-shadow: var(--shadow-modal); }
 .app-alert { margin-bottom: .75rem; padding: .55rem .8rem; border: 1px solid; border-radius: .45rem; font-size: .75rem; font-weight: 600; }
@@ -22,7 +19,6 @@
 .history-rail__toggle { border: 0; padding: 0; background: none; cursor: pointer; }
 .app-state { min-height: 18rem; border: 1px dashed color-mix(in srgb, var(--border) 78%, var(--accent)); border-radius: .75rem; background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 3%, var(--bg-card)), var(--bg-card)); }
 .app-state__pulse { width: .875rem; height: .875rem; margin-bottom: 1.5rem; }
-.app-state__progress { width: 20rem; max-width: 80%; }
 .app-state__empty-icon { opacity: .24; color: var(--accent); }
 .app-state__action { margin-top:1rem; font-size:.75rem; }
 .reanalyze-dialog { position:fixed; inset:0; z-index:200; display:flex; align-items:center; justify-content:center; padding:1rem; background:rgba(5,10,21,.62); backdrop-filter:blur(8px); }
@@ -34,6 +30,31 @@
 .reanalyze-dialog__actions--three { flex-wrap:wrap; }
 .desktop-update-settings { align-items:center; justify-content:space-between; gap:1rem; }
 .desktop-update-settings p { margin:0; line-height:1.6; }
+.route-reveal-element,
+.app-route-stage > :is(.app-route-page, .settings-page) > * {
+  opacity: 1;
+  transform: none;
+  animation: route-surface-reveal var(--route-reveal-duration) var(--route-reveal-easing);
+  animation-delay: 0s !important;
+}
+.app-route-stage .paired-chart-grid > .card-enter {
+  opacity: 1;
+  transform: none;
+  animation: none;
+}
+@keyframes route-surface-reveal {
+  from { opacity: 0; transform: translateY(.65rem) scale(.992); }
+  to { opacity: 1; transform: none; }
+}
 .app-header button:focus-visible, .app-main button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
-@media (max-width: 640px) { .app-header__bar { align-items: flex-start; gap: .75rem; } .command-deck { padding: .65rem; } .app-toast { width: calc(100% - 2rem); text-align: center; } }
-@media (prefers-reduced-motion: reduce) { .app-shell *, .app-shell *::before, .app-shell *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; } }
+@media (max-width: 640px) {
+  .app-header__bar { align-items: center; flex-wrap: wrap; gap: .75rem; }
+  .app-brand { width: 100%; white-space: nowrap; }
+  .app-header__actions { width: 100%; justify-content: flex-end; }
+  .command-deck { padding: .65rem; }
+  .app-toast { width: calc(100% - 2rem); text-align: center; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .app-shell *, .app-shell *::before, .app-shell *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
+  .route-reveal-element, .app-route-stage > :is(.app-route-page, .settings-page) > *, .app-route-stage .paired-chart-grid > .card-enter { opacity: 1 !important; transform: none !important; animation: none !important; }
+}

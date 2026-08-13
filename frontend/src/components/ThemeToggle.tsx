@@ -103,7 +103,7 @@ export default function ThemeToggle() {
   return (
     <button
       ref={buttonRef}
-      className="theme-toggle"
+      className="header-icon-action theme-toggle"
       onClick={toggle}
       disabled={transitioning}
       aria-label={dark ? '切换为浅色模式' : '切换为深色模式'}

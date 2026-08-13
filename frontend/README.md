@@ -48,6 +48,8 @@ pnpm run dev
 
 打开 `http://localhost:5173`。Vite 将 `/api` 代理到 `127.0.0.1:8000`。
 
+前端使用 `HashRouter`：工作台为 `#/`，独立设置页为 `#/settings`。Hash 路由保证浏览器开发模式和从 `index.html` 启动的 Tauri WebView 都能直接刷新当前页面。
+
 ## 浏览器与桌面两种运行时
 
 `src/services/api.ts` 是唯一业务 API 入口：
@@ -73,8 +75,9 @@ Tauri CSP 中 `img-src` 必须保留 `data:`，不得为二维码加入 `api.qrs
 
 ```text
 src/
-├── App.tsx                    # 主应用状态、分析轮询、筛选和桌面关闭流程
-├── components/               # 登录、设置、筛选、图表和评论组件
+├── App.tsx                    # 应用路由、共享状态、分析轮询、筛选和桌面关闭流程
+├── pages/SettingsPage.tsx     # 独立模型、抓取和更新设置页
+├── components/               # 导航、登录、设置、筛选、图表和评论组件
 ├── services/api.ts           # 统一 API 客户端
 ├── services/desktop.ts       # Tauri command bridge
 └── types/                    # API 与 UI 类型
@@ -95,6 +98,8 @@ src-tauri/
 - 桌面使用多列等宽布局，移动端切换为单列。
 - 图表隐藏数量为 0 的分类，相关规则应同步应用到情感和性别图。
 - NLP/LLM 模式切换时，图表、筛选和评论表格标签必须一致。
+- 工作台和设置使用应用内路由切换；返回工作台不得清空当前分析与筛选状态。
+- 评论抓取和 LLM 重分析共用同一套进度仪表；LLM 进度必须留在情感分布卡片中，并使用后端实际完成数量，不能用评论总数模拟进度。
 - 日期弹层不得覆盖顶部 sticky 输入区域。
 - 动画支持 `prefers-reduced-motion`。
 

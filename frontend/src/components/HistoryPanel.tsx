@@ -33,7 +33,7 @@ export default function HistoryPanel({ onSelect, selectedId, refreshKey = 0, onD
         <div className="history-panel__header"><span className="panel-status">ANALYSIS ARCHIVE</span><span className="history-panel__count">{items.length}</span></div>
       <div className="history-scroll history-panel__list">
         {items.map(item => (
-          <div key={item.id} className="history-panel__item">
+          <div key={item.id} className={`history-panel__item${selectedId===item.id ? ' is-selected' : ''}`}>
             <button onClick={()=>onSelect(item.id)} className={`history-panel__record${selectedId===item.id ? ' is-selected' : ''}`} aria-pressed={selectedId===item.id}>
               <div className="history-panel__record-title truncate">{item.video_title || item.bv}</div>
               <div className="history-panel__record-meta truncate">{item.total_comments} 条评论</div>

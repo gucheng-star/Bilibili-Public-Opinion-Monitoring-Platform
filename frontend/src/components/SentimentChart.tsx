@@ -1,17 +1,23 @@
-import { useState, useRef } from 'react';
+import { useRef } from 'react';
 import ReactECharts from 'echarts-for-react';
 import { chartTooltip, chartTextColor } from '../utils';
 import type { SentimentLLM, AnalysisMode } from '../types';
+import useDistributionChartTransition, { type DistributionChartType } from '../hooks/useDistributionChartTransition';
 import DownloadChartButton from './DownloadChartButton';
+import AnalysisProgress from './AnalysisProgress';
 
 interface Props {
   positive: number; negative: number; neutral: number;
   mode: AnalysisMode;
   llm?: SentimentLLM | null;
   onModeChange: (mode: AnalysisMode) => void;
+  reanalysis?: {
+    active: boolean;
+    current: number;
+    total: number;
+    statusText: string;
+  };
 }
-
-type ChartType = 'donut' | 'pie' | 'rose';
 
 const LLM_COLORS: Record<string, string> = {
   neutral: '#94A3B8', joy: '#FBBF24', support: '#22C55E', anticipation: '#06B6D4',
@@ -23,13 +29,14 @@ const LLM_LABELS: Record<string, string> = {
   anger: '愤怒', sadness: '悲伤', concern: '担忧', disgust: '厌恶',
 };
 
-export default function SentimentChart({ positive, negative, neutral, mode, llm, onModeChange }: Props) {
-  const [type, setType] = useState<ChartType>('donut');
+export default function SentimentChart({ positive, negative, neutral, mode, llm, onModeChange, reanalysis }: Props) {
+  const { type, selectType, animationDurationUpdate } = useDistributionChartTransition();
   const chartRef = useRef<ReactECharts | null>(null);
   const tt = chartTooltip(); const tc = chartTextColor();
   const isLLM = mode === 'llm' && llm;
+  const isReanalyzing = reanalysis?.active === true;
 
-  const radiusMap: Record<ChartType, [string, string]> = { donut:['45%','70%'], pie:['0%','68%'], rose:['20%','74%'] };
+  const radiusMap: Record<DistributionChartType, [string, string]> = { donut:['45%','70%'], pie:['0%','68%'], rose:['20%','74%'] };
   const roseType = type === 'rose';
 
   const data = isLLM
@@ -49,6 +56,8 @@ export default function SentimentChart({ positive, negative, neutral, mode, llm,
     : nonZeroData;
 
   const option = {
+    animationDurationUpdate,
+    animationEasingUpdate: 'cubicInOut',
     tooltip: { trigger:'item', formatter:'{b}: {c} ({d}%)', backgroundColor:tt.backgroundColor, borderColor:tt.borderColor, textStyle:tt.textStyle },
     legend: { bottom:2, itemWidth:13, itemHeight:8, itemGap:7, textStyle:{ color:tc, fontSize:9 } },
     series: [{
@@ -59,34 +68,45 @@ export default function SentimentChart({ positive, negative, neutral, mode, llm,
     }],
   };
 
-  const toggle = (t: ChartType) => () => setType(t);
+  const toggle = (t: DistributionChartType) => () => selectType(t, chartRef.current?.getEchartsInstance());
 
   return (
     <div className="card distribution-chart-card">
       <div className="flex items-center justify-between mb-2 distribution-chart-header">
         <h3 className="text-xs font-semibold text-secondary" style={{letterSpacing:'.05em'}}>
-          情感分布{isLLM ? '（大模型九类主情感）' : '（NLP 三分类）'}
+          {isReanalyzing ? '情感分布（大模型分析中）' : `情感分布${isLLM ? '（大模型九类主情感）' : '（NLP 三分类）'}`}
         </h3>
-        <div className="flex items-center gap-2">
-          <DownloadChartButton echartRefs={chartRef} />
-          <div className="segmented">
-            <button className={type==='donut'?'active':''} onClick={toggle('donut')}>环形</button>
-            <button className={type==='pie'?'active':''} onClick={toggle('pie')}>饼图</button>
-            <button className={type==='rose'?'active':''} onClick={toggle('rose')}>玫瑰</button>
+        {!isReanalyzing && (
+          <div className="flex items-center gap-2">
+            <DownloadChartButton echartRefs={chartRef} />
+            <div className="segmented">
+              <button className={type==='donut'?'active':''} onClick={toggle('donut')}>环形</button>
+              <button className={type==='pie'?'active':''} onClick={toggle('pie')}>饼图</button>
+              <button className={type==='rose'?'active':''} onClick={toggle('rose')}>玫瑰</button>
+            </div>
+            <select value={mode} onChange={e => onModeChange(e.target.value as AnalysisMode)}
+              style={{
+                padding: '.25rem .375rem', fontSize: '.6875rem',
+                background: 'var(--bg)', color: 'var(--text-primary)',
+                border: '1px solid var(--border)', borderRadius: '.375rem',
+                cursor: 'pointer', outline: 'none',
+              }}>
+              <option value="nlp">NLP 三分类</option>
+              <option value="llm">大模型 九类主情感</option>
+            </select>
           </div>
-          <select value={mode} onChange={e => onModeChange(e.target.value as AnalysisMode)}
-            style={{
-              padding: '.25rem .375rem', fontSize: '.6875rem',
-              background: 'var(--bg)', color: 'var(--text-primary)',
-              border: '1px solid var(--border)', borderRadius: '.375rem',
-              cursor: 'pointer', outline: 'none',
-            }}>
-            <option value="nlp">NLP 三分类</option>
-            <option value="llm">大模型 九类主情感</option>
-          </select>
-        </div>
+        )}
       </div>
-      <ReactECharts ref={chartRef} option={option} style={{height:260,width:'100%'}}/>
+      {isReanalyzing ? (
+        <AnalysisProgress
+          current={reanalysis?.current ?? 0}
+          total={reanalysis?.total ?? 0}
+          statusText={reanalysis?.statusText || '正在分析评论情感…'}
+          ariaLabel="大模型重分析进度"
+          title="大模型分析进度"
+          detail="每批最多5条，最多3批并发"
+        />
+      ) : <ReactECharts ref={chartRef} option={option} style={{height:260,width:'100%'}}/>}
     </div>
   );
 }

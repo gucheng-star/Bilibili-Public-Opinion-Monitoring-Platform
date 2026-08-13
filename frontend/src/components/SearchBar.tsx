@@ -1,35 +1,60 @@
-import { useState } from 'react';
+import { useState, type Dispatch, type SetStateAction } from 'react';
 import { getVideoInfo } from '../services/api';
 import type { VideoInfoResponse } from '../types';
 import './DataPanels.css';
 
-interface Props {
+export interface SearchDraft {
+  rawInput: string;
+  bv: string;
+  videoInfo: VideoInfoResponse | null;
+}
+
+interface BaseProps {
   onAnalyze: (bv: string, maxComments: number, delay: number) => void;
   loading: boolean;
   maxComments: number;
   delay: number;
 }
 
+type Props = BaseProps & (
+  | { draft: SearchDraft; onDraftChange: Dispatch<SetStateAction<SearchDraft>> }
+  | { draft?: never; onDraftChange?: never }
+);
+
 function parseBv(input: string): string {
   const m = input.match(/BV[A-Za-z0-9]{10}/);
   return m ? m[0] : '';
 }
 
-export default function SearchBar({ onAnalyze, loading, maxComments, delay }: Props) {
-  const [rawInput, setRawInput] = useState('');
-  const [bv, setBv] = useState('');
-  const [videoInfo, setVideoInfo] = useState<VideoInfoResponse | null>(null);
+export default function SearchBar({ onAnalyze, loading, maxComments, delay, draft, onDraftChange }: Props) {
+  const [uncontrolledDraft, setUncontrolledDraft] = useState<SearchDraft>({ rawInput: '', bv: '', videoInfo: null });
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState('');
+  const currentDraft = draft ?? uncontrolledDraft;
+  const { rawInput, bv, videoInfo } = currentDraft;
+  const updateDraft = (next: SetStateAction<SearchDraft>) => {
+    if (draft !== undefined && onDraftChange) {
+      onDraftChange(next);
+      return;
+    }
+    setUncontrolledDraft(next);
+  };
 
   const handlePreview = async () => {
     const parsed = parseBv(rawInput);
     if (!parsed) { setPreviewError('请输入有效的 BV 号'); return; }
-    setBv(parsed);
+    const previewInput = rawInput;
+    updateDraft(current => ({ ...current, bv: parsed, videoInfo: null }));
     setPreviewLoading(true); setPreviewError('');
-    try { const info = await getVideoInfo(parsed); setVideoInfo(info); }
-    catch { setPreviewError('获取视频信息失败'); setVideoInfo(null); }
-    setPreviewLoading(false);
+    try {
+      const info = await getVideoInfo(parsed);
+      updateDraft(current => current.rawInput === previewInput ? { ...current, bv: parsed, videoInfo: info } : current);
+    } catch {
+      setPreviewError('获取视频信息失败');
+      updateDraft(current => current.rawInput === previewInput ? { ...current, videoInfo: null } : current);
+    } finally {
+      setPreviewLoading(false);
+    }
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -41,8 +66,11 @@ export default function SearchBar({ onAnalyze, loading, maxComments, delay }: Pr
     <form className="signal-search" onSubmit={handleSubmit}>
       <div className="signal-search__controls">
         <div className="signal-search__field">
-          <input type="text" value={rawInput} onChange={e => { setRawInput(e.target.value); setVideoInfo(null); setPreviewError(''); }}
-            placeholder="B站视频链接或 BV 号" className="search-input" disabled={loading}/>
+          <input type="text" value={rawInput} onChange={e => {
+            updateDraft({ rawInput: e.target.value, bv: '', videoInfo: null });
+            setPreviewError('');
+          }}
+            placeholder="B站视频链接或 BV 号" className="search-input" disabled={loading || previewLoading}/>
         </div>
         {!videoInfo && (
           <button type="button" className="signal-search__action signal-search__action--preview" onClick={handlePreview} disabled={loading || previewLoading || !rawInput.trim()}>

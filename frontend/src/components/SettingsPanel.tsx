@@ -200,20 +200,29 @@ export default function SettingsPanel({ maxComments, onMaxCommentsChange, delay,
         <LLMTaskEditor task="sentiment" title="情绪分析模型" description="为评论生成九类主情感与表达方式标签" saved={settings.llm.sentiment} onSaved={handleSaved} />
         <LLMTaskEditor task="summary" title="智能总结模型" description="归纳筛选后的统计与代表观点" saved={settings.llm.summary} onSaved={handleSaved} />
       </div>}
-      <section className="crawl-settings">
-        <div style={{ flex: '1 1 14rem' }}>
-          <label className="text-xs text-secondary mb-1" style={{ display: 'block' }}>抓取评论总数（每页 20 条，预计 {Math.ceil(maxComments / 20)} 次请求约 {Math.round(Math.ceil(maxComments / 20) * delay)} 秒）</label>
-          <div className="flex items-center gap-2">
-            <input type="range" min="1" max="2000" value={Math.min(maxComments, 2000)} onChange={event => onMaxCommentsChange(Number(event.target.value))} style={{ flex: 1, accentColor: 'var(--accent)' }} />
-            <input type="number" inputMode="numeric" min="1" value={maxComments} onChange={event => onMaxCommentsChange(clamp(Number(event.target.value), 1, 99999))} className="settings-number-input" />
+      <section className="crawl-settings crawl-settings--primary" aria-labelledby="crawl-settings-title">
+        <div className="crawl-settings__header">
+          <div>
+            <span className="settings-eyebrow">抓取策略</span>
+            <h2 id="crawl-settings-title">评论抓取参数</h2>
           </div>
+          <p>设置单次分析的评论数量与请求间隔，兼顾覆盖范围和访问节奏。</p>
         </div>
-        <div style={{ flex: '1 1 12rem' }}>
-          <label className="text-xs text-secondary mb-1" style={{ display: 'block' }}>请求间隔</label>
-          <div className="flex items-center gap-2">
-            <input type="range" min="1" max="10" step="0.5" value={delay} onChange={event => onDelayChange(Number(event.target.value))} style={{ flex: 1, accentColor: 'var(--accent)' }} />
-            <input type="number" inputMode="decimal" min="1" max="60" step="0.5" value={delay} onChange={event => onDelayChange(clamp(Number(event.target.value), 1, 60))} className="settings-number-input" />
-            <span className="text-xs text-muted">秒</span>
+        <div className="crawl-settings__controls">
+          <div className="crawl-settings__field crawl-settings__field--count">
+            <label className="text-xs text-secondary mb-1" style={{ display: 'block' }}>抓取评论总数（每页 20 条，预计 {Math.ceil(maxComments / 20)} 次请求约 {Math.round(Math.ceil(maxComments / 20) * delay)} 秒）</label>
+            <div className="flex items-center gap-2">
+              <input type="range" min="1" max="2000" value={Math.min(maxComments, 2000)} onChange={event => onMaxCommentsChange(Number(event.target.value))} style={{ flex: 1, accentColor: 'var(--accent)' }} />
+              <input type="number" inputMode="numeric" min="1" value={maxComments} onChange={event => onMaxCommentsChange(clamp(Number(event.target.value), 1, 99999))} className="settings-number-input" />
+            </div>
+          </div>
+          <div className="crawl-settings__field crawl-settings__field--delay">
+            <label className="text-xs text-secondary mb-1" style={{ display: 'block' }}>请求间隔</label>
+            <div className="flex items-center gap-2">
+              <input type="range" min="1" max="10" step="0.5" value={delay} onChange={event => onDelayChange(Number(event.target.value))} style={{ flex: 1, accentColor: 'var(--accent)' }} />
+              <input type="number" inputMode="decimal" min="1" max="60" step="0.5" value={delay} onChange={event => onDelayChange(clamp(Number(event.target.value), 1, 60))} className="settings-number-input" />
+              <span className="text-xs text-muted">秒</span>
+            </div>
           </div>
         </div>
       </section>

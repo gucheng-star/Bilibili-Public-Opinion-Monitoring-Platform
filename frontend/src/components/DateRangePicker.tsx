@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 
 interface Props {
   dateFrom: string;
@@ -125,11 +125,25 @@ export default function DateRangePicker({ dateFrom, dateTo, onChange }: Props) {
   const rootRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const [customMode, setCustomMode] = useState(false);
+  const [mobilePopoverTop, setMobilePopoverTop] = useState<number | null>(null);
   const [anchor, setAnchor] = useState(() => calendarAnchor(dateFrom, today));
   const activePreset = detectPreset(dateFrom, dateTo, today);
   const displayedPreset = customMode ? 'custom' : activePreset;
-  const activeLabel = PRESETS.find(item => item.value === displayedPreset)?.label || '自定义';
+  const activeLabel = PRESETS.find(item => item.value === activePreset)?.label || '自定义';
   const latestAnchor = addMonths(startOfMonth(today), -1);
+
+  const calculateMobilePopoverTop = useCallback(() => {
+    if (!window.matchMedia('(max-width: 640px)').matches || !rootRef.current) return null;
+    const trigger = rootRef.current.querySelector<HTMLButtonElement>('.date-range-trigger');
+    if (!trigger) return null;
+    const edge = 16;
+    const minimumPanelHeight = 240;
+    const stickyHeaderBottom = document.querySelector<HTMLElement>('.app-header')
+      ?.getBoundingClientRect().bottom ?? 0;
+    const desiredTop = Math.max(trigger.getBoundingClientRect().bottom, stickyHeaderBottom) + 8;
+    const latestTop = Math.max(edge, window.innerHeight - minimumPanelHeight - edge);
+    return Math.min(Math.max(desiredTop, edge), latestTop);
+  }, []);
 
   useEffect(() => {
     if (open) setAnchor(calendarAnchor(dateFrom, today));
@@ -138,6 +152,28 @@ export default function DateRangePicker({ dateFrom, dateTo, onChange }: Props) {
   useEffect(() => {
     if (activePreset !== 'custom') setCustomMode(false);
   }, [activePreset]);
+
+  useEffect(() => {
+    if (!open || !customMode) {
+      setMobilePopoverTop(null);
+      return;
+    }
+
+    const mobileQuery = window.matchMedia('(max-width: 640px)');
+    const updatePosition = () => {
+      setMobilePopoverTop(calculateMobilePopoverTop());
+    };
+
+    updatePosition();
+    window.addEventListener('resize', updatePosition);
+    window.addEventListener('scroll', updatePosition, true);
+    mobileQuery.addEventListener('change', updatePosition);
+    return () => {
+      window.removeEventListener('resize', updatePosition);
+      window.removeEventListener('scroll', updatePosition, true);
+      mobileQuery.removeEventListener('change', updatePosition);
+    };
+  }, [open, customMode, calculateMobilePopoverTop]);
 
   useEffect(() => {
     if (!open) return;
@@ -157,6 +193,7 @@ export default function DateRangePicker({ dateFrom, dateTo, onChange }: Props) {
 
   const choosePreset = (preset: TimePreset) => {
     if (preset === 'custom') {
+      setMobilePopoverTop(calculateMobilePopoverTop());
       setCustomMode(true);
       return;
     }
@@ -179,14 +216,28 @@ export default function DateRangePicker({ dateFrom, dateTo, onChange }: Props) {
     setOpen(false);
   };
 
+  const togglePicker = () => {
+    if (open) {
+      setOpen(false);
+      return;
+    }
+    const openingCustomMode = activePreset === 'custom';
+    setMobilePopoverTop(openingCustomMode ? calculateMobilePopoverTop() : null);
+    setCustomMode(openingCustomMode);
+    setOpen(true);
+  };
+
   return (
-    <div className={`date-range-picker${open ? ' is-open' : ''}`} ref={rootRef}>
+    <div
+      className={`date-range-picker${open ? ' is-open' : ''}${open && customMode ? ' is-custom' : ''}`}
+      ref={rootRef}
+    >
       <button
         type="button"
         className={`date-range-trigger ${open ? 'open' : ''}`}
         aria-expanded={open}
         aria-haspopup="dialog"
-        onClick={() => setOpen(current => !current)}
+        onClick={togglePicker}
       >
         <span>时间维度</span>
         <strong>{activeLabel}</strong>
@@ -196,7 +247,14 @@ export default function DateRangePicker({ dateFrom, dateTo, onChange }: Props) {
       </button>
 
       {open && (
-        <div className="date-range-popover" role="dialog" aria-label="选择时间范围">
+        <div
+          className={`date-range-popover${customMode ? ' is-custom' : ''}`}
+          role="dialog"
+          aria-label="选择时间范围"
+          style={mobilePopoverTop === null
+            ? undefined
+            : { '--date-range-mobile-top': `${mobilePopoverTop}px` } as CSSProperties}
+        >
           <nav className="date-range-presets" aria-label="快捷时间范围">
             {PRESETS.map(preset => (
               <button
@@ -210,25 +268,27 @@ export default function DateRangePicker({ dateFrom, dateTo, onChange }: Props) {
               </button>
             ))}
           </nav>
-          <div className="date-range-calendars">
-            <CalendarMonth
-              month={anchor}
-              dateFrom={dateFrom}
-              dateTo={dateTo}
-              today={today}
-              previous={() => setAnchor(current => addMonths(current, -1))}
-              onSelect={chooseDate}
-            />
-            <CalendarMonth
-              month={addMonths(anchor, 1)}
-              dateFrom={dateFrom}
-              dateTo={dateTo}
-              today={today}
-              next={() => setAnchor(current => addMonths(current, 1))}
-              nextDisabled={anchor >= latestAnchor}
-              onSelect={chooseDate}
-            />
-          </div>
+          {customMode && (
+            <div className="date-range-calendars">
+              <CalendarMonth
+                month={anchor}
+                dateFrom={dateFrom}
+                dateTo={dateTo}
+                today={today}
+                previous={() => setAnchor(current => addMonths(current, -1))}
+                onSelect={chooseDate}
+              />
+              <CalendarMonth
+                month={addMonths(anchor, 1)}
+                dateFrom={dateFrom}
+                dateTo={dateTo}
+                today={today}
+                next={() => setAnchor(current => addMonths(current, 1))}
+                nextDisabled={anchor >= latestAnchor}
+                onSelect={chooseDate}
+              />
+            </div>
+          )}
         </div>
       )}
     </div>
