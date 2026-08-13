@@ -4,6 +4,7 @@ __pycache__/
 *.pyo
 *.egg-info/
 backend/venv/
+backend/backups/
 data.db
 *.db-shm
 *.db-wal

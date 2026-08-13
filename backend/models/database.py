@@ -42,6 +42,7 @@ class Analysis(Base):
     status = Column(String(20), default="pending")
     mode = Column(String(10), default="nlp")
     total_comments = Column(Integer, default=0)
+    processed_comments = Column(Integer, default=0)
     error_msg = Column(Text)
     created_at = Column(DateTime, default=datetime.now)
 
@@ -163,6 +164,8 @@ def _migrate(eng):
         cols = {c["name"] for c in inspector.get_columns("analyses")}
         if "mode" not in cols:
             migrations.append(("analyses", "ALTER TABLE analyses ADD COLUMN mode VARCHAR(10) DEFAULT 'nlp'"))
+        if "processed_comments" not in cols:
+            migrations.append(("analyses", "ALTER TABLE analyses ADD COLUMN processed_comments INTEGER DEFAULT 0"))
     if "comments" in inspector.get_table_names():
         cols = {c["name"] for c in inspector.get_columns("comments")}
         if "sentiment_llm_label" not in cols:

@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from collections.abc import Callable
 
 from services.llm_client import chat_completion_json
 
@@ -14,48 +15,6 @@ LLM_BATCH_SIZE = 5
 LLM_BATCH_CONCURRENCY = 3
 LLM_BATCH_RETRIES = 2
 LLM_CONTEXT_COMMENT_MAX_CHARS = 240
-
-# Plutchik 八情绪中文定义（帮助模型理解分类边界）
-EMOTION_DESCRIPTIONS = """
-joy（喜悦）       — 正向、开心、满足、喜爱、赞美。例如：好可爱、哈哈哈、爷青回、终于等到你
-anger（愤怒）     — 强烈的负面情绪、攻击性。例如：真恶心、滚出去、脑残粉、什么垃圾玩意儿
-sadness（悲伤）   — 失落、难过、遗憾、惋惜。例如：哭了、破防了、青春结束了、太难过了
-surprise（惊讶）  — 出乎意料、震惊，可正向也可负向。例如：卧槽、这谁想得到、居然还有这种操作
-fear（恐惧）      — 担忧、不安、害怕、对未来的焦虑。例如：感觉要出事了、别吓我、细思极恐
-disgust（厌恶）   — 反感、不适、恶心但非愤怒。例如：生理不适了、太油了、炒热度吃相难看
-anticipation（期待）— 期待、盼望、好奇接下来会发生什么。例如：下一期呢！期待！想看后续！
-trust（信任）     — 表达信任、认可、支持、忠诚。例如：他说的对、老粉了、一直支持你、靠谱
-"""
-
-# B站语境 few-shot 示例：每类一条典型弹幕/评论
-FEW_SHOT_EXAMPLES = [
-    {"text": "好可爱啊啊啊啊awsl",               "label": "joy",          "reason": "强烈正向喜爱"},
-    {"text": "什么垃圾玩意儿退钱",                "label": "anger",        "reason": "攻击性负面情绪"},
-    {"text": "我的青春结束了呜呜",                "label": "sadness",      "reason": "失落感伤非愤怒"},
-    {"text": "卧槽这波反转？？？",                "label": "surprise",     "reason": "意外震惊"},
-    {"text": "细思极恐啊晚上不敢回看了",          "label": "fear",         "reason": "不安恐惧"},
-    {"text": "生理不适了求求别播这种内容",        "label": "disgust",      "reason": "反感厌恶非愤怒"},
-    {"text": "下周有糖！！等不及了啊啊啊",        "label": "anticipation", "reason": "期待盼望"},
-    {"text": "老粉了，你推的我都去看",            "label": "trust",        "reason": "信任与忠诚"},
-    # B站特有反语/梗
-    {"text": "笑死我了这波操作哈哈哈",            "label": "joy",          "reason": "开心被逗笑"},
-    {"text": "就这？就这？就这？",                "label": "disgust",      "reason": "轻蔑不适非愤怒"},
-    {"text": "6",                                 "label": "surprise",     "reason": "B站6表示离谱/震惊"},
-    {"text": "典",                                "label": "disgust",      "reason": "B站典=典中典，讽刺居高临下感"},
-    {"text": "急了急了急了",                      "label": "anger",        "reason": "嘲讽对方破防发怒"},
-    {"text": "泪目",                              "label": "sadness",      "reason": "感动落泪，偏悲伤"},
-]
-
-SYSTEM_PROMPT = f"""你是B站弹幕评论情感分析专家。分析给定评论，从以下8种情绪中选择最匹配的标签。
-
-{EMOTION_DESCRIPTIONS}
-
-重要规则：
-- B站评论常含反语、玩梗、缩写（如"笑死"是开心不是悲伤，"6"表示离谱/震惊，"典"表示讽刺厌恶）
-- 有多个情绪时选最强烈那个
-- 仅输出合法 JSON，不要任何额外文字
-- confidence 表示你对分类把握的自信度（0.0-1.0）"""
-
 
 FEW_SHOT_EXAMPLES = [
     {"text": "心脏每分钟七十次，换算下来大概就是这个量级。", "label": "neutral", "style": "plain", "reason": "陈述或提问默认中性"},
@@ -82,16 +41,21 @@ SYSTEM_PROMPT = """你是 B 站评论情感分析专家。对每条评论输出�
 
 
 def _build_few_shot_messages():
-    """构造 few-shot 示例消息"""
+    """Build few-shot examples with the same batched ``items`` protocol."""
     messages = []
-    for ex in FEW_SHOT_EXAMPLES:
-        messages.append({"role": "user", "content": ex["text"]})
-        messages.append({"role": "assistant", "content": json.dumps({
-            "label": ex["label"],
-            "style": ex.get("style", "plain"),
-            "confidence": 0.9,
-            "reason": ex["reason"],
-        }, ensure_ascii=False)})
+    for batch_index in range(0, len(FEW_SHOT_EXAMPLES), LLM_BATCH_SIZE):
+        batch = FEW_SHOT_EXAMPLES[batch_index:batch_index + LLM_BATCH_SIZE]
+        comments = [
+            {"id": f"example-{batch_index + index + 1}", "text": example["text"]}
+            for index, example in enumerate(batch)
+        ]
+        items = [
+            {"id": comment["id"], "label": example["label"],
+             "style": example.get("style", "plain"), "confidence": 0.9}
+            for comment, example in zip(comments, batch)
+        ]
+        messages.append({"role": "user", "content": json.dumps({"comments": comments}, ensure_ascii=False)})
+        messages.append({"role": "assistant", "content": json.dumps({"items": items}, ensure_ascii=False)})
     return messages
 
 
@@ -227,26 +191,43 @@ async def _analyze_batch_with_retry(
 
 async def batch_analyze_llm(
     comments: list[dict], config: dict[str, str], concurrency: int = LLM_BATCH_CONCURRENCY,
+    progress_callback: Callable[[int], None] | None = None,
 ) -> list[dict]:
-    """Classify five comments per request, with limited concurrent batches."""
-    comments_to_analyze = []
+    """Classify at most five comments per request and report completed comments."""
+    comments_to_analyze = [
+        comment for comment in comments if comment.get("content", "").strip()
+    ]
     for comment in comments:
-        if comment.get("content", "").strip():
-            comments_to_analyze.append(comment)
-        else:
+        if not comment.get("content", "").strip():
             comment["sentiment_llm_label"] = "neutral"
             comment["sentiment_llm_style"] = "plain"
 
     contexts = _build_comment_contexts(comments_to_analyze)
-    batches = [comments_to_analyze[i:i + LLM_BATCH_SIZE] for i in range(0, len(comments_to_analyze), LLM_BATCH_SIZE)]
+    batches = [comments[i:i + LLM_BATCH_SIZE] for i in range(0, len(comments), LLM_BATCH_SIZE)]
     semaphore = asyncio.Semaphore(concurrency)
+    processed_comments = 0
 
-    async def _run_batch(batch: list[dict]) -> dict[str, dict[str, str]]:
+    async def _run_batch(batch: list[dict]) -> tuple[dict[str, dict[str, str]], int]:
+        nonempty_batch = [comment for comment in batch if comment.get("content", "").strip()]
+        if not nonempty_batch:
+            return {}, len(batch)
         async with semaphore:
-            return await _analyze_batch_with_retry(batch, config, contexts)
+            return await _analyze_batch_with_retry(nonempty_batch, config, contexts), len(batch)
 
-    batch_results = await asyncio.gather(*[_run_batch(batch) for batch in batches])
-    labels_by_id = {comment_id: value for result in batch_results for comment_id, value in result.items()}
+    batch_tasks = [asyncio.create_task(_run_batch(batch)) for batch in batches]
+    labels_by_id = {}
+    try:
+        for completed_task in asyncio.as_completed(batch_tasks):
+            result, completed_count = await completed_task
+            labels_by_id.update(result)
+            processed_comments += completed_count
+            if progress_callback:
+                progress_callback(processed_comments)
+    except Exception:
+        for batch_task in batch_tasks:
+            batch_task.cancel()
+        await asyncio.gather(*batch_tasks, return_exceptions=True)
+        raise
     for comment in comments_to_analyze:
         result = labels_by_id[str(comment["rpid"])]
         comment["sentiment_llm_label"] = result["label"]

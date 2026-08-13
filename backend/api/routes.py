@@ -192,8 +192,6 @@ async def reanalyze(analysis_id: int, background_tasks: BackgroundTasks):
 
         # Keep the persisted mode as NLP until the LLM pass succeeds so a
         # provider failure never destroys access to the existing result.
-        a.status = 'analyzing'; a.error_msg = None; db.commit()
-
         # Load existing comments
         comments_data = [
             {
@@ -204,6 +202,11 @@ async def reanalyze(analysis_id: int, background_tasks: BackgroundTasks):
             }
             for c in db.query(Comment).filter_by(analysis_id=analysis_id).all()
         ]
+        # Progress is based on the stored comments, not just the comments that
+        # require a model call; blank comments are completed locally as neutral.
+        a.status = 'analyzing'; a.error_msg = None
+        a.total_comments = len(comments_data); a.processed_comments = 0
+        db.commit()
         if not comments_data:
             a.status = 'error'; a.error_msg = 'No comments to re-analyze'; db.commit(); return
 
@@ -230,8 +233,16 @@ async def _run_reanalyze(analysis_id: int, comments_data: list[dict], llm_config
 async def _run_reanalyze_inner(analysis_id: int, comments_data: list[dict], llm_config: dict[str, str]):
     db = SessionLocal()
     try:
+        def report_progress(processed_comments: int):
+            db.query(Analysis).filter_by(id=analysis_id).update({
+                'processed_comments': processed_comments,
+            })
+            db.commit()
+
         # Run LLM analysis
-        comments_analyzed = await batch_analyze_llm(comments_data, llm_config)
+        comments_analyzed = await batch_analyze_llm(
+            comments_data, llm_config, progress_callback=report_progress,
+        )
 
         # Remove old sentiment result
         old_sr = db.query(SentimentResult).filter_by(analysis_id=analysis_id).first()
@@ -255,6 +266,7 @@ async def _run_reanalyze_inner(analysis_id: int, comments_data: list[dict], llm_
 
         db.query(Analysis).filter_by(id=analysis_id).update({
             'status': 'done', 'mode': 'llm', 'error_msg': None,
+            'processed_comments': len(comments_data),
         })
         db.commit()
     except Exception as e:
@@ -275,7 +287,8 @@ def get_status(analysis_id: int):
     try:
         a = db.query(Analysis).filter_by(id=analysis_id).first()
         if not a: raise HTTPException(404, 'Not found')
-        return {'analysis_id':a.id,'status':a.status,'total_comments':a.total_comments,'error_msg':a.error_msg}
+        return {'analysis_id':a.id,'status':a.status,'total_comments':a.total_comments,
+            'processed_comments':a.processed_comments,'error_msg':a.error_msg}
     finally: db.close()
 
 

@@ -77,6 +77,48 @@ class LLMClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(calls[0][1]["json"]["enable_thinking"])
         self.assertNotIn("thinking", calls[0][1]["json"])
 
+    async def test_json_request_uses_response_format_only_for_supported_providers(self):
+        calls = []
+        response = httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": '{"ok": true}'}}]},
+            request=httpx.Request("POST", "https://api.example.com"),
+        )
+        config = {
+            "provider": "deepseek", "base_url": "https://api.deepseek.com",
+            "model": "model", "fallback_model": "", "api_key": "secret",
+        }
+        with patch.object(llm_client.httpx, "AsyncClient", return_value=FakeClient(response, calls)):
+            parsed, _ = await llm_client.chat_completion_json(
+                config, [{"role": "user", "content": "test"}], check_dns=False,
+            )
+        self.assertEqual(parsed, {"ok": True})
+        self.assertEqual(calls[0][1]["json"]["response_format"], {"type": "json_object"})
+
+        calls.clear()
+        config["provider"] = "bailian"
+        with patch.object(llm_client.httpx, "AsyncClient", return_value=FakeClient(response, calls)):
+            await llm_client.chat_completion_json(
+                config, [{"role": "user", "content": "output json"}], check_dns=False,
+            )
+        self.assertEqual(calls[0][1]["json"]["response_format"], {"type": "json_object"})
+        self.assertFalse(calls[0][1]["json"]["enable_thinking"])
+
+        calls.clear()
+        with patch.object(llm_client.httpx, "AsyncClient", return_value=FakeClient(response, calls)):
+            await llm_client.chat_completion(
+                config, [{"role": "user", "content": "plain text"}], check_dns=False,
+            )
+        self.assertNotIn("response_format", calls[0][1]["json"])
+
+        calls.clear()
+        config["provider"] = "custom"
+        with patch.object(llm_client.httpx, "AsyncClient", return_value=FakeClient(response, calls)):
+            await llm_client.chat_completion_json(
+                config, [{"role": "user", "content": "test"}], check_dns=False,
+            )
+        self.assertNotIn("response_format", calls[0][1]["json"])
+
     async def test_authentication_error_is_sanitized(self):
         response = httpx.Response(
             401,

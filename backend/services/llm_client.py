@@ -157,6 +157,7 @@ async def chat_completion(
     max_tokens: int = 400,
     retries: int = 1,
     check_dns: bool = True,
+    response_format: dict[str, str] | None = None,
 ) -> tuple[str, str]:
     """Return response content and the model that succeeded."""
     api_key = config.get("api_key", "").strip()
@@ -190,6 +191,8 @@ async def chat_completion(
                 payload["thinking"] = {"type": "disabled"}
             elif config.get("provider") == "bailian":
                 payload["enable_thinking"] = False
+            if response_format and config.get("provider") in {"deepseek", "bailian"}:
+                payload["response_format"] = response_format
             try:
                 async with httpx.AsyncClient(
                     timeout=httpx.Timeout(60.0),
@@ -228,11 +231,14 @@ async def chat_completion_json(
     *,
     temperature: float = 0.1,
     max_tokens: int = 400,
+    check_dns: bool = True,
 ) -> tuple[dict[str, Any], str]:
     content, model = await chat_completion(
         config,
         messages,
         temperature=temperature,
         max_tokens=max_tokens,
+        check_dns=check_dns,
+        response_format={"type": "json_object"},
     )
     return parse_json_content(content), model

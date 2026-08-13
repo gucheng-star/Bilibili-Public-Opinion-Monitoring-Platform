@@ -1,7 +1,11 @@
+import json
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from services.sentiment_llm import _analyze_comment_batch, _build_comment_contexts, batch_analyze_llm
+from services.sentiment_llm import (
+    FEW_SHOT_EXAMPLES, _analyze_comment_batch, _build_comment_contexts,
+    _build_few_shot_messages, batch_analyze_llm,
+)
 
 
 class SentimentContextTests(unittest.IsolatedAsyncioTestCase):
@@ -20,6 +24,20 @@ class SentimentContextTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             contexts["12"],
             {"root_comment": "root text", "parent_comment": "parent text"},
+        )
+
+    def test_few_shot_examples_use_the_batch_items_protocol(self):
+        messages = _build_few_shot_messages()
+
+        self.assertEqual(len(messages) % 2, 0)
+        for user_message, assistant_message in zip(messages[::2], messages[1::2]):
+            prompt_items = json.loads(user_message["content"])["comments"]
+            result_items = json.loads(assistant_message["content"])["items"]
+            self.assertLessEqual(len(prompt_items), 5)
+            self.assertEqual([item["id"] for item in result_items], [item["id"] for item in prompt_items])
+        self.assertEqual(
+            sum(len(json.loads(message["content"])["comments"]) for message in messages[::2]),
+            len(FEW_SHOT_EXAMPLES),
         )
 
     async def test_sends_context_but_labels_only_the_target_comment(self):
@@ -60,6 +78,29 @@ class SentimentContextTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertTrue(all(comment["sentiment_llm_label"] == "joy" for comment in analyzed))
         self.assertTrue(all(comment["sentiment_llm_style"] == "plain" for comment in analyzed))
+
+    async def test_reports_every_completed_batch_including_blank_comments(self):
+        comments = [
+            {"rpid": index, "content": "" if index in {2, 7} else f"comment {index}"}
+            for index in range(1, 8)
+        ]
+        progress = []
+
+        async def fake_analyze(batch, _config, _contexts):
+            return {
+                str(comment["rpid"]): {"label": "neutral", "style": "plain"}
+                for comment in batch
+            }
+
+        with patch("services.sentiment_llm._analyze_batch_with_retry", side_effect=fake_analyze) as analyze:
+            analyzed = await batch_analyze_llm(
+                comments, {}, concurrency=1, progress_callback=progress.append,
+            )
+
+        self.assertEqual(analyze.await_count, 2)
+        self.assertEqual(progress[-1], 7)
+        self.assertEqual(sorted(progress), [5, 7])
+        self.assertEqual(analyzed[1]["sentiment_llm_label"], "neutral")
 
 
 if __name__ == "__main__":
