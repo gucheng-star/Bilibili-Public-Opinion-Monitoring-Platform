@@ -38,6 +38,7 @@ backend/settings.json
 skills/
 PROJECT.md
 plan/
+docs/competition-materials/
 
 # OS
 .DS_Store
