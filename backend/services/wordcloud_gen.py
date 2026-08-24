@@ -2,6 +2,7 @@
 
 import base64
 import io
+import re
 from collections import Counter
 
 import jieba
@@ -12,19 +13,32 @@ import numpy as np
 from config import STOPWORDS, WORDCLOUD_WIDTH, WORDCLOUD_HEIGHT, WORDCLOUD_MAX_WORDS
 
 
+_BILIBILI_EMOTE_PATTERN = re.compile(r"\[[^\[\]\r\n]{1,32}\]")
+
+
+def _extract_keyword_words(comments: list[dict]) -> list[str]:
+    """分词前移除 B 站短方括号表情，同时保留同名普通文本。"""
+    text_parts = []
+    for comment in comments:
+        content = comment.get("content", "")
+        if isinstance(content, str) and content:
+            text_parts.append(_BILIBILI_EMOTE_PATTERN.sub(" ", content))
+
+    all_text = " ".join(text_parts)
+    if not all_text.strip():
+        return []
+
+    words = jieba.lcut(all_text)
+    return [
+        word
+        for raw_word in words
+        if len(word := raw_word.strip()) >= 2 and word not in STOPWORDS
+    ]
+
+
 def generate_wordcloud(comments: list[dict]) -> str:
     """根据评论列表生成词云图，返回 base64 PNG"""
-    all_text = " ".join(c.get("content", "") for c in comments if c.get("content"))
-    if not all_text.strip():
-        return ""
-
-    # 分词并过滤停用词
-    words = jieba.lcut(all_text)
-    filtered = []
-    for w in words:
-        w = w.strip()
-        if len(w) >= 2 and w not in STOPWORDS:
-            filtered.append(w)
+    filtered = _extract_keyword_words(comments)
 
     if not filtered:
         return ""
@@ -64,8 +78,5 @@ def generate_wordcloud(comments: list[dict]) -> str:
 
 def get_top_keywords(comments: list[dict], top_n: int = 20) -> list[dict]:
     """获取高频关键词列表"""
-    all_text = " ".join(c.get("content", "") for c in comments if c.get("content"))
-    words = jieba.lcut(all_text)
-    filtered = [w.strip() for w in words if len(w.strip()) >= 2 and w.strip() not in STOPWORDS]
-    counter = Counter(filtered)
+    counter = Counter(_extract_keyword_words(comments))
     return [{"word": w, "count": c} for w, c in counter.most_common(top_n)]

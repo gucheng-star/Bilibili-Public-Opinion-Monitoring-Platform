@@ -39,47 +39,72 @@ export default function RegionMap({ data }: Props) {
     return () => { mq.removeEventListener('change', onThemeChange); observer.disconnect(); };
   }, []);
 
-  const mapData = data.filter(d=>NAME_MAP[d.region]).map(d=>({name:NAME_MAP[d.region],value:d.count}));
-  const rankedMapData = [...mapData].sort((a,b)=>b.value-a.value || a.name.localeCompare(b.name,'zh-CN'));
-  const mapMax = Math.max(...mapData.map(d=>d.value),1);
-  const labelColor = dark ? '#CBD5E1' : '#4B5563';
-  const legendLabelSpan = 205;
-  const uniqueValueRegions = rankedMapData.filter((region,index,regions)=>index===0 || region.value!==regions[index-1].value);
-  const lowestUniqueRegion = uniqueValueRegions[uniqueValueRegions.length-1];
-  const selectedRegionLabels = uniqueValueRegions.slice(0,-1).reduce<Array<{name:string;value:number;top:number}>>((selected,region)=>{
-    if (selected.length>=5) return selected;
-    const top = Math.round((1-region.value/mapMax)*legendLabelSpan);
-    if (selected.every(item=>Math.abs(item.top-top)>=27)) selected.push({...region,top});
-    return selected;
-  },[]);
-  if (lowestUniqueRegion) {
-    const lowestLabel = {...lowestUniqueRegion,top:Math.round((1-lowestUniqueRegion.value/mapMax)*legendLabelSpan)};
-    const lastSelected = selectedRegionLabels[selectedRegionLabels.length-1];
-    if (!lastSelected || lowestLabel.top-lastSelected.top>=27) selectedRegionLabels.push(lowestLabel);
-    else if (selectedRegionLabels.length>1) selectedRegionLabels[selectedRegionLabels.length-1]=lowestLabel;
-  }
-  const regionScaleGraphic = {
-    type:'group', left:58, top:85, silent:true,
-    children:selectedRegionLabels.map(region=>({
-      type:'text',left:0,top:region.top,
-      style:{text:`${region.name}  ${region.value} 条`,fill:labelColor,font:'500 10px sans-serif'},
-    })),
-  };
+  const rankedRegions = data
+    .filter(item=>NAME_MAP[item.region])
+    .map(item=>({...item,percentage:Number(item.percentage.toFixed(2))}))
+    .sort((a,b)=>b.percentage-a.percentage || b.count-a.count || a.region.localeCompare(b.region,'zh-CN'));
+  const mapData = rankedRegions.map(item=>({
+    name:NAME_MAP[item.region],
+    value:item.percentage,
+    count:item.count,
+  }));
 
   if (!mapData.length) return <div className="card"><h3 className="text-xs font-semibold text-secondary mb-2" style={{letterSpacing:'.05em'}}>地域分布</h3><div className="flex items-center justify-center h-64 text-muted text-sm">暂无省级地域数据</div></div>;
 
   const option = {
-    tooltip:{trigger:'item',formatter:'{b}: {c} 条',backgroundColor:dark?'#1A2030':'#FFF',borderColor:dark?'rgba(148,163,184,.12)':'rgba(0,0,0,.08)',textStyle:{color:dark?'#E2E8F0':'#1A1A2E',fontSize:12}},
-    visualMap:{min:0,max:mapMax,left:12,top:70,itemWidth:16,itemHeight:180,orient:'vertical',text:['高','低'],textGap:8,textStyle:{color:dark?'#94A3B8':'#6B7280'},inRange:{color:dark?['#1E293B','#FB7299','#FDF2F8']:['#FEF2F2','#FB7299','#9D174D']},calculable:false},
-    graphic:[regionScaleGraphic],
-    geo:{map:'china',roam:false,layoutCenter:['50%','52%'],layoutSize:'100%',itemStyle:{areaColor:dark?'#1A2030':'#F3F4F6',borderColor:dark?'rgba(148,163,184,.15)':'#D1D5DB'},emphasis:{itemStyle:{areaColor:dark?'#2D3A50':'#DBEAFE'}}},
+    tooltip:{
+      trigger:'item',
+      formatter:(params:unknown)=>{
+        const item=params as {name?:string;data?:{count?:number;value?:number}};
+        if (!item.data) return `${item.name||''}<br/>暂无地域数据`;
+        return `${item.name||''}<br/>评论数：${(item.data.count||0).toLocaleString()} 条<br/>占比：${(item.data.value||0).toFixed(2)}%`;
+      },
+      backgroundColor:dark?'#1A2030':'#FFF',borderColor:dark?'rgba(148,163,184,.12)':'rgba(0,0,0,.08)',textStyle:{color:dark?'#E2E8F0':'#1A1A2E',fontSize:12},
+    },
+    visualMap:{
+      type:'piecewise',left:4,bottom:14,orient:'vertical',itemWidth:20,itemHeight:11,itemGap:10,
+      textStyle:{color:dark?'#94A3B8':'#6B7280',fontSize:11},
+      pieces:[
+        {gt:13,label:'>13%',color:'#9D174D'},
+        {gte:9,lte:13,label:'9%–13%',color:'#D9467A'},
+        {gte:6,lt:9,label:'6%–9%',color:'#FB7299'},
+        {gte:3,lt:6,label:'3%–6%',color:'#F9B4C8'},
+        {lt:3,label:'<3%',color:'#FDF2F8'},
+      ],
+      selectedMode:'multiple',
+    },
+    geo:{map:'china',roam:false,layoutCenter:['59%','50%'],layoutSize:'98%',itemStyle:{areaColor:dark?'#1A2030':'#F3F4F6',borderColor:dark?'rgba(148,163,184,.22)':'#D1D5DB'},emphasis:{itemStyle:{areaColor:dark?'#2D3A50':'#FCE7EF'}}},
     series:[{name:'地域',type:'map',map:'china',geoIndex:0,data:mapData}],
   };
 
-  if (!mapLoaded) {
-    const sorted = [...data].sort((a,b)=>b.count-a.count);
-    return <div className="card"><div className="flex items-center justify-between mb-2"><h3 className="text-xs font-semibold text-secondary" style={{letterSpacing:'.05em'}}>地域分布</h3><DownloadChartButton echartRefs={chartRef} /></div><ReactECharts ref={chartRef} key={'fallback-'+renderKey.current} option={{tooltip:{trigger:'axis',backgroundColor:dark?'#1A2030':'#FFF',borderColor:dark?'rgba(148,163,184,.12)':'rgba(0,0,0,.08)',textStyle:{color:dark?'#E2E8F0':'#1A1A2E',fontSize:12}},grid:{left:70,right:40,top:10,bottom:20},xAxis:{type:'value',axisLabel:{color:dark?'#94A3B8':'#6B7280'}},yAxis:{type:'category',data:sorted.map(d=>d.region),axisLabel:{color:dark?'#E2E8F0':'#1A1A2E',fontSize:12}},series:[{type:'bar',data:sorted.map(d=>d.count),barMaxWidth:36,itemStyle:{color:'#FB7299',borderRadius:[0,4,4,0]}}]}} style={{height:300}}/></div>;
-  }
+  const fallbackOption = {
+    tooltip:{trigger:'axis',backgroundColor:dark?'#1A2030':'#FFF',borderColor:dark?'rgba(148,163,184,.12)':'rgba(0,0,0,.08)',textStyle:{color:dark?'#E2E8F0':'#1A1A2E',fontSize:12}},
+    grid:{left:70,right:24,top:12,bottom:28},
+    xAxis:{type:'value',axisLabel:{color:dark?'#94A3B8':'#6B7280'}},
+    yAxis:{type:'category',data:rankedRegions.map(item=>item.region),axisLabel:{color:dark?'#E2E8F0':'#1A1A2E',fontSize:12}},
+    series:[{type:'bar',data:rankedRegions.map(item=>item.count),barMaxWidth:28,itemStyle:{color:'#FB7299',borderRadius:[0,4,4,0]}}],
+  };
 
-  return <div className="card"><div className="flex items-center justify-between mb-2"><h3 className="text-xs font-semibold text-secondary" style={{letterSpacing:'.05em'}}>地域分布 ({mapData.length} 个省级地区)</h3><DownloadChartButton echartRefs={chartRef} /></div><ReactECharts ref={chartRef} key={'map-'+renderKey.current} option={option} style={{height:360}}/></div>;
+  return <div className="card region-distribution-card">
+    <div className="flex items-center justify-between mb-2 region-distribution__header">
+      <h3 className="text-xs font-semibold text-secondary" style={{letterSpacing:'.05em'}}>地域分布 ({mapData.length} 个省级地区)</h3>
+      <DownloadChartButton echartRefs={chartRef} />
+    </div>
+    <div className="region-distribution__body">
+      <div className="region-distribution__map">
+        <ReactECharts ref={chartRef} key={(mapLoaded?'map-':'fallback-')+renderKey.current} option={mapLoaded?option:fallbackOption} style={{height:'100%',width:'100%'}}/>
+      </div>
+      <div className="region-ranking" tabIndex={0} aria-label="地域占比排行，可滚动查看全部地区">
+        <table className="region-ranking__table" aria-label="地域占比排行">
+          <thead><tr><th scope="col">地区</th><th scope="col">占比</th></tr></thead>
+          <tbody>
+            {rankedRegions.map(item=><tr key={item.region} title={`${item.count.toLocaleString()} 条评论`}>
+              <td>{item.region}</td>
+              <td>{item.percentage.toFixed(2)}%</td>
+            </tr>)}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>;
 }

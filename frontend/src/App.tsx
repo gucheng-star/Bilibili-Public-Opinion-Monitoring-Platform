@@ -331,8 +331,8 @@ function App() {
   const filteredRegion = useMemo(() => {
     const map = new Map<string, number>();
     filteredComments.forEach(c => { const p = normalizeProvince(c.ip_location); if (p) map.set(p, (map.get(p)||0)+1); });
-    const total = filteredComments.length || 1;
-    return Array.from(map.entries()).map(([region,count]) => ({ region, count, percentage: Math.round(count/total*100) }));
+    const total = filteredComments.length;
+    return Array.from(map.entries()).map(([region,count]) => ({ region, count, percentage: total ? count/total*100 : 0 }));
   }, [filteredComments]);
 
   const filteredHeat = useMemo(() => {

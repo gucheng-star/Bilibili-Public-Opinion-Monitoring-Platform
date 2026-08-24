@@ -498,6 +498,66 @@ a:focus-visible {
 .distribution-chart-header { min-height: 2.25rem; flex-wrap: wrap; gap: .5rem; }
 .distribution-chart-card .echarts-for-react { min-width: 0; flex: 1 1 auto; }
 
+/* Region distribution mirrors a creator-dashboard split: map context + ranked detail. */
+.region-distribution-card { min-width:0; overflow:hidden; }
+.region-distribution__header { min-height:2rem; }
+.region-distribution__body {
+  display:grid;
+  grid-template-columns:minmax(0,1.12fr) minmax(18rem,.88fr);
+  gap:clamp(1rem,3vw,2.5rem);
+  align-items:stretch;
+  min-width:0;
+}
+.region-distribution__map { min-width:0; height:22.5rem; }
+.region-ranking {
+  min-width:0;
+  max-height:22.5rem;
+  overflow:auto;
+  border-left:1px solid var(--border);
+  border-radius:var(--radius-sm);
+  scrollbar-gutter:stable;
+}
+.region-ranking:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.region-ranking__table {
+  width:100%;
+  border-collapse:collapse;
+  color:var(--text-secondary);
+  font-size:.75rem;
+  font-variant-numeric:tabular-nums;
+}
+.region-ranking__table th,
+.region-ranking__table td { padding:.72rem 1rem; text-align:left; }
+.region-ranking__table th {
+  position:sticky;
+  top:0;
+  z-index:1;
+  color:var(--text-primary);
+  background:var(--bg-subtle);
+  font-size:.6875rem;
+  font-weight:600;
+  letter-spacing:.04em;
+}
+.region-ranking__table th:last-child,
+.region-ranking__table td:last-child { text-align:right; }
+.region-ranking__table td:last-child { color:var(--text-primary); font-family:var(--font-data); font-size:.6875rem; }
+.region-ranking__table tbody tr { border-bottom:1px solid var(--border); transition:background .15s ease; }
+.region-ranking__table tbody tr:last-child { border-bottom:0; }
+.region-ranking__table tbody tr:hover { background:var(--accent-soft); }
+
+@media (max-width:900px) {
+  .region-distribution__body { grid-template-columns:1fr; gap:.75rem; }
+  .region-distribution__map { height:21rem; }
+  .region-ranking { max-height:21rem; border-left:0; border-top:1px solid var(--border); }
+}
+
+@media (max-width:640px) {
+  .region-distribution__header { align-items:flex-start; gap:.5rem; }
+  .region-distribution__map { height:19rem; }
+  .region-ranking { max-height:18rem; }
+  .region-ranking__table th,
+  .region-ranking__table td { padding:.62rem .75rem; }
+}
+
 /* ---- 16. Animations ---- */
 @keyframes btn-shimmer {
   0%, 100% { background-position: 200% 0; }
