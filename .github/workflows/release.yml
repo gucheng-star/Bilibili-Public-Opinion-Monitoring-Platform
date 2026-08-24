@@ -27,6 +27,12 @@ jobs:
           node-version: 22
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: Validate portable update signing keys
+        shell: pwsh
+        env:
+          PORTABLE_UPDATE_PRIVATE_KEY_PEM_B64: ${{ secrets.PORTABLE_UPDATE_PRIVATE_KEY_PEM_B64 }}
+        run: |
+          .\scripts\validate-portable-signing-keys.ps1 -OutputDirectory $env:RUNNER_TEMP
       - name: Install backend test and packaging dependencies
         shell: pwsh
         run: |
@@ -78,10 +84,20 @@ jobs:
           $signaturePath = Join-Path $env:RUNNER_TEMP "portable-manifest.sig"
           [IO.File]::WriteAllText($payloadPath, $payload, [Text.UTF8Encoding]::new($false))
           openssl pkeyutl -sign -rawin -inkey $privateKey -in $payloadPath -out $signaturePath
+          if ($LASTEXITCODE -ne 0) { throw "Unable to sign the portable update manifest payload" }
+          $publicKey = Join-Path $env:RUNNER_TEMP "portable-update-public.pem"
+          if (-not (Test-Path -LiteralPath $publicKey -PathType Leaf)) { throw "Missing validated portable update public key" }
+          openssl pkeyutl -verify -pubin -inkey $publicKey -rawin -in $payloadPath -sigfile $signaturePath
+          if ($LASTEXITCODE -ne 0) { throw "Portable update manifest signature verification failed" }
           $signature = [Convert]::ToBase64String([IO.File]::ReadAllBytes($signaturePath))
-          .\scripts\new-portable-manifest.ps1 -Version "${{ steps.package.outputs.version }}" -AssetPath $asset.FullName -ReleaseBaseUrl "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}" -NotesUrl "https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}" -SignatureBase64 $signature -OutputPath "dist\portable\latest-portable.json"
+          $manifestPath = "dist\portable\latest-portable.json"
+          .\scripts\new-portable-manifest.ps1 -Version "${{ steps.package.outputs.version }}" -AssetPath $asset.FullName -ReleaseBaseUrl "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}" -NotesUrl "https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}" -SignatureBase64 $signature -OutputPath $manifestPath
+          $manifest = Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json
+          $manifestPayload = "$($manifest.schema)|$($manifest.version)|$($manifest.asset.name)|$($manifest.asset.size)|$($manifest.asset.sha256)"
+          if ($manifestPayload -cne $payload) { throw "Portable update manifest payload does not match the signed payload" }
+          if ($manifest.signature -cne $signature) { throw "Portable update manifest signature was not preserved" }
       - name: Publish GitHub Release assets
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v2.6.2
         with:
           name: B站舆论监测平台 v${{ steps.package.outputs.version }}
           body: |
@@ -91,9 +107,33 @@ jobs:
 
             首次启动会在 EXE 同级创建 `data/` 目录，用于保存数据库、登录信息、模型设置和日志。更新前请备份该目录，且不要在更新时删除或覆盖它。
 
-            当前为预发布版本，可能触发 Windows SmartScreen 提示。请只从本仓库 Release 页面下载，并可使用随发布生成的 `latest-portable.json` 核对文件大小与 SHA-256。
+            当前为 0.x 预正式阶段，可能触发 Windows SmartScreen 提示。请只从本仓库 Release 页面下载，并可使用随发布生成的 `latest-portable.json` 核对文件大小与 SHA-256。
           generate_release_notes: true
-          prerelease: ${{ startsWith(steps.package.outputs.version, '0.') }}
+          prerelease: false
+          make_latest: true
           files: |
             dist/portable/*.exe
             dist/portable/latest-portable.json
+      - name: Verify published portable update channel
+        shell: pwsh
+        run: |
+          $version = "${{ steps.package.outputs.version }}"
+          $assetName = "BiliOpinionMonitor-$version-windows-x64.exe"
+          $expectedAssetUrl = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$assetName"
+          $manifestUrl = "https://github.com/${{ github.repository }}/releases/latest/download/latest-portable.json"
+          $manifest = $null
+          for ($attempt = 1; $attempt -le 6; $attempt++) {
+            try {
+              $manifest = Invoke-RestMethod -Uri $manifestUrl -Headers @{ "Cache-Control" = "no-cache" } -TimeoutSec 30
+              break
+            } catch {
+              if ($attempt -eq 6) { throw }
+              Start-Sleep -Seconds 10
+            }
+          }
+          if ($manifest.version -cne $version) { throw "Published update manifest version mismatch" }
+          if ($manifest.asset.name -cne $assetName) { throw "Published update asset name mismatch" }
+          if ($manifest.asset.url -cne $expectedAssetUrl) { throw "Published update asset URL mismatch" }
+          if ([string]::IsNullOrWhiteSpace($manifest.signature)) { throw "Published update manifest signature is missing" }
+          $assetResponse = Invoke-WebRequest -Uri $expectedAssetUrl -Method Head -MaximumRedirection 10 -TimeoutSec 30
+          if ($assetResponse.StatusCode -lt 200 -or $assetResponse.StatusCode -ge 400) { throw "Published portable asset is not downloadable" }
