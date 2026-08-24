@@ -83,6 +83,17 @@ jobs:
       - name: Publish GitHub Release assets
         uses: softprops/action-gh-release@v2
         with:
+          name: B站舆论监测平台 v${{ steps.package.outputs.version }}
+          body: |
+            ## 下载与使用
+
+            下载 `BiliOpinionMonitor-${{ steps.package.outputs.version }}-windows-x64.exe` 后，可直接双击运行，无需安装 Python、Node.js 或 Rust。
+
+            首次启动会在 EXE 同级创建 `data/` 目录，用于保存数据库、登录信息、模型设置和日志。更新前请备份该目录，且不要在更新时删除或覆盖它。
+
+            当前为预发布版本，可能触发 Windows SmartScreen 提示。请只从本仓库 Release 页面下载，并可使用随发布生成的 `latest-portable.json` 核对文件大小与 SHA-256。
+          generate_release_notes: true
+          prerelease: ${{ startsWith(steps.package.outputs.version, '0.') }}
           files: |
             dist/portable/*.exe
             dist/portable/latest-portable.json
