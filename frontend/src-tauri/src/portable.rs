@@ -403,11 +403,11 @@ mod tests {
     fn manifest() -> PortableManifest {
         PortableManifest {
             schema: 1,
-            version: "2.0.0".into(),
+            version: "0.1.0".into(),
             published_at: "2026-08-08T00:00:00Z".into(),
             notes_url: "https://example.com/notes".into(),
             asset: PortableAsset {
-                name: "BiliOpinionMonitor-2.0.0-windows-x64.exe".into(),
+                name: "BiliOpinionMonitor-0.1.0-windows-x64.exe".into(),
                 url: "https://example.com/app.exe".into(),
                 size: 42,
                 sha256: "a".repeat(64),
@@ -429,10 +429,10 @@ mod tests {
 
     #[test]
     fn compares_prerelease_versions() {
-        assert!(version_is_newer("2.0.0", "2.0.0-beta.1"));
-        assert!(version_is_newer("2.0.0-beta.2", "2.0.0-beta.1"));
-        assert!(version_is_newer("2.1.0", "2.0.0"));
-        assert!(!version_is_newer("1.9.0", "2.0.0"));
+        assert!(version_is_newer("0.1.0", "0.1.0-beta.1"));
+        assert!(version_is_newer("0.1.0-beta.2", "0.1.0-beta.1"));
+        assert!(version_is_newer("0.2.0", "0.1.0"));
+        assert!(!version_is_newer("0.0.9", "0.1.0"));
     }
 
     #[test]
@@ -445,18 +445,18 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         let paths = PortablePaths::from_install_root(root.clone()).unwrap();
         let executable = paths
-            .materialize_embedded_backend(b"backend-v1", "2.0.0")
+            .materialize_embedded_backend(b"backend-v1", "0.1.0")
             .unwrap();
         assert_eq!(fs::read(&executable).unwrap(), b"backend-v1");
 
         fs::write(&executable, b"tampered").unwrap();
         let executable = paths
-            .materialize_embedded_backend(b"backend-v1", "2.0.0")
+            .materialize_embedded_backend(b"backend-v1", "0.1.0")
             .unwrap();
         assert_eq!(fs::read(&executable).unwrap(), b"backend-v1");
 
         paths
-            .materialize_embedded_backend(b"backend-v2", "2.0.1")
+            .materialize_embedded_backend(b"backend-v2", "0.1.1")
             .unwrap();
         assert_eq!(fs::read(&executable).unwrap(), b"backend-v2");
         fs::remove_dir_all(root).unwrap();
