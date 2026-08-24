@@ -2,7 +2,7 @@
 
 from datetime import datetime
 import os
-import shutil
+import sqlite3
 from pathlib import Path
 
 from sqlalchemy import Column, Integer, String, Text, Float, DateTime, ForeignKey, UniqueConstraint, create_engine, event
@@ -49,6 +49,7 @@ class Analysis(Base):
     comments = relationship("Comment", back_populates="analysis", cascade="all, delete-orphan")
     sentiment = relationship("SentimentResult", back_populates="analysis", uselist=False, cascade="all, delete-orphan")
     summaries = relationship("AISummary", back_populates="analysis", cascade="all, delete-orphan")
+    group_items = relationship("AnalysisGroupItem", back_populates="analysis", passive_deletes=True)
 
 
 class Comment(Base):
@@ -92,6 +93,7 @@ class SentimentResult(Base):
     llm_anticipation = Column(Integer, default=0)
     llm_concern = Column(Integer, default=0)
     llm_trust = Column(Integer, default=0)
+    llm_sarcasm = Column(Integer, default=0)
 
     analysis = relationship("Analysis", back_populates="sentiment")
 
@@ -118,26 +120,140 @@ class AISummary(Base):
     analysis = relationship("Analysis", back_populates="summaries")
 
 
+class AnalysisGroup(Base):
+    """A user-curated event which references completed single-video analyses."""
+
+    __tablename__ = "analysis_groups"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(200), nullable=False)
+    description = Column(Text)
+    created_at = Column(DateTime, default=datetime.now, nullable=False)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, nullable=False)
+
+    items = relationship(
+        "AnalysisGroupItem", back_populates="group", cascade="all, delete-orphan",
+        passive_deletes=True, order_by="AnalysisGroupItem.position",
+    )
+    summaries = relationship(
+        "AnalysisGroupSummary", back_populates="group", cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+
+class AnalysisGroupItem(Base):
+    """Stable ordered membership for an event; comments remain owned by Analysis."""
+
+    __tablename__ = "analysis_group_items"
+    __table_args__ = (
+        UniqueConstraint("group_id", "analysis_id", name="uq_analysis_group_item"),
+        UniqueConstraint("group_id", "position", name="uq_analysis_group_item_position"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    group_id = Column(
+        Integer, ForeignKey("analysis_groups.id", ondelete="CASCADE"), nullable=False, index=True,
+    )
+    analysis_id = Column(
+        Integer, ForeignKey("analyses.id", ondelete="CASCADE"), nullable=False, index=True,
+    )
+    position = Column(Integer, nullable=False)
+    added_at = Column(DateTime, default=datetime.now, nullable=False)
+
+    group = relationship("AnalysisGroup", back_populates="items")
+    analysis = relationship("Analysis", back_populates="group_items")
+
+
+class AnalysisGroupSummary(Base):
+    """A separately scoped cached AI brief for an AnalysisGroup."""
+
+    __tablename__ = "analysis_group_summaries"
+    __table_args__ = (
+        UniqueConstraint(
+            "group_id", "analysis_mode", "filter_hash",
+            name="uq_analysis_group_summary_scope",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    group_id = Column(
+        Integer, ForeignKey("analysis_groups.id", ondelete="CASCADE"), nullable=False, index=True,
+    )
+    analysis_mode = Column(String(10), nullable=False)
+    member_signature = Column(String(64), nullable=False)
+    filter_json = Column(Text, nullable=False)
+    filter_hash = Column(String(64), nullable=False)
+    input_hash = Column(String(64), nullable=False)
+    summary_text = Column(Text, nullable=False)
+    provider = Column(String(30), nullable=False)
+    model = Column(String(100), nullable=False)
+    matched_count = Column(Integer, default=0)
+    sampled_count = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.now, nullable=False)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, nullable=False)
+
+    group = relationship("AnalysisGroup", back_populates="summaries")
+
+
 def init_db():
-    """Initialize database tables"""
-    Base.metadata.create_all(engine)
-    _migrate(engine)
+    """Initialize and safely upgrade the local SQLite schema."""
+    backup = None
+    try:
+        needs_backup = _schema_change_required(engine)
+        if needs_backup:
+            backup = _backup_database()
+        Base.metadata.create_all(engine)
+        _migrate(engine)
+        _validate_schema(engine)
+    except Exception as exc:
+        if backup:
+            try:
+                engine.dispose()
+                _restore_database(backup)
+            except Exception as restore_exc:
+                raise RuntimeError(f"数据库迁移失败且备份恢复失败：{restore_exc}") from exc
+        raise RuntimeError(f"数据库迁移失败，未启动服务：{exc}") from exc
     _mark_interrupted_jobs()
 
 
-def _backup_database() -> None:
-    """Create a bounded, best-effort backup before altering an existing DB."""
-    source = Path(DB_PATH)
+def _backup_database(path: str | Path | None = None) -> Path | None:
+    """Use SQLite's backup API so a WAL database is copied consistently."""
+    source = Path(path or DB_PATH)
     if not source.exists():
-        return
+        return None
     backup_dir = source.parent / "backups"
     backup_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     destination = backup_dir / f"{source.stem}-{stamp}.db"
-    shutil.copy2(source, destination)
+    source_connection = sqlite3.connect(str(source))
+    destination_connection = sqlite3.connect(str(destination))
+    try:
+        source_connection.backup(destination_connection)
+    finally:
+        destination_connection.close()
+        source_connection.close()
     backups = sorted(backup_dir.glob(f"{source.stem}-*.db"), key=lambda item: item.stat().st_mtime, reverse=True)
     for stale in backups[3:]:
         stale.unlink(missing_ok=True)
+    return destination
+
+
+def _restore_database(backup: str | Path, path: str | Path | None = None) -> None:
+    """Restore a backup atomically and discard any stale WAL sidecars."""
+    source = Path(backup)
+    destination = Path(path or DB_PATH)
+    temporary = Path(str(destination) + ".restore.tmp")
+    temporary.unlink(missing_ok=True)
+    source_connection = sqlite3.connect(str(source))
+    destination_connection = sqlite3.connect(str(temporary))
+    try:
+        source_connection.backup(destination_connection)
+    finally:
+        destination_connection.close()
+        source_connection.close()
+    os.replace(temporary, destination)
+    for suffix in ("-wal", "-shm"):
+        Path(str(destination) + suffix).unlink(missing_ok=True)
 
 
 def _mark_interrupted_jobs() -> None:
@@ -152,11 +268,8 @@ def _mark_interrupted_jobs() -> None:
             )
         )
 
-def _migrate(eng):
-    """Add missing columns to existing tables (best-effort, errors logged)."""
-    from sqlalchemy import text, inspect
-    import logging
-    logger = logging.getLogger("migrate")
+def _pending_column_migrations(eng):
+    from sqlalchemy import inspect
     inspector = inspect(eng)
     migrations = []
 
@@ -180,22 +293,87 @@ def _migrate(eng):
         cols = {c["name"] for c in inspector.get_columns("sentiment_results")}
         llm_fields = [
             "llm_neutral", "llm_joy", "llm_support", "llm_anger", "llm_sadness", "llm_surprise",
-            "llm_fear", "llm_disgust", "llm_anticipation", "llm_concern", "llm_trust",
+            "llm_fear", "llm_disgust", "llm_anticipation", "llm_concern", "llm_trust", "llm_sarcasm",
         ]
         for field in llm_fields:
             if field not in cols:
                 migrations.append(("sentiment_results", f"ALTER TABLE sentiment_results ADD COLUMN {field} INTEGER DEFAULT 0"))
 
-    if migrations:
-        try:
-            _backup_database()
-        except OSError as exc:
-            logger.warning("Database backup skipped before migration: %s", exc)
+    return migrations
 
-    for table, sql in migrations:
-        try:
-            with eng.connect() as conn:
-                conn.execute(text(sql))
-                conn.commit()
-        except Exception as e:
-            logger.warning(f"Migration skipped ({table}): {e}")
+
+def _schema_change_required(eng) -> bool:
+    """Check before create_all so an existing database is backed up first."""
+    source = Path(DB_PATH)
+    if not source.exists():
+        return False
+    from sqlalchemy import inspect
+    existing = set(inspect(eng).get_table_names())
+    required = {"analysis_groups", "analysis_group_items", "analysis_group_summaries"}
+    return bool(required - existing or _pending_column_migrations(eng))
+
+
+def _migrate(eng):
+    """Apply pending ALTER statements atomically; errors must stop startup."""
+    from sqlalchemy import inspect, text
+    migrations = _pending_column_migrations(eng)
+    if not migrations:
+        return
+    tables = set(inspect(eng).get_table_names())
+    with eng.begin() as connection:
+        for _table, sql in migrations:
+            connection.execute(text(sql))
+        if "comments" in tables:
+            # Normalize historical taxonomies before readiness checks can
+            # mistake valid legacy labels for unfinished paid work.
+            connection.execute(text(
+                "UPDATE comments SET sentiment_llm_label = 'support' "
+                "WHERE sentiment_llm_label = 'trust'"
+            ))
+            connection.execute(text(
+                "UPDATE comments SET sentiment_llm_label = 'concern' "
+                "WHERE sentiment_llm_label = 'fear'"
+            ))
+            connection.execute(text(
+                "UPDATE comments SET sentiment_llm_label = 'sarcasm' "
+                "WHERE sentiment_llm_style = 'sarcasm' AND sentiment_llm_label IN "
+                "('neutral','joy','support','anticipation','surprise','anger',"
+                "'sadness','concern','disgust')"
+            ))
+        if {"comments", "sentiment_results"} <= tables:
+            for label in (
+                "neutral", "joy", "support", "anticipation", "surprise",
+                "anger", "sadness", "concern", "disgust", "sarcasm",
+            ):
+                connection.execute(text(
+                    f"UPDATE sentiment_results SET llm_{label} = ("
+                    "SELECT COUNT(*) FROM comments "
+                    "WHERE comments.analysis_id = sentiment_results.analysis_id "
+                    f"AND comments.sentiment_llm_label = '{label}')"
+                ))
+            connection.execute(text(
+                "UPDATE sentiment_results SET llm_trust = 0, llm_fear = 0"
+            ))
+
+
+def _validate_schema(eng) -> None:
+    """Reject a partially created event schema instead of serving corrupted data."""
+    from sqlalchemy import inspect
+    required_columns = {
+        "analysis_groups": {"id", "name", "description", "created_at", "updated_at"},
+        "analysis_group_items": {"id", "group_id", "analysis_id", "position", "added_at"},
+        "analysis_group_summaries": {
+            "id", "group_id", "analysis_mode", "member_signature", "filter_json", "filter_hash",
+            "input_hash", "summary_text", "provider", "model", "matched_count", "sampled_count",
+            "created_at", "updated_at",
+        },
+    }
+    inspector = inspect(eng)
+    tables = set(inspector.get_table_names())
+    for table, expected in required_columns.items():
+        if table not in tables:
+            raise RuntimeError(f"缺少数据表 {table}")
+        actual = {column["name"] for column in inspector.get_columns(table)}
+        missing = expected - actual
+        if missing:
+            raise RuntimeError(f"数据表 {table} 缺少字段：{', '.join(sorted(missing))}")

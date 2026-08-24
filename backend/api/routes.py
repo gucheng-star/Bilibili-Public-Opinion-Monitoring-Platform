@@ -1,8 +1,8 @@
 import os
 import httpx
 from fastapi import APIRouter, HTTPException, BackgroundTasks
-from sqlalchemy import desc
-from models.database import SessionLocal, Analysis, Comment, SentimentResult, init_db
+from sqlalchemy import desc, func
+from models.database import SessionLocal, Analysis, AnalysisGroupItem, Comment, SentimentResult, init_db
 from services.bilibili import get_video_info, fetch_comments
 from services.sentiment import batch_analyze, summarize_sentiment
 from services.sentiment_llm import batch_analyze_llm, summarize_sentiment_llm
@@ -12,7 +12,7 @@ from services.heat import analyze_heat
 from services.settings_store import get_task_config
 from services.runtime_state import activity
 from services.comment_quality import annotate_exact_duplicates, build_duplicate_statistics
-from services.ai_summary import apply_filters, normalize_filters
+from services.ai_summary import LLM_LABELS, apply_filters, normalize_filters
 from services.sentiment_test_fixtures import (
     FIXTURE_VIDEO_TITLE,
     build_fixture_comments,
@@ -126,7 +126,8 @@ async def _run_analysis_inner(analysis_id: int, bv: str, avid: int, max_comments
             db.add(SentimentResult(analysis_id=analysis_id, positive_count=0, negative_count=0, neutral_count=0,
                 llm_neutral=s['neutral'], llm_joy=s['joy'], llm_support=s['support'],
                 llm_anger=s['anger'], llm_sadness=s['sadness'], llm_surprise=s['surprise'],
-                llm_disgust=s['disgust'], llm_anticipation=s['anticipation'], llm_concern=s['concern']))
+                llm_disgust=s['disgust'], llm_anticipation=s['anticipation'], llm_concern=s['concern'],
+                llm_sarcasm=s['sarcasm']))
         else:
             comments_analyzed = batch_analyze(comments_raw)
             for c in comments_analyzed:
@@ -173,6 +174,20 @@ async def start_analysis(req: dict, background_tasks: BackgroundTasks):
     finally:
         db.close()
 
+def _stored_comment_data(comments: list[Comment]) -> list[dict]:
+    return [
+        {
+            'rpid': comment.rpid, 'root_rpid': comment.root_rpid, 'parent_rpid': comment.parent_rpid,
+            'username': comment.username, 'gender': comment.gender,
+            'ip_location': comment.ip_location, 'content': comment.content, 'likes': comment.likes,
+            'post_time': comment.post_time,
+            'sentiment_llm_label': comment.sentiment_llm_label or '',
+            'sentiment_llm_style': comment.sentiment_llm_style or 'plain',
+        }
+        for comment in comments
+    ]
+
+
 @router.post('/reanalyze/{analysis_id}')
 async def reanalyze(analysis_id: int, background_tasks: BackgroundTasks):
     """Re-analyze existing comments with LLM sentiment analysis.
@@ -185,35 +200,31 @@ async def reanalyze(analysis_id: int, background_tasks: BackgroundTasks):
             raise HTTPException(404, 'Analysis not found')
         if a.status != 'done':
             raise HTTPException(400, f'Analysis not complete (current: {a.status})')
-        if a.mode == 'llm':
-            raise HTTPException(400, 'Already in LLM mode, no need to re-analyze')
-
-        llm_config = get_task_config("sentiment")
-        if not llm_config.get("api_key"):
-            raise HTTPException(400, 'API Key not configured')
-
         # Keep the persisted mode as NLP until the LLM pass succeeds so a
         # provider failure never destroys access to the existing result.
         # Load existing comments
+        all_comments = _stored_comment_data(db.query(Comment).filter_by(analysis_id=analysis_id).all())
         comments_data = [
-            {
-                'rpid': c.rpid, 'root_rpid': c.root_rpid, 'parent_rpid': c.parent_rpid,
-                'username': c.username, 'gender': c.gender,
-                'ip_location': c.ip_location, 'content': c.content, 'likes': c.likes,
-                'post_time': c.post_time,
-            }
-            for c in db.query(Comment).filter_by(analysis_id=analysis_id).all()
+            comment for comment in all_comments
+            if comment.get('sentiment_llm_label', '') not in LLM_LABELS
         ]
-        # Progress is based on the stored comments, not just the comments that
-        # require a model call; blank comments are completed locally as neutral.
-        a.status = 'analyzing'; a.error_msg = None
-        a.total_comments = len(comments_data); a.processed_comments = 0
-        db.commit()
         if not comments_data:
-            a.status = 'error'; a.error_msg = 'No comments to re-analyze'; db.commit(); return
+            if a.mode != 'llm':
+                a.mode = 'llm'
+                a.processed_comments = len(all_comments)
+                db.commit()
+            return {'analysis_id': analysis_id, 'status': 'done', 'mode': 'llm', 'skipped': True}
+        llm_config = get_task_config("sentiment")
+        if not llm_config.get("api_key"):
+            raise HTTPException(400, 'API Key not configured')
+        # Progress is based on the stored comments, not just the comments that
+        # require a model call. Existing valid labels are retained as completed.
+        a.status = 'analyzing'; a.error_msg = None
+        a.total_comments = len(all_comments); a.processed_comments = len(all_comments) - len(comments_data)
+        db.commit()
 
         # Run LLM in background
-        background_tasks.add_task(_run_reanalyze, analysis_id, comments_data, llm_config)
+        background_tasks.add_task(_run_reanalyze, analysis_id, comments_data, llm_config, all_comments, a.mode)
         return {'analysis_id': analysis_id, 'status': 'analyzing', 'mode': 'llm'}
     except HTTPException:
         raise
@@ -226,25 +237,51 @@ async def reanalyze(analysis_id: int, background_tasks: BackgroundTasks):
         db.close()
 
 
-async def _run_reanalyze(analysis_id: int, comments_data: list[dict], llm_config: dict[str, str]):
+async def _run_reanalyze(
+    analysis_id: int, comments_data: list[dict], llm_config: dict[str, str],
+    context_comments: list[dict] | None = None, failure_mode: str = 'nlp',
+):
     """Background task: re-analyze existing comments with LLM."""
     with activity("llm_sentiment"):
-        await _run_reanalyze_inner(analysis_id, comments_data, llm_config)
+        await _run_reanalyze_inner(
+            analysis_id, comments_data, llm_config, context_comments=context_comments, failure_mode=failure_mode,
+        )
 
 
-async def _run_reanalyze_inner(analysis_id: int, comments_data: list[dict], llm_config: dict[str, str]):
+async def _run_reanalyze_inner(
+    analysis_id: int, comments_data: list[dict], llm_config: dict[str, str],
+    *, context_comments: list[dict] | None = None, failure_mode: str = 'nlp',
+):
     db = SessionLocal()
     try:
+        initial_processed = max(0, len(context_comments or comments_data) - len(comments_data))
+        persisted_rpids: set[str] = set()
+
         def report_progress(processed_comments: int):
+            # ``batch_analyze_llm`` mutates only a validated completed batch
+            # before invoking this callback.  Persist those labels together
+            # with progress so a later failed batch never discards successful
+            # work or sends it to the paid model again on the next attempt.
+            for comment in comments_data:
+                label = comment.get("sentiment_llm_label", "")
+                comment_id = str(comment.get("rpid"))
+                if label not in LLM_LABELS or comment_id in persisted_rpids:
+                    continue
+                db.query(Comment).filter_by(analysis_id=analysis_id, rpid=comment.get("rpid")).update({
+                    "sentiment_llm_label": label,
+                    "sentiment_llm_style": comment.get("sentiment_llm_style", "plain"),
+                })
+                persisted_rpids.add(comment_id)
             db.query(Analysis).filter_by(id=analysis_id).update({
-                'processed_comments': processed_comments,
+                'processed_comments': initial_processed + processed_comments,
             })
             db.commit()
 
         # Run LLM analysis
-        comments_analyzed = await batch_analyze_llm(
-            comments_data, llm_config, progress_callback=report_progress,
-        )
+        batch_kwargs = {'progress_callback': report_progress}
+        if context_comments is not None:
+            batch_kwargs['context_comments'] = context_comments
+        comments_analyzed = await batch_analyze_llm(comments_data, llm_config, **batch_kwargs)
 
         # Remove old sentiment result
         old_sr = db.query(SentimentResult).filter_by(analysis_id=analysis_id).first()
@@ -259,16 +296,19 @@ async def _run_reanalyze_inner(analysis_id: int, comments_data: list[dict], llm_
             if comment.rpid in label_map:
                 comment.sentiment_llm_label, comment.sentiment_llm_style = label_map[comment.rpid]
 
-        # Save new sentiment result
-        s = summarize_sentiment_llm(comments_analyzed)
+        # The source result must cover retained labels as well as just-finished
+        # targets, otherwise a partial reanalysis would erase prior counts.
+        all_comments = _stored_comment_data(db.query(Comment).filter_by(analysis_id=analysis_id).all())
+        s = summarize_sentiment_llm(all_comments)
         db.add(SentimentResult(analysis_id=analysis_id, positive_count=0, negative_count=0, neutral_count=0,
             llm_neutral=s['neutral'], llm_joy=s['joy'], llm_support=s['support'],
             llm_anger=s['anger'], llm_sadness=s['sadness'], llm_surprise=s['surprise'],
-            llm_disgust=s['disgust'], llm_anticipation=s['anticipation'], llm_concern=s['concern']))
+            llm_disgust=s['disgust'], llm_anticipation=s['anticipation'], llm_concern=s['concern'],
+            llm_sarcasm=s['sarcasm']))
 
         db.query(Analysis).filter_by(id=analysis_id).update({
             'status': 'done', 'mode': 'llm', 'error_msg': None,
-            'processed_comments': len(comments_data),
+            'processed_comments': len(all_comments),
         })
         db.commit()
     except Exception as e:
@@ -276,7 +316,7 @@ async def _run_reanalyze_inner(analysis_id: int, comments_data: list[dict], llm_
         a = db.query(Analysis).filter_by(id=analysis_id).first()
         if a:
             a.status = 'done'
-            a.mode = 'nlp'
+            a.mode = failure_mode
             a.error_msg = str(e)
             db.commit()
     finally:
@@ -324,6 +364,7 @@ def get_results(analysis_id: int):
                 'neutral':s.llm_neutral,'joy':s.llm_joy,'support':s.llm_support or s.llm_trust,
                 'anticipation':s.llm_anticipation,'surprise':s.llm_surprise,'anger':s.llm_anger,
                 'sadness':s.llm_sadness,'concern':s.llm_concern or s.llm_fear,'disgust':s.llm_disgust,
+                'sarcasm':s.llm_sarcasm,
             }
         return result
     finally: db.close()
@@ -379,10 +420,19 @@ def get_wordcloud(analysis_id: int):
 def get_history(limit: int = 20):
     db = SessionLocal()
     try:
+        analyses = db.query(Analysis).order_by(desc(Analysis.created_at)).limit(limit).all()
+        analysis_ids = [analysis.id for analysis in analyses]
+        affected_counts = dict(
+            db.query(AnalysisGroupItem.analysis_id, func.count(AnalysisGroupItem.id))
+            .filter(AnalysisGroupItem.analysis_id.in_(analysis_ids))
+            .group_by(AnalysisGroupItem.analysis_id)
+            .all()
+        ) if analysis_ids else {}
         return [{'id':a.id,'bv':a.bv,'video_title':a.video_title,'video_cover':a.video_cover,
-            'total_comments':a.total_comments,'status':a.status,
+            'total_comments':a.total_comments,'status':a.status,'mode':a.mode,
+            'affected_group_count':affected_counts.get(a.id, 0),
             'created_at':a.created_at.isoformat() if a.created_at else None}
-            for a in db.query(Analysis).order_by(desc(Analysis.created_at)).limit(limit).all()]
+            for a in analyses]
     finally: db.close()
 
 @router.delete('/history/{analysis_id}')
@@ -391,10 +441,14 @@ def delete_history(analysis_id: int):
     try:
         a = db.query(Analysis).filter_by(id=analysis_id).first()
         if not a: raise HTTPException(404, 'Not found')
+        affected_group_count = db.query(AnalysisGroupItem).filter_by(analysis_id=analysis_id).count()
+        db.query(AnalysisGroupItem).filter_by(analysis_id=analysis_id).delete(synchronize_session=False)
         db.delete(a); db.commit()
-        return {'deleted': True}
+        return {'deleted': True, 'affected_group_count': affected_group_count}
+    except HTTPException:
+        db.rollback(); raise
     except Exception as e:
-        db.rollback(); raise HTTPException(500, str(e))
+        db.rollback(); raise HTTPException(500, str(e)) from e
     finally:
         db.close()
 

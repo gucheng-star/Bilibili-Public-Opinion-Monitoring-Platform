@@ -112,7 +112,10 @@ async def create_summary(analysis_id: int, req: dict):
             filter_hash=filter_hash,
         ).first()
         if not existing and filters["duplicateMode"] == "include":
-            legacy_filters = {key: value for key, value in filters.items() if key != "duplicateMode"}
+            legacy_filters = {
+                key: value for key, value in filters.items()
+                if key not in {"duplicateMode", "sourceAnalysisId"}
+            }
             _, legacy_hash = filter_signature(legacy_filters)
             existing = db.query(AISummary).filter_by(
                 analysis_id=analysis_id,

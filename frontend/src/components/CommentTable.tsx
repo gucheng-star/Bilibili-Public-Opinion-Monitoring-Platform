@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import type { AnalysisMode, CommentData, SentimentLabel, SentimentLLM } from '../types';
 
-interface Props { comments: CommentData[]; mode: AnalysisMode; allCommentRpids: ReadonlySet<string>; }
+interface Props { comments: CommentData[]; mode: AnalysisMode; allCommentRpids: ReadonlySet<string>; showSource?: boolean; }
 
 type LlmSentimentLabel = keyof SentimentLLM;
 type CommentNode = { comment: CommentData; children: CommentNode[]; parentHidden: boolean };
@@ -31,15 +31,16 @@ const LLM_TAG: Record<LlmSentimentLabel, { label: string; bg: string; color: str
   sadness: { label: '悲伤', bg: 'rgba(99,102,241,.12)', color: '#4F46E5' },
   concern: { label: '担忧', bg: 'rgba(139,92,246,.12)', color: '#7C3AED' },
   disgust: { label: '厌恶', bg: 'rgba(132,204,22,.14)', color: '#4D7C0F' },
-};
-
-const UNCLASSIFIED_TAG = { label: '未分类', bg: 'rgba(148,163,184,.06)', color: 'var(--text-muted)' };
-const STYLE_TAG: Record<string, { label: string; bg: string; color: string }> = {
-  meme: { label: '玩梗', bg: 'rgba(6,182,212,.10)', color: '#0E7490' },
   sarcasm: { label: '反讽', bg: 'rgba(236,72,153,.10)', color: '#BE185D' },
 };
 
-export default function CommentTable({ comments, mode, allCommentRpids }: Props) {
+const UNCLASSIFIED_TAG = { label: '未分类', bg: 'rgba(148,163,184,.06)', color: 'var(--text-muted)' };
+
+function commentKey(comment: CommentData, rpid = comment.rpid): string {
+  return `${comment.source_analysis_id ?? 'single'}:${rpid}`;
+}
+
+export default function CommentTable({ comments, mode, allCommentRpids, showSource = false }: Props) {
   const [sortBy, setSortBy] = useState<'time'|'likes'>('time');
   const [page, setPage] = useState(1);
   const pageSize = 30;
@@ -111,15 +112,15 @@ export default function CommentTable({ comments, mode, allCommentRpids }: Props)
 
   const treeRoots = useMemo(() => {
     const nodesByRpid = new Map<string, CommentNode>();
-    sorted.forEach(comment => nodesByRpid.set(String(comment.rpid), { comment, children: [], parentHidden: false }));
+    sorted.forEach(comment => nodesByRpid.set(commentKey(comment), { comment, children: [], parentHidden: false }));
     const roots: CommentNode[] = [];
     nodesByRpid.forEach(node => {
-      const parent = node.comment.parent_rpid ? nodesByRpid.get(String(node.comment.parent_rpid)) : undefined;
+      const parent = node.comment.parent_rpid ? nodesByRpid.get(commentKey(node.comment, node.comment.parent_rpid)) : undefined;
       if (parent && parent !== node) parent.children.push(node);
       else {
         node.parentHidden = Boolean(
           node.comment.parent_rpid
-          && allCommentRpids.has(String(node.comment.parent_rpid))
+          && allCommentRpids.has(commentKey(node.comment, node.comment.parent_rpid))
           && !parent,
         );
         roots.push(node);
@@ -137,11 +138,21 @@ export default function CommentTable({ comments, mode, allCommentRpids }: Props)
     const t = mode === 'llm'
       ? LLM_TAG[c.sentiment_llm_label as LlmSentimentLabel] || UNCLASSIFIED_TAG
       : TAG[c.sentiment_label] || TAG.neutral;
-    const style = mode === 'llm' ? STYLE_TAG[c.sentiment_llm_style] : undefined;
     return [
       <tr key={c.id} className={depth ? 'comment-tree-row comment-tree-row--reply' : 'comment-tree-row'}>
         <td style={{padding:'.6rem .5rem',color:'var(--text-primary)'}} className="truncate" title={c.username}>{c.username}</td>
         <td style={{padding:'.6rem .5rem',color:'var(--text-muted)',fontSize:'.6875rem'}}>{c.ip_location||'-'}</td>
+        {showSource && (
+          <td className="comment-table__source-column" style={{padding:'.6rem .5rem',color:'var(--text-secondary)',fontSize:'.6875rem'}}>
+            <span
+              className="comment-table__source-text"
+              onMouseEnter={e => showTip(c.source_video_title || c.source_bv || '-', e.clientX, e.clientY)}
+              onMouseLeave={hideTip}
+            >
+              {c.source_video_title || c.source_bv || '-'}
+            </span>
+          </td>
+        )}
         <td style={{padding:'.6rem .5rem',color:'var(--text-secondary)',cursor:'pointer'}}>
           <div className="comment-tree__content" style={{paddingLeft: `${depth * 1.25}rem`}}
             onMouseEnter={e=>{showTip(c.content,e.clientX,e.clientY);}}
@@ -158,9 +169,8 @@ export default function CommentTable({ comments, mode, allCommentRpids }: Props)
         </td>
         <td style={{padding:'.6rem .5rem',textAlign:'center',color:'var(--text-secondary)',fontSize:'.8125rem'}}>{c.likes}</td>
         <td style={{padding:'.6rem .5rem',textAlign:'center'}}>
-          <div style={{display:'inline-flex',gap:'.25rem',flexWrap:'wrap',justifyContent:'center'}}>
+          <div style={{display:'inline-flex',justifyContent:'center'}}>
             <span style={{fontSize:'.6875rem',padding:'.125rem .375rem',borderRadius:'.25rem',background:t.bg,color:t.color}}>{t.label}</span>
-            {style && <span style={{fontSize:'.6875rem',padding:'.125rem .375rem',borderRadius:'.25rem',background:style.bg,color:style.color}}>{style.label}</span>}
           </div>
         </td>
         <td style={{padding:'.6rem .5rem',color:'var(--text-muted)',fontSize:'.6875rem'}}>{c.post_time?new Date(c.post_time).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}):'-'}</td>
@@ -180,11 +190,12 @@ export default function CommentTable({ comments, mode, allCommentRpids }: Props)
       </div>
     </div>
     <div className="overflow-x-auto">
-      <table className="comment-table" style={{fontSize:'.8125rem',width:'100%'}}>
+      <table className={`comment-table${showSource ? ' comment-table--with-source' : ''}`} style={{fontSize:'.8125rem',width:'100%'}}>
         <thead>
           <tr style={{borderBottom:'1px solid var(--border)'}}>
             <th style={{padding:'.5rem',textAlign:'left',fontWeight:500,color:'var(--text-muted)',fontSize:'.6875rem',letterSpacing:'.05em',width:'12%',minWidth:'72px'}}>用户</th>
             <th style={{padding:'.5rem',textAlign:'left',fontWeight:500,color:'var(--text-muted)',fontSize:'.6875rem',letterSpacing:'.05em',width:'10%',minWidth:'60px'}}>IP属地</th>
+            {showSource && <th className="comment-table__source-column" style={{padding:'.5rem',textAlign:'left',fontWeight:500,color:'var(--text-muted)',fontSize:'.6875rem',letterSpacing:'.05em'}}>来源视频</th>}
             <th className="comment-table__content-column" style={{padding:'.5rem',textAlign:'left',fontWeight:500,color:'var(--text-muted)',fontSize:'.6875rem',letterSpacing:'.05em'}}>内容</th>
             <th style={{padding:'.5rem',textAlign:'center',fontWeight:500,color:'var(--text-muted)',fontSize:'.6875rem',letterSpacing:'.05em',width:'7%',minWidth:'50px'}}>点赞</th>
             <th style={{padding:'.5rem',textAlign:'center',fontWeight:500,color:'var(--text-muted)',fontSize:'.6875rem',letterSpacing:'.05em',width:'9%',minWidth:'56px'}}>情感</th>

@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { generateSummary, getSummaries } from '../services/api';
-import type { AISummary, AnalysisMode, FilterState, LLMProvider } from '../types';
+import { generateGroupSummary, generateSummary, getGroupSummaries, getSummaries } from '../services/api';
+import type { AISummary, AnalysisMode, FilterState, GroupAISummary, LLMProvider } from '../types';
 import './DataPanels.css';
 
 interface Props {
-  analysisId: number;
+  scope: { kind: 'analysis'; id: number } | { kind: 'group'; id: number };
   filters: FilterState;
   matchedCount: number;
   mode: AnalysisMode;
@@ -24,11 +24,12 @@ function sameFilters(left: FilterState, right: FilterState): boolean {
     && left.dateTo === right.dateTo
     && left.region === right.region
     && left.sentiment === right.sentiment
-    && (left.duplicateMode || 'include') === (right.duplicateMode || 'include');
+    && (left.duplicateMode || 'include') === (right.duplicateMode || 'include')
+    && (left.sourceAnalysisId || 'all') === (right.sourceAnalysisId || 'all');
 }
 
-export default function AISummaryCard({ analysisId, filters, matchedCount, mode }: Props) {
-  const [summaries, setSummaries] = useState<AISummary[]>([]);
+export default function AISummaryCard({ scope, filters, matchedCount, mode }: Props) {
+  const [summaries, setSummaries] = useState<Array<AISummary | GroupAISummary>>([]);
   const [loadingList, setLoadingList] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [thinkingText, setThinkingText] = useState('');
@@ -38,12 +39,13 @@ export default function AISummaryCard({ analysisId, filters, matchedCount, mode 
     let active = true;
     setLoadingList(true);
     setError(null);
-    getSummaries(analysisId)
+    const load = scope.kind === 'group' ? getGroupSummaries(scope.id) : getSummaries(scope.id);
+    load
       .then(items => { if (active) setSummaries(items); })
       .catch(reason => { if (active) setError(reason instanceof Error ? reason.message : '读取总结失败'); })
       .finally(() => { if (active) setLoadingList(false); });
     return () => { active = false; };
-  }, [analysisId, mode]);
+  }, [scope.id, scope.kind, mode]);
 
   useEffect(() => {
     if (!generating) {
@@ -93,7 +95,9 @@ export default function AISummaryCard({ analysisId, filters, matchedCount, mode 
   const run = async () => {
     setGenerating(true); setError(null);
     try {
-      const result = await generateSummary(analysisId, filters, Boolean(exact));
+      const result = scope.kind === 'group'
+        ? await generateGroupSummary(scope.id, mode, filters, Boolean(exact))
+        : await generateSummary(scope.id, filters, Boolean(exact));
       setSummaries(items => {
         // Regenerating a legacy `include` summary can retain its database id while
         // moving it to the new filter hash. Remove by both identities so the
@@ -150,7 +154,9 @@ export default function AISummaryCard({ analysisId, filters, matchedCount, mode 
         </>
       ) : (
         <div className="ai-summary-empty">
-          <p>{matchedCount > 0 ? `当前筛选命中 ${matchedCount} 条评论。生成后会保存到这条分析记录。` : '当前筛选没有可总结的评论。'}</p>
+          <p>{matchedCount > 0
+            ? `当前筛选命中 ${matchedCount} 条评论。生成后会保存到${scope.kind === 'group' ? '该舆情事件' : '这条分析记录'}。`
+            : '当前筛选没有可总结的评论。'}</p>
           <span>{exact?.stale ? '评论数据或情绪标签已经变化，请更新总结。' : '只在点击按钮时调用模型，不会随筛选自动产生费用。'}</span>
         </div>
       )}

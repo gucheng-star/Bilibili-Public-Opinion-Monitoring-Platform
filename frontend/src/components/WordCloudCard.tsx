@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import 'echarts-wordcloud';
 import ReactECharts from 'echarts-for-react';
 import type { KeywordItem } from '../types';
@@ -10,10 +10,24 @@ interface Props {
   className?: string;
 }
 
-export default function WordCloudCard({ keywords, className }: Props) {
-  const dark = isDarkMode();
+function WordCloudCard({ keywords, className }: Props) {
+  const [dark, setDark] = useState(isDarkMode);
   const [excluded, setExcluded] = useState<Set<string>>(new Set());
   const chartRef = useRef<ReactECharts | null>(null);
+
+  // Theme changes happen outside this component's props. Listen locally so
+  // memoization can safely ignore unrelated parent updates such as LLM polling.
+  useEffect(() => {
+    const syncTheme = () => setDark(isDarkMode());
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    const observer = new MutationObserver(syncTheme);
+    mediaQuery.addEventListener('change', syncTheme);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+    return () => {
+      mediaQuery.removeEventListener('change', syncTheme);
+      observer.disconnect();
+    };
+  }, []);
 
   const activeKeywords = useMemo(
     () => keywords.filter(k => !excluded.has(k.word)).slice(0, 200),
@@ -29,19 +43,12 @@ export default function WordCloudCard({ keywords, className }: Props) {
     });
   };
 
-  if (!keywords.length) return (
-    <div className="card">
-      <h3 className="text-xs font-semibold text-secondary mb-2" style={{letterSpacing:'.05em'}}>{"\u8bcd\u4e91"}</h3>
-      <div className="flex items-center justify-center h-64 text-muted text-sm">{"\u6682\u65e0\u5173\u952e\u8bcd"}</div>
-    </div>
-  );
-
-  const colors = dark
+  const colors = useMemo(() => dark
     ? ['#FB7299','#38BDF8','#34D399','#FBBF24','#A78BFA','#F87171','#FB923C','#22D3EE','#C084FC']
-    : ['#FB7299','#2563EB','#059669','#D97706','#7C3AED','#DC2626','#EA580C','#0891B2','#9333EA'];
+    : ['#FB7299','#2563EB','#059669','#D97706','#7C3AED','#DC2626','#EA580C','#0891B2','#9333EA'], [dark]);
 
-  const cloudOption = {
-    tooltip: { show: true, formatter: '{b}: {c} {"\u6b21"}' },
+  const cloudOption = useMemo(() => ({
+    tooltip: { show: true, formatter: '{b}: {c} \u6b21' },
     series: [{
       type: 'wordCloud',
       shape: 'circle',
@@ -65,7 +72,14 @@ export default function WordCloudCard({ keywords, className }: Props) {
       },
       data: activeKeywords.map(k => ({ name: k.word, value: k.count })),
     }],
-  };
+  }), [activeKeywords, colors, dark]);
+
+  if (!keywords.length) return (
+    <div className="card">
+      <h3 className="text-xs font-semibold text-secondary mb-2" style={{letterSpacing:'.05em'}}>{"\u8bcd\u4e91"}</h3>
+      <div className="flex items-center justify-center h-64 text-muted text-sm">{"\u6682\u65e0\u5173\u952e\u8bcd"}</div>
+    </div>
+  );
 
   return (
     <div className={"card" + (className ? " " + className : "")}>
@@ -129,3 +143,5 @@ export default function WordCloudCard({ keywords, className }: Props) {
     </div>
   );
 }
+
+export default memo(WordCloudCard);

@@ -548,6 +548,10 @@ a:focus-visible {
 .comment-table { table-layout:fixed; }
 .comment-table__content-column { width:50%; }
 .comment-table__content { max-width:0; }
+.comment-table--with-source { min-width:58rem; }
+.comment-table--with-source .comment-table__content-column { width:32%; }
+.comment-table__source-column { width:18%; min-width:12rem; }
+.comment-table__source-text { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .comment-tree__legend { color:var(--text-muted); font-size:.6875rem; white-space:nowrap; }
 .comment-tree-row { border-bottom:1px solid var(--border); transition:background .16s ease; }
 .comment-tree-row:hover { background:var(--bg-card-hover); }

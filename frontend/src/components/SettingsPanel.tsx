@@ -197,7 +197,7 @@ export default function SettingsPanel({ maxComments, onMaxCommentsChange, delay,
         <p>密钥只保存在本机后端，页面仅显示掩码。调用模型可能产生费用。</p>
       </div>
       {settings && <div className="llm-task-layout">
-        <LLMTaskEditor task="sentiment" title="情绪分析模型" description="为评论生成九类主情感与表达方式标签" saved={settings.llm.sentiment} onSaved={handleSaved} />
+        <LLMTaskEditor task="sentiment" title="情绪分析模型" description="为评论生成十分类情感标签" saved={settings.llm.sentiment} onSaved={handleSaved} />
         <LLMTaskEditor task="summary" title="智能总结模型" description="归纳筛选后的统计与代表观点" saved={settings.llm.summary} onSaved={handleSaved} />
       </div>}
       <section className="crawl-settings crawl-settings--primary" aria-labelledby="crawl-settings-title">

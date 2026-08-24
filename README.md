@@ -10,8 +10,7 @@
 - **扫码登录**：后端在本机生成二维码 PNG，不依赖第三方二维码服务，不外传一次性授权地址。
 - **单 EXE 便携版**：Tauri、React 前端、Python 后端和更新 runner 集成到一个 EXE，无需安装。
 - **本地 NLP 优先**：新分析先运行正面、中性、负面三分类，不会自动产生大模型费用。
-- **九类主情感**：用户主动切换后，可分析中性、喜悦、支持、期待、惊讶、愤怒、悲伤、担忧、厌恶。
-- **表达方式识别**：玩梗和反讽作为独立标签，不与主情感混在一起。
+- **大模型十分类**：用户主动切换后，可分析中性、喜悦、支持、期待、惊讶、愤怒、悲伤、担忧、厌恶与反讽。
 - **精确重复内容监测**：按原始评论字符串逐字符识别完全相同的非空内容，支持保留、去重或排除重复组。
 - **多维可视化**：情感、性别、地域、时间热度、关键词与词云。
 - **统一筛选**：性别、时间、地域、情感和重复内容共同驱动图表、评论列表、关键词与词云，以及 AI 简报。
@@ -79,11 +78,11 @@ Vercel 不参与应用运行。如果以后建立官网，Vercel 只负责项目
 
 ### 大模型情感分析
 
-只有用户主动切换到大模型模式时才调用模型。主情感为九类：
+只有用户主动切换到大模型模式时才调用模型。每条评论只输出一个主标签，共十类：
 
-`neutral`、`joy`、`support`、`anticipation`、`surprise`、`anger`、`sadness`、`concern`、`disgust`。
+`neutral`、`joy`、`support`、`anticipation`、`surprise`、`anger`、`sadness`、`concern`、`disgust`、`sarcasm`。
 
-表达方式独立为 `plain`、`meme`、`sarcasm`。为了理解回复语境，每条评论最多携带根评论和直接父评论；上下文只帮助理解指代、玩梗与反讽，不会把父评论情绪转移到当前评论。
+`sarcasm` 表示反话、阴阳怪气或表面赞同式否定。为了理解回复语境，每条评论最多携带根评论和直接父评论；上下文只帮助理解指代、玩梗与反讽，不会把父评论情绪转移到当前评论。
 
 每批处理 5 条评论，最多并发 3 批，失败批次最多重试 2 次。服务端根据评论 ID、标签集合和返回数量校验结果；DeepSeek 与阿里百炼的结构化调用会启用 JSON Output。重分析时，情感分布卡片会按后端实际完成的评论数量显示进度；失败仍保留原 NLP 结果。
 
@@ -228,7 +227,7 @@ GitHub 工作流只由 `v*` 标签触发，发布资产为版本化 EXE 和 `lat
 | [PORTABLE-README.txt](PORTABLE-README.txt) | 便携版用户使用、数据与更新说明 |
 | [docs/DESKTOP_ARCHITECTURE.md](docs/DESKTOP_ARCHITECTURE.md) | Tauri、后端、数据目录和更新安全协议 |
 | [frontend/README.md](frontend/README.md) | 前端开发与桌面运行契约 |
-| [backend/tests/sentiment-fixture-test-cases.md](backend/tests/sentiment-fixture-test-cases.md) | 九类情感与表达方式测试用例 |
+| [backend/tests/sentiment-fixture-test-cases.md](backend/tests/sentiment-fixture-test-cases.md) | 大模型十分类测试用例 |
 | [LICENSE](LICENSE) | MIT 许可证及中文参考译文 |
 
 `PROJECT.md` 与 `.agents/AGENTS.md` 是本机维护资料，默认不上传 GitHub。

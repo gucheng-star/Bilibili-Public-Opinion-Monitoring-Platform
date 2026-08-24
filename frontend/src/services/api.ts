@@ -2,6 +2,10 @@ import type {
   AISummary,
   AnalysisMode,
   AnalysisResult,
+  AnalysisGroup,
+  GroupAISummary,
+  GroupAnalysisResult,
+  GroupReanalysisStatus,
   FilterState,
   HistoryItem,
   KeywordItem,
@@ -27,8 +31,14 @@ function apiHeaders(headers?: HeadersInit): Headers {
 async function req<T>(url: string, options?: RequestInit): Promise<T> {
   const res = await fetch(apiBase() + url, { ...options, headers: apiHeaders(options?.headers) });
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || 'Request failed');
+    const err = await res.json().catch(() => ({ detail: res.statusText })) as { detail?: unknown };
+    const detail = err.detail;
+    const message = typeof detail === 'string'
+      ? detail
+      : detail && typeof detail === 'object' && 'message' in detail && typeof (detail as { message?: unknown }).message === 'string'
+        ? (detail as { message: string }).message
+        : res.statusText || 'Request failed';
+    throw new Error(message);
   }
   return res.json();
 }
@@ -55,6 +65,50 @@ export function getFilteredKeywords(analysisId: number, filters: FilterState) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ filters }),
   });
+}
+
+export function getAnalysisGroups() {
+  return req<AnalysisGroup[]>('/analysis-groups');
+}
+
+export function getAnalysisGroup(groupId: number) {
+  return req<AnalysisGroup>('/analysis-groups/' + groupId);
+}
+
+export function createAnalysisGroup(data: { name: string; description?: string; analysis_ids: number[] }) {
+  return req<AnalysisGroup>('/analysis-groups', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
+  });
+}
+
+export function updateAnalysisGroup(groupId: number, data: Partial<{ name: string; description: string; analysis_ids: number[] }>) {
+  return req<AnalysisGroup>('/analysis-groups/' + groupId, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
+  });
+}
+
+export function deleteAnalysisGroup(groupId: number) {
+  return req<{ deleted: boolean; group_id: number }>('/analysis-groups/' + groupId, { method: 'DELETE' });
+}
+
+export function getGroupResults(groupId: number, mode: AnalysisMode, filters?: FilterState) {
+  const query = new URLSearchParams({ mode });
+  if (filters) query.set('filters', JSON.stringify(filters));
+  return req<GroupAnalysisResult>('/analysis-groups/' + groupId + '/results?' + query.toString());
+}
+
+export function getGroupFilteredKeywords(groupId: number, mode: AnalysisMode, filters: FilterState) {
+  return req<{ matched_count: number; keywords: KeywordItem[] }>('/analysis-groups/' + groupId + '/keywords', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode, filters }),
+  });
+}
+
+export function reanalyzeGroup(groupId: number) {
+  return req<GroupReanalysisStatus>('/analysis-groups/' + groupId + '/reanalyze', { method: 'POST' });
+}
+
+export function getGroupReanalysisStatus(groupId: number) {
+  return req<GroupReanalysisStatus>('/analysis-groups/' + groupId + '/reanalyze/status');
 }
 
 export function getWordCloud(analysisId: number) {
@@ -114,6 +168,18 @@ export function generateSummary(analysisId: number, filters: FilterState, regene
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ filters, regenerate }),
+  });
+}
+
+export function getGroupSummaries(groupId: number) {
+  return req<GroupAISummary[]>('/analysis-groups/' + groupId + '/summaries');
+}
+
+export function generateGroupSummary(groupId: number, mode: AnalysisMode, filters: FilterState, regenerate = false) {
+  return req<GroupAISummary>('/analysis-groups/' + groupId + '/summaries', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode, filters, regenerate }),
   });
 }
 

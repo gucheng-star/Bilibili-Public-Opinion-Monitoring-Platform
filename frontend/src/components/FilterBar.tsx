@@ -18,6 +18,7 @@ interface Props {
   }>;
   originalCount: number;
   duplicateRetainedCount: number;
+  sources?: Array<{ analysis_id: number; video_title: string; bv: string }>;
 }
 
 const NLP_SENTIMENTS = [
@@ -25,7 +26,7 @@ const NLP_SENTIMENTS = [
 ] as const;
 const LLM_SENTIMENTS = [
   ['neutral', '中性'], ['joy', '喜悦'], ['support', '支持'], ['anticipation', '期待'],
-  ['surprise', '惊讶'], ['anger', '愤怒'], ['sadness', '悲伤'], ['concern', '担忧'], ['disgust', '厌恶'],
+  ['surprise', '惊讶'], ['anger', '愤怒'], ['sadness', '悲伤'], ['concern', '担忧'], ['disgust', '厌恶'], ['sarcasm', '反讽'],
 ] as const;
 
 const DUPLICATE_OPTIONS: FilterSelectOption<FilterState['duplicateMode']>[] = [
@@ -40,7 +41,7 @@ function formatTime(value: string | null): string {
 
 export default function FilterBar({
   filters, onApply, availableRegions, mode, duplicateStatistics, duplicateGroups,
-  originalCount, duplicateRetainedCount,
+  originalCount, duplicateRetainedCount, sources,
 }: Props) {
   const [draft, setDraft] = useState<FilterState>(filters);
   useEffect(() => { setDraft(filters); }, [filters]);
@@ -49,8 +50,9 @@ export default function FilterBar({
   const changed = draft.gender !== filters.gender || draft.dateFrom !== filters.dateFrom
     || draft.dateTo !== filters.dateTo || draft.region !== filters.region
     || draft.sentiment !== filters.sentiment || draft.duplicateMode !== filters.duplicateMode;
+  const sourceChanged = draft.sourceAnalysisId !== filters.sourceAnalysisId;
   const hasActiveFilter = filters.gender !== 'all' || Boolean(filters.dateFrom || filters.dateTo || filters.region)
-    || filters.sentiment !== 'all' || filters.duplicateMode !== 'include';
+    || filters.sentiment !== 'all' || filters.duplicateMode !== 'include' || filters.sourceAnalysisId !== 'all';
   const sentimentOptions = mode === 'llm' ? LLM_SENTIMENTS : NLP_SENTIMENTS;
   const regionOptions: FilterSelectOption<string>[] = [
     { value: '', label: '全部地域' },
@@ -59,6 +61,10 @@ export default function FilterBar({
   const sentimentFilterOptions: FilterSelectOption<FilterState['sentiment']>[] = [
     { value: 'all', label: '全部情绪' },
     ...sentimentOptions.map(([value, label]) => ({ value, label })),
+  ];
+  const sourceOptions: FilterSelectOption<string>[] = [
+    { value: 'all', label: '全部来源视频' },
+    ...(sources || []).map(source => ({ value: String(source.analysis_id), label: source.video_title || source.bv })),
   ];
 
   return (
@@ -84,6 +90,15 @@ export default function FilterBar({
         onChange={region => update({ region })}
       />
 
+      {sources && sources.length > 0 && (
+        <FilterSelect
+          ariaLabel="来源视频筛选"
+          value={draft.sourceAnalysisId}
+          options={sourceOptions}
+          onChange={sourceAnalysisId => update({ sourceAnalysisId })}
+        />
+      )}
+
       <FilterSelect
         ariaLabel="重复内容筛选"
         value={draft.duplicateMode}
@@ -99,19 +114,19 @@ export default function FilterBar({
       />
 
       <button onClick={() => onApply(draft)}
-        disabled={!changed}
+        disabled={!changed && !sourceChanged}
         style={{
           padding: '.25rem .75rem', fontSize: '.6875rem', fontWeight: 600,
-          background: changed ? 'var(--accent)' : 'var(--border)',
-          color: changed ? '#fff' : 'var(--text-muted)',
-          border: 'none', borderRadius: '.375rem', cursor: changed ? 'pointer' : 'default',
+          background: (changed || sourceChanged) ? 'var(--accent)' : 'var(--border)',
+          color: (changed || sourceChanged) ? '#fff' : 'var(--text-muted)',
+          border: 'none', borderRadius: '.375rem', cursor: (changed || sourceChanged) ? 'pointer' : 'default',
           transition: 'all .15s ease',
         }}>
         应用筛选
       </button>
 
       {(changed || hasActiveFilter) && (
-        <button onClick={() => onApply({ gender: 'all', dateFrom: '', dateTo: '', region: '', sentiment: 'all', duplicateMode: 'include' })}
+        <button onClick={() => onApply({ gender: 'all', dateFrom: '', dateTo: '', region: '', sentiment: 'all', duplicateMode: 'include', sourceAnalysisId: 'all' })}
           style={{
             padding: '.25rem .5rem', fontSize: '.6875rem', color: 'var(--text-muted)',
             background: 'transparent', border: '1px solid var(--border)', borderRadius: '.375rem', cursor: 'pointer',

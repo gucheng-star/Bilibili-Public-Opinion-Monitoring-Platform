@@ -2,7 +2,7 @@
 
 ## 用途
 
-本夹具用于在不抓取 B站真实评论、不调用付费模型的情况下，评估本地分析记录、评论树上下文、九类主情感和表达方式标签。
+本夹具用于在不抓取 B站真实评论、不调用付费模型的情况下，评估本地分析记录、评论树上下文和单一十分类情感标签。
 
 - 开关：`BILI_ENABLE_TEST_FIXTURES=1`
 - 创建夹具：`POST /api/test-fixtures/sentiment`
@@ -11,44 +11,42 @@
 
 ## 标签集合
 
-主情感：
+单一十分类标签：
 
-`neutral`、`joy`、`support`、`anticipation`、`surprise`、`anger`、`sadness`、`concern`、`disgust`
+`neutral`、`joy`、`support`、`anticipation`、`surprise`、`anger`、`sadness`、`concern`、`disgust`、`sarcasm`
 
-表达方式：
+`sarcasm` 用于以反话、阴阳怪气或表面赞同表达否定，作为第十个主标签；不再单独输出表达方式。数据库既有 `sentiment_llm_style` 字段仅为历史记录兼容保留。
 
-`plain`、`meme`、`sarcasm`
-
-表达方式不替代主情感。玩梗但没有明确情绪时可使用 `neutral + meme`；反讽按真实意图选择主情感。
+玩梗不是单独标签，应按评论主要情感归类；没有明确情绪时归为 `neutral`。
 
 ## 固定评论用例
 
-| ID | 场景 | 期望主情感 | 期望表达方式 | 评论关系 |
-| --- | --- | --- | --- | --- |
-| TC-01 | 事实计算 | neutral | plain | 根评论 |
-| TC-02 | 事实提问 | neutral | plain | 回复 |
-| TC-03 | 事实补充 | neutral | plain | 二级回复 |
-| TC-04 | 明确感谢 | support | plain | 回复 |
-| TC-05 | 轻度自嘲 | joy | plain | 根评论 |
-| TC-06 | 轻松玩笑 | joy | meme | 回复 |
-| TC-07 | 梗式复读 | neutral | meme | 二级回复 |
-| TC-08 | 请求后续选题 | anticipation | plain | 回复 |
-| TC-09 | 明确意外 | surprise | plain | 根评论 |
-| TC-10 | 认知反转 | surprise | plain | 回复 |
-| TC-11 | 风险担忧 | concern | plain | 回复 |
-| TC-12 | 直接批评 | anger | plain | 根评论 |
-| TC-13 | 反讽批评 | anger | sarcasm | 回复 |
-| TC-14 | 反驳反讽 | anger | plain | 二级回复 |
-| TC-15 | 反感标题党 | disgust | plain | 回复 |
-| TC-16 | 个人失落回忆 | sadness | plain | 根评论 |
-| TC-17 | 共情支持 | support | plain | 回复 |
-| TC-18 | 反讽式否定 | disgust | sarcasm | 根评论 |
-| TC-19 | 现实担忧 | concern | plain | 回复 |
-| TC-20 | 荒诞接梗 | joy | meme | 二级回复 |
-| TC-21 | 明确认可 | support | plain | 根评论 |
-| TC-22 | 中性知识提问 | neutral | plain | 回复 |
-| TC-23 | B站短梗“6” | surprise | meme | 根评论 |
-| TC-24 | 理解与认可 | support | plain | 回复 |
+| ID | 场景 | 期望情感标签 | 评论关系 |
+| --- | --- | --- | --- |
+| TC-01 | 事实计算 | neutral | 根评论 |
+| TC-02 | 事实提问 | neutral | 回复 |
+| TC-03 | 事实补充 | neutral | 二级回复 |
+| TC-04 | 明确感谢 | support | 回复 |
+| TC-05 | 轻度自嘲 | joy | 根评论 |
+| TC-06 | 轻松玩笑 | joy | 回复 |
+| TC-07 | 梗式复读 | neutral | 二级回复 |
+| TC-08 | 请求后续选题 | anticipation | 回复 |
+| TC-09 | 明确意外 | surprise | 根评论 |
+| TC-10 | 认知反转 | surprise | 回复 |
+| TC-11 | 风险担忧 | concern | 回复 |
+| TC-12 | 直接批评 | anger | 根评论 |
+| TC-13 | 反讽批评 | sarcasm | 回复 |
+| TC-14 | 反驳反讽 | anger | 二级回复 |
+| TC-15 | 反感标题党 | disgust | 回复 |
+| TC-16 | 个人失落回忆 | sadness | 根评论 |
+| TC-17 | 共情支持 | support | 回复 |
+| TC-18 | 反讽式否定 | sarcasm | 根评论 |
+| TC-19 | 现实担忧 | concern | 回复 |
+| TC-20 | 荒诞接梗 | joy | 二级回复 |
+| TC-21 | 明确认可 | support | 根评论 |
+| TC-22 | 中性知识提问 | neutral | 回复 |
+| TC-23 | B站短梗“6” | surprise | 根评论 |
+| TC-24 | 理解与认可 | support | 回复 |
 
 ## API 与状态用例
 
@@ -66,7 +64,7 @@
 
 操作：调用 `GET /api/test-fixtures/sentiment`。
 
-期望：返回 24 个固定 ID 及其期望主情感、表达方式和评论关系。
+期望：返回 24 个固定 ID 及其期望情感标签和评论关系；不返回独立表达方式期望。
 
 ### TC-ERR-001：关闭夹具 API
 

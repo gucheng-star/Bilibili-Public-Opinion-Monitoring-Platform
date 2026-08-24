@@ -50,14 +50,19 @@ class SentimentTestFixtureRouteTests(unittest.TestCase):
         finally:
             session.close()
 
-    def test_catalog_exposes_neutral_meme_and_sarcasm_cases(self):
+    def test_catalog_exposes_ten_class_labels_without_expression_style(self):
         response = routes.get_sentiment_test_fixture_catalog()
-        expected = {(case["expected_emotion"], case["expected_style"]) for case in response["cases"]}
+        expected = {case["expected_emotion"] for case in response["cases"]}
 
         self.assertEqual(len(FIXTURE_CASES), 24)
-        self.assertIn(("neutral", "meme"), expected)
-        self.assertIn(("anger", "sarcasm"), expected)
-        self.assertIn(("support", "plain"), expected)
+        self.assertEqual(
+            expected,
+            {
+                "neutral", "joy", "support", "anticipation", "surprise",
+                "anger", "sadness", "concern", "disgust", "sarcasm",
+            },
+        )
+        self.assertTrue(all("expected_style" not in case for case in response["cases"]))
 
     def test_fixture_routes_are_hidden_when_disabled(self):
         with patch.object(routes, "TEST_FIXTURES_ENABLED", False):

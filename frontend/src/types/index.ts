@@ -24,12 +24,15 @@ export interface CommentData {
   sentiment_label: SentimentLabel;
   sentiment_score: number;
   sentiment_llm_label: string;
-  sentiment_llm_style: string;
   post_time: string | null;
   is_exact_duplicate: boolean;
   duplicate_group_size: number;
   duplicate_group_key: string | null;
   is_duplicate_canonical: boolean;
+  /** Present only when the comment belongs to an aggregated event. */
+  source_analysis_id?: number;
+  source_bv?: string;
+  source_video_title?: string;
 }
 
 export interface DuplicateStatistics {
@@ -39,10 +42,10 @@ export interface DuplicateStatistics {
   involved_ratio: number;
 }
 
-/** LLM main-emotion distribution; expression style is stored per comment. */
+/** LLM ten-class sentiment distribution. */
 export interface SentimentLLM {
   neutral: number; joy: number; support: number; anticipation: number; surprise: number;
-  anger: number; sadness: number; concern: number; disgust: number;
+  anger: number; sadness: number; concern: number; disgust: number; sarcasm: number;
 }
 
 /** Region distribution item */
@@ -89,6 +92,79 @@ export interface AnalysisResult {
   comments: CommentData[];
 }
 
+export interface AnalysisGroupMember {
+  analysis_id: number;
+  bv: string;
+  video_title: string;
+  video_cover?: string;
+  total_comments: number;
+  status?: AnalysisStatus;
+  mode?: AnalysisMode;
+  created_at?: string | null;
+}
+
+export interface AnalysisGroup {
+  id: number;
+  name: string;
+  description?: string | null;
+  member_count: number;
+  total_comments?: number;
+  created_at: string | null;
+  updated_at?: string | null;
+  members?: AnalysisGroupMember[];
+  is_analyzable?: boolean;
+}
+
+export interface SourceDistributionItem {
+  analysis_id: number;
+  bv: string;
+  video_title: string;
+  total_comments: number;
+  matched_comments?: number;
+  percentage?: number;
+  sentiment?: { positive: number; negative: number; neutral: number };
+  sentiment_llm?: SentimentLLM;
+  llm_ready?: boolean;
+}
+
+/** Result payload for an event. Comments remain the source of all client-side filtered views. */
+export interface GroupAnalysisResult {
+  scope: 'group';
+  group_id: number;
+  group_name: string;
+  description?: string | null;
+  mode: AnalysisMode;
+  member_count: number;
+  total_comments: number;
+  time_range?: { earliest: string | null; latest: string | null };
+  members: AnalysisGroupMember[];
+  source_distribution: SourceDistributionItem[];
+  llm_readiness?: { ready: boolean; missing_members: Array<AnalysisGroupMember & { reason?: string }> };
+  sentiment: { positive: number; negative: number; neutral: number };
+  sentiment_llm?: SentimentLLM;
+  gender: { male: number; female: number; unknown: number };
+  region: RegionItem[];
+  heat: AnalysisResult['heat'];
+  keywords: KeywordItem[];
+  duplicate_statistics: DuplicateStatistics;
+  comments: CommentData[];
+}
+
+export interface GroupReanalysisStatus {
+  group_id: number;
+  status: 'pending' | 'analyzing' | 'done' | 'error';
+  ready: boolean;
+  total_comments: number;
+  processed_comments: number;
+  pending_comments: number;
+  /** Present on the explicit start response; only these comments are sent to the LLM. */
+  target_comments?: number;
+  missing_members: Array<AnalysisGroupMember & { reason?: string }>;
+  errors: Array<{ analysis_id: number; video_title: string; message: string }>;
+  started_analysis_ids?: number[];
+  already_ready_analysis_ids?: number[];
+}
+
 /** History analysis item */
 export interface HistoryItem {
   id: number;
@@ -97,6 +173,8 @@ export interface HistoryItem {
   video_cover: string;
   total_comments: number;
   status: AnalysisStatus;
+  mode?: AnalysisMode;
+  affected_group_count?: number;
   created_at: string | null;
 }
 
@@ -151,6 +229,8 @@ export interface FilterState {
   region: string;
   sentiment: "all" | SentimentLabel | keyof SentimentLLM;
   duplicateMode: DuplicateMode;
+  /** `all` for the complete comment pool; used by event workspaces only. */
+  sourceAnalysisId: string;
 }
 
 export interface AISummary {
@@ -166,4 +246,9 @@ export interface AISummary {
   created_at: string | null;
   updated_at: string | null;
   stale: boolean;
+}
+
+export interface GroupAISummary extends Omit<AISummary, 'analysis_id'> {
+  group_id: number;
+  member_signature?: string;
 }

@@ -15,6 +15,7 @@ import FilterBar from './components/FilterBar';
 import AISummaryCard from './components/AISummaryCard';
 import SettingsEntry from './components/SettingsEntry';
 import AnalysisProgress from './components/AnalysisProgress';
+import EventWorkspace from './components/EventWorkspace';
 import SettingsPage from './pages/SettingsPage';
 import { getAuthStatus, getFilteredKeywords, getResults, getRuntimeActivity, getSettings, getStatus, logout, prepareRuntimeExit, reanalyze, startAnalysis } from './services/api';
 import { checkForUpdates, downloadUpdate, installDownloadedUpdate, isDesktopRuntime, onCloseRequested, respondToCloseRequest } from './services/desktop';
@@ -22,8 +23,9 @@ import type { AnalysisResult, FilterState, AnalysisMode, KeywordItem, SentimentL
 import './AppShell.css';
 
 const PROVINCES = new Set(['北京','天津','上海','重庆','河北','山西','辽宁','吉林','黑龙江','江苏','浙江','安徽','福建','江西','山东','河南','湖北','湖南','广东','海南','四川','贵州','云南','陕西','甘肃','青海','台湾','内蒙古','广西','西藏','宁夏','新疆','香港','澳门']);
-const LLM_EMOTIONS: (keyof SentimentLLM)[] = ['neutral', 'joy', 'support', 'anticipation', 'surprise', 'anger', 'sadness', 'concern', 'disgust'];
+const LLM_EMOTIONS: (keyof SentimentLLM)[] = ['neutral', 'joy', 'support', 'anticipation', 'surprise', 'anger', 'sadness', 'concern', 'disgust', 'sarcasm'];
 const EMPTY_SEARCH_DRAFT: SearchDraft = { rawInput: '', bv: '', videoInfo: null };
+const EMPTY_FILTERS: FilterState = { gender: 'all', dateFrom: '', dateTo: '', region: '', sentiment: 'all', duplicateMode: 'include', sourceAnalysisId: 'all' };
 
 function getLlmProgressText(processed: number, total: number): string {
   return `正在分析评论 ${Math.min(processed, total)} / ${total}`;
@@ -43,6 +45,9 @@ function App() {
   const navigate = useNavigate();
   const isWorkspacePage = location.pathname === '/';
   const [analysisId, setAnalysisId] = useState<number | null>(null);
+  const [selectedGroupId, setSelectedGroupId] = useState<number | null>(null);
+  const [groupFilters, setGroupFilters] = useState<Record<number, FilterState>>({});
+  const [groupRevision, setGroupRevision] = useState(0);
   const [results, setResults] = useState<AnalysisResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -59,9 +64,7 @@ function App() {
   const [analysisMode, setAnalysisMode] = useState<AnalysisMode>('nlp');
   const [maxComments, setMaxComments] = useState(100);
   const [delay, setDelay] = useState(3.0);
-  const [filters, setFilters] = useState<FilterState>({
-    gender: 'all', dateFrom: '', dateTo: '', region: '', sentiment: 'all', duplicateMode: 'include',
-  });
+  const [filters, setFilters] = useState<FilterState>(EMPTY_FILTERS);
   const [filteredKeywords, setFilteredKeywords] = useState<KeywordItem[]>([]);
   const [keywordStatus, setKeywordStatus] = useState<'ready' | 'loading' | 'error'>('ready');
   const keywordRequestRef = useRef(0);
@@ -180,7 +183,7 @@ function App() {
 
   const handleAnalyze = useCallback(async (bv: string, _maxComments: number, _delay: number) => {
     setReanalyzing(false);
-    setLoading(true); setError(null); setResults(null); cancelRef.current = false;
+    setLoading(true); setError(null); setResults(null); setSelectedGroupId(null); cancelRef.current = false;
     setAnalysisMode('nlp');
     setProgress(0); setProgressMax(_maxComments); setStatusText('正在获取视频信息...');
     try {
@@ -212,9 +215,11 @@ function App() {
   }, []);
 
   const handleViewHistory = useCallback(async (id: number) => {
+    if (id < 0) { setSelectedGroupId(null); return; }
     setReanalyzing(false);
+    setSelectedGroupId(null);
     setLoading(true); setError(null); setStatusText('加载中...');
-    try { const data = await getResults(id); setResults(data); setAnalysisId(id); setAnalysisMode(data.mode); setFilters({ gender:'all',dateFrom:'',dateTo:'',region:'',sentiment:'all',duplicateMode:'include' }); } catch (e:any) { setError(e.message); }
+    try { const data = await getResults(id); setResults(data); setAnalysisId(id); setAnalysisMode(data.mode); setFilters({ gender:'all',dateFrom:'',dateTo:'',region:'',sentiment:'all',duplicateMode:'include',sourceAnalysisId:'all' }); } catch (e:any) { setError(e.message); }
     setLoading(false);
   }, []);
 
@@ -309,7 +314,7 @@ function App() {
   }), [filteredComments]);
 
   const filteredLlmSentiment = useMemo<SentimentLLM>(() => {
-    const counts: SentimentLLM = { neutral:0, joy:0, support:0, anticipation:0, surprise:0, anger:0, sadness:0, concern:0, disgust:0 };
+    const counts: SentimentLLM = { neutral:0, joy:0, support:0, anticipation:0, surprise:0, anger:0, sadness:0, concern:0, disgust:0, sarcasm:0 };
     filteredComments.forEach(comment => {
       const label = comment.sentiment_llm_label as keyof SentimentLLM;
       if (LLM_EMOTIONS.includes(label)) counts[label]++;
@@ -440,9 +445,10 @@ function App() {
             <span>{showHistory?'收起':'展开'}历史记录</span>
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{transform:showHistory?'rotate(180deg)':'rotate(0deg)',transition:'transform .2s'}}><path strokeLinecap="round" strokeLinejoin="round" d="M6 9l6 6 6-6"/></svg>
           </button>
-          {showHistory && <HistoryPanel onSelect={handleViewHistory} selectedId={analysisId} refreshKey={historyRefreshKey}/>}
+          {showHistory && <HistoryPanel onSelect={handleViewHistory} onSelectGroup={id => { setSelectedGroupId(id); setError(null); }} selectedId={analysisId} selectedGroupId={selectedGroupId} refreshKey={historyRefreshKey} onGroupChanged={() => setGroupRevision(current => current + 1)}/>}
         </section>
-        {!loading && results && (<div className="app-alert app-alert--status">模式: {results.mode === 'llm' ? '大模型九类主情感' : 'NLP三分类'} · 共 {results.total_comments} 条评论</div>)}
+        {selectedGroupId ? <EventWorkspace key={`${selectedGroupId}-${groupRevision}`} groupId={selectedGroupId} initialFilters={groupFilters[selectedGroupId] || EMPTY_FILTERS} onFiltersChange={next => setGroupFilters(current => ({ ...current, [selectedGroupId]: next }))} /> : <>
+        {!loading && results && (<div className="app-alert app-alert--status">模式: {results.mode === 'llm' ? '大模型十分类' : 'NLP三分类'} · 共 {results.total_comments} 条评论</div>)}
 
         {loading && !results && (
           <div className="app-state flex items-center justify-center py-20">
@@ -486,7 +492,7 @@ function App() {
             duplicateRetainedCount={duplicateFilteredComments.length}
           />
           {analysisId && <div className="card-enter mt-4">
-            <AISummaryCard analysisId={analysisId} filters={filters} matchedCount={filteredComments.length} mode={results.mode}/>
+            <AISummaryCard scope={{ kind: 'analysis', id: analysisId }} filters={filters} matchedCount={filteredComments.length} mode={results.mode}/>
           </div>}
           <div className="grid grid-cols-1 md:grid-cols-2 md:grid-auto-rows-fr gap-4 mt-4 paired-chart-grid">
             <div className="card-enter">
@@ -497,7 +503,7 @@ function App() {
                 mode={analysisMode}
                 llm={results.mode === 'llm' ? filteredLlmSentiment : null}
                 onModeChange={handleModeChange}
-                reanalysis={{ active: reanalyzing, current: progress, total: progressMax, statusText }}
+                reanalysis={reanalyzing ? { state: 'running', current: progress, total: progressMax, statusText } : undefined}
               />
             </div>
             <div className="card-enter"><GenderChart male={filteredGender.male} female={filteredGender.female} unknown={filteredGender.unknown}/></div>
@@ -522,6 +528,7 @@ function App() {
           </div>
           <div className="card-enter mt-4"><CommentTable comments={filteredComments} mode={analysisMode} allCommentRpids={allCommentRpids}/></div>
         </>}
+        </>}
 
         {/* Reanalyze confirmation modal */}
         {reanalyzeModal && (
@@ -529,7 +536,7 @@ function App() {
             <div className="reanalyze-dialog__panel" role="dialog" aria-modal="true" aria-labelledby="reanalyze-title" onClick={e=>e.stopPropagation()}>
               <h3 id="reanalyze-title">切换到大模型情感分析</h3>
               <p className="reanalyze-dialog__copy">
-                当前分析结果使用 NLP 三分类模式生成。是否使用已保存的 {results?.total_comments} 条评论数据，重新进行大模型九类主情感分析？
+                当前分析结果使用 NLP 三分类模式生成。是否使用已保存的 {results?.total_comments} 条评论数据，重新进行大模型十分类分析？
               </p>
               <p className="reanalyze-dialog__notice">
                 ⚠ 大模型分析将调用设置中选择的情绪分析供应商，可能产生少量费用。

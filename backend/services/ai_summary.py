@@ -21,7 +21,7 @@ MAX_COMMENT_CHARACTERS = 300
 NLP_LABELS = ("positive", "negative", "neutral")
 LLM_LABELS = (
     "neutral", "joy", "support", "anticipation", "surprise",
-    "anger", "sadness", "concern", "disgust",
+    "anger", "sadness", "concern", "disgust", "sarcasm",
 )
 
 
@@ -48,6 +48,13 @@ def normalize_filters(value: Any, mode: str) -> dict[str, str]:
     duplicate_mode = str(source.get("duplicateMode", "include") or "include")
     if duplicate_mode not in DUPLICATE_MODES:
         raise ValueError("无效的重复内容筛选条件")
+    source_analysis_id = str(source.get("sourceAnalysisId", "all") or "all")
+    if source_analysis_id != "all":
+        try:
+            if int(source_analysis_id) <= 0:
+                raise ValueError
+        except (TypeError, ValueError) as exc:
+            raise ValueError("无效的来源视频筛选条件") from exc
     return {
         "gender": gender,
         "dateFrom": date_from,
@@ -55,6 +62,7 @@ def normalize_filters(value: Any, mode: str) -> dict[str, str]:
         "region": region,
         "sentiment": sentiment,
         "duplicateMode": duplicate_mode,
+        "sourceAnalysisId": source_analysis_id,
     }
 
 
@@ -104,6 +112,11 @@ def apply_filters(
         if end and (not posted_at or posted_at >= end):
             continue
         if filters["region"] and normalize_location(str(comment.get("ip_location", ""))) != filters["region"]:
+            continue
+        if (
+            filters.get("sourceAnalysisId", "all") != "all"
+            and str(comment.get("source_analysis_id", "")) != filters["sourceAnalysisId"]
+        ):
             continue
         if filters["sentiment"] != "all" and _comment_sentiment(comment, mode) != filters["sentiment"]:
             continue

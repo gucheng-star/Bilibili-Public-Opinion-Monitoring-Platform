@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 
 sys.path.insert(0, os.path.dirname(__file__))
 from api.auth_routes import router as auth_router
+from api.group_routes import router as group_router
 from api.routes import router
 from api.runtime_routes import router as runtime_router
 from api.settings_routes import router as settings_router
@@ -74,6 +75,7 @@ app.add_middleware(
 
 app.include_router(settings_router)
 app.include_router(summary_router)
+app.include_router(group_router)
 app.include_router(router)
 app.include_router(auth_router)
 app.include_router(runtime_router)

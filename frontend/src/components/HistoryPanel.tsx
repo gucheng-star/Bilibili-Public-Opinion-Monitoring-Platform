@@ -1,68 +1,36 @@
-import { useEffect, useState } from 'react';
-import { getHistory, deleteHistory } from '../services/api';
-import type { HistoryItem } from '../types';
+import { useEffect, useMemo, useState } from 'react';
+import { createAnalysisGroup, deleteAnalysisGroup, deleteHistory, getAnalysisGroups, getHistory, updateAnalysisGroup } from '../services/api';
+import type { AnalysisGroup, HistoryItem } from '../types';
 import './DataPanels.css';
 
-interface Props {
-  onSelect: (id: number) => void;
-  selectedId: number | null;
-  refreshKey?: number;
-  onDelete?: () => void;
-}
+interface Props { onSelect:(id:number)=>void; onSelectGroup:(id:number)=>void; selectedId:number|null; selectedGroupId:number|null; refreshKey?:number; onDelete?:()=>void; onGroupChanged?:()=>void; }
+type Tab = 'analyses' | 'groups';
+const titleOf = (item: HistoryItem) => item.video_title || item.bv;
 
-export default function HistoryPanel({ onSelect, selectedId, refreshKey = 0, onDelete }: Props) {
-  const [items, setItems] = useState<HistoryItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [confirmItem, setConfirmItem] = useState<HistoryItem | null>(null);
-  const load = () => { setLoading(true); getHistory().then(setItems).catch(()=>{}).finally(()=>setLoading(false)); };
+export default function HistoryPanel({ onSelect, onSelectGroup, selectedId, selectedGroupId, refreshKey=0, onDelete, onGroupChanged }: Props) {
+  const [tab, setTab] = useState<Tab>('analyses');
+  const [items, setItems] = useState<HistoryItem[]>([]); const [groups, setGroups] = useState<AnalysisGroup[]>([]); const [loading, setLoading] = useState(true);
+  const [confirmItem, setConfirmItem] = useState<HistoryItem|null>(null); const [confirmGroup, setConfirmGroup] = useState<AnalysisGroup|null>(null);
+  const [creating, setCreating] = useState(false); const [editingGroup, setEditingGroup] = useState<AnalysisGroup|null>(null); const [createDialog, setCreateDialog] = useState(false); const [selected, setSelected] = useState<Set<number>>(()=>new Set());
+  const [name, setName] = useState(''); const [description, setDescription] = useState(''); const [createError, setCreateError] = useState<string|null>(null);
+  const load = () => { setLoading(true); Promise.all([getHistory(), getAnalysisGroups()]).then(([history, eventGroups])=>{setItems(history);setGroups(eventGroups);}).catch(()=>{}).finally(()=>setLoading(false)); };
   useEffect(()=>{load();},[refreshKey]);
-
-  const handleDelete = async () => {
-    if (!confirmItem) return;
-    try { await deleteHistory(confirmItem.id); load(); onDelete?.(); }
-    catch { alert('删除失败'); }
-    setConfirmItem(null);
-  };
-
-  if (loading) return <div className="text-xs text-muted py-2">加载中...</div>;
-  if (!items.length) return <div className="text-xs text-muted py-2">暂无历史记录</div>;
-
-  return (
-    <>
-      <div className="history-panel">
-        <div className="history-panel__header"><span className="panel-status">ANALYSIS ARCHIVE</span><span className="history-panel__count">{items.length}</span></div>
-      <div className="history-scroll history-panel__list">
-        {items.map(item => (
-          <div key={item.id} className={`history-panel__item${selectedId===item.id ? ' is-selected' : ''}`}>
-            <button onClick={()=>onSelect(item.id)} className={`history-panel__record${selectedId===item.id ? ' is-selected' : ''}`} aria-pressed={selectedId===item.id}>
-              <div className="history-panel__record-title truncate">{item.video_title || item.bv}</div>
-              <div className="history-panel__record-meta truncate">{item.total_comments} 条评论</div>
-            </button>
-            <button type="button" className="history-panel__delete"
-              onClick={(e)=>{e.stopPropagation();setConfirmItem(item);}}
-              title="删除记录"
-              aria-label={`删除记录：${item.video_title || item.bv}`}
-            >&times;</button>
-          </div>
-        ))}
-      </div>
-      </div>
-
-      {confirmItem && (
-        <div className="modal-overlay">
-          <div className="modal-backdrop" onClick={()=>setConfirmItem(null)} />
-          <div className="modal-content">
-            <p style={{fontSize:'.875rem',fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>删除历史记录</p>
-            <p style={{fontSize:'.75rem',color:'var(--text-secondary)',marginBottom:'1rem',lineHeight:1.5}}>
-              确定要删除 <span style={{color:'var(--text-primary)',fontWeight:500}}>{confirmItem.video_title || confirmItem.bv}</span> 的分析记录吗？此操作不可撤销。
-            </p>
-            <div className="flex gap-2 justify-end">
-              <button onClick={()=>setConfirmItem(null)} className="btn btn-ghost" style={{fontSize:'.75rem'}}>取消</button>
-              <button onClick={handleDelete} className="btn btn-primary" style={{fontSize:'.75rem',background:'var(--red)',borderColor:'var(--red)'}}>确认删除</button>
-            </div>
-          </div>
-        </div>
-      )}
-    </>
-  );
+  const selectedItems = useMemo(()=>items.filter(item=>selected.has(item.id)),[items,selected]);
+  const selectedComments = useMemo(()=>selectedItems.reduce((sum,item)=>sum+item.total_comments,0),[selectedItems]);
+  const leaveCreate = () => { setCreating(false); setEditingGroup(null); setCreateDialog(false); setSelected(new Set()); setName(''); setDescription(''); setCreateError(null); };
+  const beginEdit = (group: AnalysisGroup) => { setTab('analyses'); setCreating(true); setEditingGroup(group); setSelected(new Set((group.members || []).map(member => member.analysis_id))); setName(group.name); setDescription(group.description || ''); setCreateError(null); };
+  const toggle = (item:HistoryItem) => { if(item.status!=='done')return; setSelected(current=>{const next=new Set(current); if(next.has(item.id)){next.delete(item.id);return next;} if(next.size>=10||Array.from(next).some(id=>items.find(candidate=>candidate.id===id)?.bv===item.bv))return next; next.add(item.id);return next;}); };
+  const deleteSingle = async () => { if(!confirmItem)return; try{await deleteHistory(confirmItem.id);load();onDelete?.();}catch{alert('删除失败');}setConfirmItem(null); };
+  const deleteGroup = async () => { if(!confirmGroup)return; try{await deleteAnalysisGroup(confirmGroup.id);if(selectedGroupId===confirmGroup.id)onSelect(-1);load();onGroupChanged?.();}catch{alert('删除事件失败');}setConfirmGroup(null); };
+  const create = async () => { if(!name.trim()){setCreateError('请输入事件名称。');return;} if(selected.size<2){setCreateError('请至少选择 2 个已完成的视频分析。');return;} try{const group=editingGroup?await updateAnalysisGroup(editingGroup.id,{name:name.trim(),description:description.trim(),analysis_ids:Array.from(selected)}):await createAnalysisGroup({name:name.trim(),description:description.trim()||undefined,analysis_ids:Array.from(selected)});leaveCreate();setTab('groups');load();onGroupChanged?.();onSelectGroup(group.id);}catch(reason){setCreateError(reason instanceof Error?reason.message:editingGroup?'修改事件失败':'创建事件失败');} };
+  if(loading)return <div className="text-xs text-muted py-2">加载中...</div>;
+  return <>
+    <div className="history-panel"><div className="history-panel__header"><div className="history-panel__tabs" role="tablist" aria-label="历史类型"><button type="button" role="tab" aria-selected={tab==='analyses'} className={tab==='analyses'?'active':''} onClick={()=>setTab('analyses')}>单视频分析</button><button type="button" role="tab" aria-selected={tab==='groups'} className={tab==='groups'?'active':''} onClick={()=>setTab('groups')}>舆情事件</button></div>{tab==='analyses'&&(creating?<div className="history-panel__create-actions"><button type="button" className="history-panel__create" onClick={()=>setCreateDialog(true)} disabled={selected.size<2}>{editingGroup?'修改事件信息':'填写事件信息'}</button><button type="button" className="history-panel__create" onClick={leaveCreate}>取消</button></div>:<button type="button" className="history-panel__create" onClick={()=>setCreating(true)}>创建舆情事件</button>)}</div>
+      {tab==='analyses'&&<>{creating&&<p className="history-panel__selection-hint">{editingGroup?'正在编辑“'+editingGroup.name+'”：':'请选择'} 2 至 10 个已完成、且 BV 不重复的视频分析。所选成员 {selectedItems.every(item=>item.mode==='llm')?'均已完成 LLM 分析':'含未完成 LLM 分析的视频，事件仍可用 NLP 三分类'}。</p>}<div className="history-scroll history-panel__list">{!items.length&&<div className="history-panel__state text-xs text-muted">暂无历史记录</div>}{items.map(item=>{const checked=selected.has(item.id);const sameBv=!checked&&Array.from(selected).some(id=>items.find(candidate=>candidate.id===id)?.bv===item.bv);const blocked=item.status!=='done'||(!checked&&(selected.size>=10||sameBv));return <div key={item.id} className={`history-panel__item${selectedId===item.id&&!creating?' is-selected':''}`}>{creating?<label className={`history-panel__record history-panel__record--select${blocked?' is-disabled':''}`}><input type="checkbox" checked={checked} disabled={blocked} onChange={()=>toggle(item)}/><span className="history-panel__record-title truncate">{titleOf(item)}</span><span className="history-panel__record-meta truncate">{item.total_comments} 条评论 · {item.status!=='done'?'未完成，不可选':sameBv?'重复 BV，不可选':item.mode==='llm'?'LLM 已完成':checked?'已选择':'仅 NLP'}</span></label>:<button onClick={()=>onSelect(item.id)} className={`history-panel__record${selectedId===item.id?' is-selected':''}`} aria-pressed={selectedId===item.id}><div className="history-panel__record-title truncate">{titleOf(item)}</div><div className="history-panel__record-meta truncate">{item.total_comments} 条评论</div></button>}{!creating&&<button type="button" className="history-panel__delete" onClick={()=>setConfirmItem(item)} title="删除记录" aria-label={`删除记录：${titleOf(item)}`}>&times;</button>}</div>;})}</div></>}
+      {tab==='groups'&&<div className="history-scroll history-panel__list">{!groups.length&&<div className="history-panel__state text-xs text-muted">还没有舆情事件。请在“单视频分析”中选择 2 至 10 个已完成视频创建。</div>}{groups.map(group=><div key={group.id} className={`history-panel__item${selectedGroupId===group.id?' is-selected':''}`}><button type="button" onClick={()=>onSelectGroup(group.id)} className={`history-panel__record${selectedGroupId===group.id?' is-selected':''}`} aria-pressed={selectedGroupId===group.id}><div className="history-panel__record-title truncate">{group.name}</div><div className="history-panel__record-meta truncate">{group.member_count} 个视频 · {(group.total_comments||0).toLocaleString()} 条评论</div></button><button type="button" className="history-panel__edit" onClick={()=>beginEdit(group)} title="编辑事件" aria-label={`编辑事件：${group.name}`}>编辑</button><button type="button" className="history-panel__delete" onClick={()=>setConfirmGroup(group)} title="删除事件" aria-label={`删除事件：${group.name}`}>&times;</button></div>)}</div>}
+    </div>
+    {createDialog&&<div className="modal-overlay" role="presentation"><div className="modal-backdrop" onClick={()=>setCreateDialog(false)}/><div className="modal-content event-create-dialog" role="dialog" aria-modal="true" aria-labelledby="event-create-title"><h3 id="event-create-title">{editingGroup?'编辑舆情事件':'创建舆情事件'}</h3><p>已选择 {selected.size} / 10 个视频，预计汇总 {selectedComments.toLocaleString()} 条评论。事件采用评论池汇总口径，每条已采集评论等权。</p><label>事件名称<input value={name} maxLength={200} autoFocus onChange={event=>setName(event.target.value)} placeholder="例如：某品牌发布会争议"/></label><label>说明（可选）<textarea value={description} onChange={event=>setDescription(event.target.value)} placeholder="记录视频选择口径或时间范围"/></label><small>成员始终须为 2 至 10 个已完成、且 BV 不重复的视频。</small>{createError&&<div className="app-alert app-alert--error" role="alert">{createError}</div>}<div className="flex gap-2 justify-end"><button type="button" onClick={()=>setCreateDialog(false)} className="btn btn-ghost">返回选择</button><button type="button" onClick={create} className="btn btn-primary">{editingGroup?'保存并查看':'创建并查看'}</button></div></div></div>}
+    {confirmItem&&<div className="modal-overlay"><div className="modal-backdrop" onClick={()=>setConfirmItem(null)}/><div className="modal-content"><p style={{fontSize:'.875rem',fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>删除历史记录</p><p style={{fontSize:'.75rem',color:'var(--text-secondary)',marginBottom:'1rem',lineHeight:1.5}}>确定要删除 <span style={{color:'var(--text-primary)',fontWeight:500}}>{titleOf(confirmItem)}</span> 的分析记录吗？此操作不可撤销。{(confirmItem.affected_group_count||0)>0?`该记录属于 ${confirmItem.affected_group_count} 个舆情事件；事件会保留，但成员不足时将无法分析。`:'该记录当前不属于任何舆情事件。'}</p><div className="flex gap-2 justify-end"><button onClick={()=>setConfirmItem(null)} className="btn btn-ghost" style={{fontSize:'.75rem'}}>取消</button><button onClick={deleteSingle} className="btn btn-primary" style={{fontSize:'.75rem',background:'var(--red)',borderColor:'var(--red)'}}>确认删除</button></div></div></div>}
+    {confirmGroup&&<div className="modal-overlay"><div className="modal-backdrop" onClick={()=>setConfirmGroup(null)}/><div className="modal-content"><p style={{fontSize:'.875rem',fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>删除舆情事件</p><p style={{fontSize:'.75rem',color:'var(--text-secondary)',marginBottom:'1rem',lineHeight:1.5}}>删除“{confirmGroup.name}”只会删除事件及其简报，不会删除原始视频分析记录。</p><div className="flex gap-2 justify-end"><button onClick={()=>setConfirmGroup(null)} className="btn btn-ghost" style={{fontSize:'.75rem'}}>取消</button><button onClick={deleteGroup} className="btn btn-primary" style={{fontSize:'.75rem',background:'var(--red)',borderColor:'var(--red)'}}>确认删除</button></div></div></div>}
+  </>;
 }

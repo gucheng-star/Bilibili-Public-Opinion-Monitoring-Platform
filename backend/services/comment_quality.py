@@ -34,14 +34,22 @@ def _canonical_key(comment: dict[str, Any]) -> tuple[Any, ...]:
     )
 
 
-def annotate_exact_duplicates(comments: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Return copied comments annotated from exact, non-empty content matches."""
+def annotate_exact_duplicates(
+    comments: list[dict[str, Any]], scope_field: str | None = None,
+) -> list[dict[str, Any]]:
+    """Return copied comments annotated from exact, non-empty content matches.
+
+    ``scope_field`` isolates groups for an aggregate view.  This preserves the
+    existing single-analysis hash contract while preventing identical wording
+    under different source videos from being treated as one duplicate group.
+    """
     annotated = [dict(comment) for comment in comments]
-    groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    groups: dict[tuple[Any, str], list[dict[str, Any]]] = defaultdict(list)
     for comment in annotated:
         content = comment.get("content")
         if isinstance(content, str) and content != "":
-            groups[content].append(comment)
+            scope = comment.get(scope_field) if scope_field else None
+            groups[(scope, content)].append(comment)
 
     for comment in annotated:
         comment.update({
@@ -51,11 +59,15 @@ def annotate_exact_duplicates(comments: list[dict[str, Any]]) -> list[dict[str, 
             "is_duplicate_canonical": False,
         })
 
-    for content, members in groups.items():
+    for (scope, content), members in groups.items():
         if len(members) < 2:
             continue
         canonical = min(members, key=_canonical_key)
-        group_key = "sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest()
+        content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        group_key = (
+            f"source:{scope}:sha256:{content_hash}"
+            if scope_field else f"sha256:{content_hash}"
+        )
         for member in members:
             member.update({
                 "is_exact_duplicate": True,
