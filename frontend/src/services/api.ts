@@ -16,6 +16,7 @@ import type {
   VideoInfoResponse,
 } from '../types';
 import { getDesktopRuntimeConfig } from './desktop';
+import { recordApiRequestCompleted, recordApiRequestFailed, recordApiRequestStarted } from './devDiagnostics';
 
 function apiBase(): string {
   return getDesktopRuntimeConfig()?.apiBase || '/api';
@@ -29,18 +30,40 @@ function apiHeaders(headers?: HeadersInit): Headers {
 }
 
 async function req<T>(url: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(apiBase() + url, { ...options, headers: apiHeaders(options?.headers) });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText })) as { detail?: unknown };
-    const detail = err.detail;
-    const message = typeof detail === 'string'
-      ? detail
-      : detail && typeof detail === 'object' && 'message' in detail && typeof (detail as { message?: unknown }).message === 'string'
-        ? (detail as { message: string }).message
-        : res.statusText || 'Request failed';
-    throw new Error(message);
+  const method = (options?.method || 'GET').toUpperCase();
+  const startedAt = performance.now();
+  let failureRecorded = false;
+  let responseStatus = 0;
+  let responseRequestId: string | null = null;
+  recordApiRequestStarted(method, url);
+  try {
+    const res = await fetch(apiBase() + url, { ...options, headers: apiHeaders(options?.headers) });
+    const durationMs = performance.now() - startedAt;
+    const requestId = res.headers.get('X-Request-ID');
+    responseStatus = res.status;
+    responseRequestId = requestId;
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText })) as { detail?: unknown };
+      const detail = err.detail;
+      const message = typeof detail === 'string'
+        ? detail
+        : detail && typeof detail === 'object' && 'message' in detail && typeof (detail as { message?: unknown }).message === 'string'
+          ? (detail as { message: string }).message
+          : res.statusText || 'Request failed';
+      const error = new Error(message);
+      recordApiRequestFailed(method, url, res.status, durationMs, requestId, error);
+      failureRecorded = true;
+      throw error;
+    }
+    const data = await res.json() as T;
+    recordApiRequestCompleted(method, url, res.status, durationMs, requestId);
+    return data;
+  } catch (error) {
+    if (!failureRecorded) {
+      recordApiRequestFailed(method, url, responseStatus, performance.now() - startedAt, responseRequestId, error);
+    }
+    throw error;
   }
-  return res.json();
 }
 
 export function startAnalysis(bv: string, maxComments = 100, requestDelay = 3.0) {

@@ -3,17 +3,29 @@ from datetime import datetime
 import httpx
 from config import BILIBILI_USER_AGENT, BILIBILI_REFERER, MAX_COMMENTS, REQUEST_DELAY
 from services.auth import get_cookie
+from services.logging_config import get_logger, log_event
+
+
+logger = get_logger("bilibili")
 
 def _headers():
     cookie = get_cookie()
     return {'User-Agent':BILIBILI_USER_AGENT,'Referer':BILIBILI_REFERER,'Cookie':cookie}
 
 async def get_video_info(client: httpx.AsyncClient, bv: str):
-    resp = await client.get('https://api.bilibili.com/x/web-interface/view',
-        params={'bvid':bv}, headers=_headers())
-    if resp.status_code != 200: return None
+    try:
+        resp = await client.get('https://api.bilibili.com/x/web-interface/view',
+            params={'bvid':bv}, headers=_headers())
+    except Exception as exc:
+        log_event(logger, "ERROR", "bilibili.video_request_failed", "视频信息请求失败", exception=exc)
+        raise
+    if resp.status_code != 200:
+        log_event(logger, "WARNING", "bilibili.video_request_failed", "视频信息接口返回异常状态", status_code=resp.status_code)
+        return None
     j = resp.json()
-    if j.get('code') != 0: return None
+    if j.get('code') != 0:
+        log_event(logger, "WARNING", "bilibili.video_response_rejected", "视频信息接口返回业务错误")
+        return None
     d = j['data']
     cover = (d.get('pic','') or '').replace('http://','https://')
     return {'bv':bv,'avid':d.get('aid',0),'title':d.get('title',''),
@@ -45,11 +57,15 @@ async def fetch_comments(client: httpx.AsyncClient, avid: int, max_comments=None
                 params={'oid':avid,'type':1,'pn':page,'ps':page_size,'sort':2},
                 headers=_headers())
         except Exception as e:
-            print(f'Page {page} failed: {e}')
+            log_event(logger, "ERROR", "bilibili.fetch_page_failed", "评论分页请求失败", batch_index=page, count=len(all_comments), exception=e)
             break
-        if resp.status_code != 200: break
+        if resp.status_code != 200:
+            log_event(logger, "WARNING", "bilibili.fetch_page_failed", "评论分页接口返回异常状态", batch_index=page, count=len(all_comments), status_code=resp.status_code)
+            break
         j = resp.json()
-        if j.get('code') != 0: break
+        if j.get('code') != 0:
+            log_event(logger, "WARNING", "bilibili.fetch_page_rejected", "评论分页接口返回业务错误", batch_index=page, count=len(all_comments))
+            break
         replies = j.get('data',{}).get('replies')
         if replies is None or not replies: break
         for r in replies:
@@ -66,6 +82,7 @@ async def fetch_comments(client: httpx.AsyncClient, avid: int, max_comments=None
                     all_comments.append(c)
         if progress_callback:
             progress_callback(len(all_comments))
+        log_event(logger, "INFO", "bilibili.fetch_page_completed", "评论分页抓取已完成", batch_index=page, count=len(all_comments))
         if len(all_comments) >= limit:
             break
         page += 1

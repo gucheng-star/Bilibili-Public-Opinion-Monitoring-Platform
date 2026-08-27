@@ -30,10 +30,18 @@ from services.ai_summary import LLM_LABELS
 from services.runtime_state import activity
 from services.settings_store import get_task_config
 from services.wordcloud_gen import get_top_keywords
+from services.logging_config import (
+    get_logger,
+    get_request_id,
+    log_event,
+    reset_request_id,
+    set_request_id,
+)
 from api import routes as analysis_routes
 
 
 router = APIRouter(prefix="/api")
+logger = get_logger("analysis_group")
 
 
 def _require_group(db, group_id: int):
@@ -106,14 +114,36 @@ def group_reanalysis_status(db, group: AnalysisGroup) -> dict:
     }
 
 
-async def _run_group_reanalyze(work_items: list[dict], llm_config: dict[str, str]) -> None:
+async def _run_group_reanalyze(
+    work_items: list[dict], llm_config: dict[str, str],
+    group_id: int | None = None, request_id: str | None = None,
+) -> None:
     """Backfill event members sequentially, leaving batch concurrency to the LLM service."""
-    with activity("llm_sentiment"):
-        for work in work_items:
-            await analysis_routes._run_reanalyze_inner(
-                work["analysis_id"], work["target_comments"], llm_config,
-                context_comments=work["context_comments"], failure_mode=work["failure_mode"],
-            )
+    token = set_request_id(request_id)
+    try:
+        with activity("llm_sentiment"):
+            log_event(logger, "INFO", "group_reanalyze.task_started", "舆情事件补分析已开始", group_id=group_id, task_type="group_llm_reanalysis", count=len(work_items))
+            failed_sources = 0
+            for index, work in enumerate(work_items, start=1):
+                log_event(logger, "INFO", "group_reanalyze.source_started", "开始处理事件来源", group_id=group_id, analysis_id=work["analysis_id"], task_type="group_llm_reanalysis", batch_index=index, count=len(work["target_comments"]))
+                succeeded = await analysis_routes._run_reanalyze_inner(
+                    work["analysis_id"], work["target_comments"], llm_config,
+                    context_comments=work["context_comments"], failure_mode=work["failure_mode"],
+                )
+                if succeeded:
+                    log_event(logger, "INFO", "group_reanalyze.source_completed", "事件来源处理已完成", group_id=group_id, analysis_id=work["analysis_id"], task_type="group_llm_reanalysis", batch_index=index)
+                else:
+                    failed_sources += 1
+                    log_event(logger, "WARNING", "group_reanalyze.source_failed", "事件来源处理失败", group_id=group_id, analysis_id=work["analysis_id"], task_type="group_llm_reanalysis", batch_index=index)
+            if failed_sources:
+                log_event(logger, "WARNING", "group_reanalyze.task_failed", "舆情事件补分析存在失败来源", group_id=group_id, task_type="group_llm_reanalysis", count=failed_sources)
+            else:
+                log_event(logger, "INFO", "group_reanalyze.task_completed", "舆情事件补分析已完成", group_id=group_id, task_type="group_llm_reanalysis", count=len(work_items))
+    except Exception as exc:
+        log_event(logger, "ERROR", "group_reanalyze.task_failed", "舆情事件补分析失败", group_id=group_id, task_type="group_llm_reanalysis", exception=exc)
+        raise
+    finally:
+        reset_request_id(token)
 
 
 def _summary_payload(summary: AnalysisGroupSummary, stale: bool, filters: dict[str, str] | None = None) -> dict:
@@ -304,12 +334,17 @@ async def post_group_reanalyze(group_id: int, background_tasks: BackgroundTasks)
         status["already_ready_analysis_ids"] = legacy_ready
         status["target_comments"] = sum(len(work["target_comments"]) for work in work_items)
         if work_items:
-            background_tasks.add_task(_run_group_reanalyze, work_items, config)
+            log_event(logger, "INFO", "group_reanalyze.task_created", "舆情事件补分析任务已创建", group_id=group_id, task_type="group_llm_reanalysis", count=len(work_items))
+            background_tasks.add_task(
+                _run_group_reanalyze, work_items, config,
+                group_id=group_id, request_id=get_request_id(),
+            )
         return status
     except HTTPException:
         db.rollback()
         raise
-    except Exception:
+    except Exception as exc:
+        log_event(logger, "ERROR", "group_reanalyze.task_create_failed", "创建舆情事件补分析任务失败", group_id=group_id, task_type="group_llm_reanalysis", exception=exc)
         db.rollback()
         raise
     finally:
@@ -394,6 +429,7 @@ async def post_group_summary(group_id: int, req: dict):
             raise HTTPException(400, str(exc)) from exc
         if not config.get("api_key"):
             raise HTTPException(400, "请先配置智能总结 API Key")
+        log_event(logger, "INFO", "group_summary.task_started", "事件简报生成已开始", group_id=group_id, task_type="group_ai_summary", count=len(matched))
         with activity("ai_summary"):
             summary_text, used_model, sampled_count = await generate_group_summary(
                 matched, rows, mode, config, group_quality_context(all_comments, normalized, matched),
@@ -418,14 +454,18 @@ async def post_group_summary(group_id: int, req: dict):
             db.add(record)
         db.commit()
         db.refresh(record)
+        log_event(logger, "INFO", "group_summary.database_commit_completed", "事件简报已写入数据库", group_id=group_id, task_type="group_ai_summary", count=sampled_count)
+        log_event(logger, "INFO", "group_summary.task_completed", "事件简报生成已完成", group_id=group_id, task_type="group_ai_summary", count=sampled_count)
         return _summary_payload(record, False, normalized)
     except HTTPException:
         db.rollback()
         raise
     except (ValueError, LLMRequestError) as exc:
+        log_event(logger, "ERROR", "group_summary.task_failed", "事件简报生成失败", group_id=group_id, task_type="group_ai_summary", exception=exc)
         db.rollback()
         raise HTTPException(502, str(exc)) from exc
     except Exception as exc:
+        log_event(logger, "ERROR", "group_summary.task_failed", "事件简报生成失败", group_id=group_id, task_type="group_ai_summary", exception=exc)
         db.rollback()
         raise HTTPException(500, "生成事件简报失败") from exc
     finally:

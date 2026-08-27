@@ -22,9 +22,11 @@ from services.comment_quality import (
     apply_duplicate_mode,
     build_duplicate_statistics,
 )
+from services.logging_config import get_logger, log_event
 
 
 router = APIRouter(prefix="/api")
+logger = get_logger("summary")
 
 
 def _comment_dict(comment: Comment) -> dict:
@@ -131,6 +133,7 @@ async def create_summary(analysis_id: int, req: dict):
             raise HTTPException(400, str(exc)) from exc
         if not config.get("api_key"):
             raise HTTPException(400, "请先配置智能总结 API Key")
+        log_event(logger, "INFO", "summary.task_started", "单视频简报生成已开始", analysis_id=analysis_id, task_type="single_video_ai_summary", count=len(matched))
         with activity("ai_summary"):
             duplicate_statistics = build_duplicate_statistics(comments)
             after_duplicate_count = len(apply_duplicate_mode(comments, filters["duplicateMode"]))
@@ -170,14 +173,18 @@ async def create_summary(analysis_id: int, req: dict):
             db.add(record)
         db.commit()
         db.refresh(record)
+        log_event(logger, "INFO", "summary.database_commit_completed", "单视频简报已写入数据库", analysis_id=analysis_id, task_type="single_video_ai_summary", count=sampled_count)
+        log_event(logger, "INFO", "summary.task_completed", "单视频简报生成已完成", analysis_id=analysis_id, task_type="single_video_ai_summary", count=sampled_count)
         return _serialize(record, current_input_hash, filters)
     except HTTPException:
         db.rollback()
         raise
     except (ValueError, LLMRequestError) as exc:
+        log_event(logger, "ERROR", "summary.task_failed", "单视频简报生成失败", analysis_id=analysis_id, task_type="single_video_ai_summary", exception=exc)
         db.rollback()
         raise HTTPException(502, str(exc)) from exc
     except Exception as exc:
+        log_event(logger, "ERROR", "summary.task_failed", "单视频简报生成失败", analysis_id=analysis_id, task_type="single_video_ai_summary", exception=exc)
         db.rollback()
         raise HTTPException(500, "生成总结失败") from exc
     finally:

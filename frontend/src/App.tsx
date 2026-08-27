@@ -16,9 +16,12 @@ import AISummaryCard from './components/AISummaryCard';
 import SettingsEntry from './components/SettingsEntry';
 import AnalysisProgress from './components/AnalysisProgress';
 import EventWorkspace from './components/EventWorkspace';
+import AppErrorBoundary from './components/AppErrorBoundary';
 import SettingsPage from './pages/SettingsPage';
 import { getAuthStatus, getFilteredKeywords, getResults, getRuntimeActivity, getSettings, getStatus, logout, prepareRuntimeExit, reanalyze, startAnalysis } from './services/api';
 import { checkForUpdates, downloadUpdate, installDownloadedUpdate, isDesktopRuntime, onCloseRequested, respondToCloseRequest } from './services/desktop';
+import { activeFilterFields, recordBreadcrumb, setDiagnosticState, type DiagnosticState } from './services/devDiagnostics';
+import { LatestRequestGuard, runConfirmedWorkflowTransition } from './services/latestRequestGuard';
 import type { AnalysisResult, FilterState, AnalysisMode, KeywordItem, SentimentLLM } from './types';
 import './AppShell.css';
 
@@ -60,6 +63,7 @@ function App() {
   const [historyRefreshKey, setHistoryRefreshKey] = useState(0);
   const [searchDraft, setSearchDraft] = useState<SearchDraft>(() => ({ ...EMPTY_SEARCH_DRAFT }));
   const cancelRef = useRef(false);
+  const workflowGuardRef = useRef(new LatestRequestGuard());
 
   const [analysisMode, setAnalysisMode] = useState<AnalysisMode>('nlp');
   const [maxComments, setMaxComments] = useState(100);
@@ -68,12 +72,71 @@ function App() {
   const [filteredKeywords, setFilteredKeywords] = useState<KeywordItem[]>([]);
   const [keywordStatus, setKeywordStatus] = useState<'ready' | 'loading' | 'error'>('ready');
   const keywordRequestRef = useRef(0);
+  const pollStatusRef = useRef<string | null>(null);
   const [hasApiKey, setHasApiKey] = useState(false);
   const [reanalyzing, setReanalyzing] = useState(false);
   const [reanalyzeModal, setReanalyzeModal] = useState(false);
   const [updateInfo, setUpdateInfo] = useState<{ version?: string; notes?: string; notesUrl?: string } | null>(null);
   const [updateBusy, setUpdateBusy] = useState(false);
   const [closeRequest, setCloseRequest] = useState<{ requestId?: string } | null>(null);
+  const currentDiagnosticFilters = selectedGroupId === null ? filters : groupFilters[selectedGroupId] || EMPTY_FILTERS;
+  const boundaryDiagnosticState: DiagnosticState = location.pathname === '/settings'
+    ? { route: location.pathname, view_type: 'settings' }
+    : selectedGroupId !== null
+      ? {
+          route: location.pathname,
+          view_type: 'group',
+          group_id: selectedGroupId,
+          active_filter_fields: activeFilterFields(currentDiagnosticFilters),
+        }
+      : {
+          route: location.pathname,
+          view_type: 'single',
+          analysis_id: analysisId,
+          analysis_mode: analysisMode,
+          loading,
+          reanalyzing,
+          keyword_status: keywordStatus,
+          active_filter_fields: activeFilterFields(currentDiagnosticFilters),
+        };
+
+  useEffect(() => {
+    recordBreadcrumb('route.changed', { path: location.pathname });
+  }, [location.pathname]);
+  useEffect(() => {
+    if (analysisId !== null) recordBreadcrumb('analysis.selected', { analysis_id: analysisId });
+  }, [analysisId]);
+  useEffect(() => {
+    if (selectedGroupId !== null) recordBreadcrumb('group.selected', { group_id: selectedGroupId });
+  }, [selectedGroupId]);
+  useEffect(() => {
+    if (location.pathname === '/' && selectedGroupId === null) {
+      recordBreadcrumb('analysis.mode_changed', { analysis_mode: analysisMode });
+    }
+  }, [analysisMode, location.pathname, selectedGroupId]);
+  useEffect(() => {
+    recordBreadcrumb('filter.changed', { active_filter_fields: activeFilterFields(currentDiagnosticFilters) });
+  }, [currentDiagnosticFilters]);
+  useEffect(() => {
+    if (location.pathname !== '/settings' && selectedGroupId !== null) return;
+    setDiagnosticState({
+      route: location.pathname,
+      view_type: location.pathname === '/settings' ? 'settings' : 'single',
+      analysis_id: location.pathname === '/settings' ? null : analysisId,
+      group_id: null,
+      analysis_mode: location.pathname === '/settings' ? undefined : analysisMode,
+      loading,
+      reanalyzing,
+      keyword_status: keywordStatus,
+      active_filter_fields: activeFilterFields(currentDiagnosticFilters),
+    });
+  }, [analysisId, analysisMode, currentDiagnosticFilters, keywordStatus, loading, location.pathname, reanalyzing, selectedGroupId]);
+
+  const recordPollStatus = useCallback((status: string) => {
+    if (pollStatusRef.current === status) return;
+    pollStatusRef.current = status;
+    recordBreadcrumb('task.poll_status_changed', { poll_status: status });
+  }, []);
 
   useEffect(() => { getAuthStatus().then(d=>setLoggedIn(d.logged_in)).catch(()=>setLoggedIn(false)); }, []);
   useEffect(() => { getSettings().then(s => { setHasApiKey(s.llm.sentiment.has_api_key); }).catch(() => {}); }, []);
@@ -143,19 +206,29 @@ function App() {
 
   const handleReanalyzeConfirm = async () => {
     if (!analysisId) return;
+    const request = workflowGuardRef.current.begin();
+    const isCurrent = () => workflowGuardRef.current.isCurrent(request);
+    const activeAnalysisId = analysisId;
+    const totalComments = results?.total_comments || 100;
+    pollStatusRef.current = null;
     setReanalyzeModal(false);
     setReanalyzing(true);
     setLoading(true); setError(null); cancelRef.current = false;
-    setProgress(0); setProgressMax(results?.total_comments || 100);
-    setStatusText(getLlmProgressText(0, results?.total_comments || 100));
+    setProgress(0); setProgressMax(totalComments);
+    setStatusText(getLlmProgressText(0, totalComments));
     try {
-      await reanalyze(analysisId);
+      await reanalyze(activeAnalysisId);
+      if (!isCurrent()) return;
       const poll = async () => {
         for (let i = 0; i < 300; i++) {
+          if (!isCurrent()) return;
           if (cancelRef.current) { setReanalyzing(false); setLoading(false); setStatusText('已取消'); return; }
           await new Promise(r => setTimeout(r, 1500));
+          if (!isCurrent()) return;
           try {
-            const status = await getStatus(analysisId);
+            const status = await getStatus(activeAnalysisId);
+            if (!isCurrent()) return;
+            recordPollStatus(status.status);
             const processed = status.processed_comments ?? 0;
             setProgress(processed);
             if (status.status === 'done') {
@@ -167,37 +240,54 @@ function App() {
                 showToast('大模型分析失败，已保留 NLP 结果');
                 return;
               }
-              setStatusText(''); const data = await getResults(analysisId);
+              setStatusText(''); const data = await getResults(activeAnalysisId);
+              if (!isCurrent()) return;
               setResults(data); setAnalysisMode(data.mode); setReanalyzing(false); setLoading(false); setHistoryRefreshKey(k=>k+1); showToast('大模型分析完成');
               return;
             }
             if (status.status === 'error') { setError(status.error_msg || '分析失败'); setReanalyzing(false); setLoading(false); showToast('分析失败'); return; }
-            if (status.status === 'analyzing') setStatusText(getLlmProgressText(processed, status.total_comments || results?.total_comments || 100));
-          } catch { if (cancelRef.current) { setReanalyzing(false); setLoading(false); return; } }
+            if (status.status === 'analyzing') setStatusText(getLlmProgressText(processed, status.total_comments || totalComments));
+          } catch {
+            if (!isCurrent()) return;
+            if (cancelRef.current) { setReanalyzing(false); setLoading(false); return; }
+          }
         }
+        if (!isCurrent()) return;
         setError('超时'); setReanalyzing(false); setLoading(false);
       };
-      poll();
-    } catch (e: any) { setError(e.message || '重新分析失败'); setReanalyzing(false); setLoading(false); }
+      void poll();
+    } catch (e: any) {
+      if (!isCurrent()) return;
+      setError(e.message || '重新分析失败'); setReanalyzing(false); setLoading(false);
+    }
   };
 
   const handleAnalyze = useCallback(async (bv: string, _maxComments: number, _delay: number) => {
+    const request = workflowGuardRef.current.begin();
+    const isCurrent = () => workflowGuardRef.current.isCurrent(request);
+    pollStatusRef.current = null;
     setReanalyzing(false);
     setLoading(true); setError(null); setResults(null); setSelectedGroupId(null); cancelRef.current = false;
     setAnalysisMode('nlp');
     setProgress(0); setProgressMax(_maxComments); setStatusText('正在获取视频信息...');
     try {
       const { analysis_id } = await startAnalysis(bv, _maxComments, _delay);
+      if (!isCurrent()) return;
       setAnalysisId(analysis_id); setStatusText('正在抓取评论...');
       const poll = async () => {
         for (let i = 0; i < 300; i++) {
+          if (!isCurrent()) return;
           if (cancelRef.current) { setLoading(false); setStatusText('已取消'); return; }
           await new Promise(r => setTimeout(r, 1500));
+          if (!isCurrent()) return;
           try {
             const status = await getStatus(analysis_id);
+            if (!isCurrent()) return;
+            recordPollStatus(status.status);
             setProgress(status.total_comments);
             if (status.status === 'done') {
               setStatusText(''); const data = await getResults(analysis_id);
+              if (!isCurrent()) return;
               setResults(data); setAnalysisMode(data.mode); setLoading(false); setHistoryRefreshKey(k=>k+1); showToast('分析完成');
               return;
             }
@@ -206,41 +296,87 @@ function App() {
             else if (status.status === 'analyzing') {
               setStatusText('分析中...');
             }
-          } catch { if (cancelRef.current) { setLoading(false); return; } }
+          } catch {
+            if (!isCurrent()) return;
+            if (cancelRef.current) { setLoading(false); return; }
+          }
         }
+        if (!isCurrent()) return;
         setError('超时'); setLoading(false);
       };
-      poll();
-    } catch (e: any) { setError(e.message || '失败'); setLoading(false); }
-  }, []);
+      void poll();
+    } catch (e: any) {
+      if (!isCurrent()) return;
+      setError(e.message || '失败'); setLoading(false);
+    }
+  }, [recordPollStatus]);
 
   const handleViewHistory = useCallback(async (id: number) => {
-    if (id < 0) { setSelectedGroupId(null); return; }
+    const request = workflowGuardRef.current.begin();
+    const isCurrent = () => workflowGuardRef.current.isCurrent(request);
+    cancelRef.current = false;
+    if (id < 0) {
+      setSelectedGroupId(null);
+      setReanalyzing(false);
+      setLoading(false);
+      setStatusText('');
+      return;
+    }
     setReanalyzing(false);
     setSelectedGroupId(null);
     setLoading(true); setError(null); setStatusText('加载中...');
-    try { const data = await getResults(id); setResults(data); setAnalysisId(id); setAnalysisMode(data.mode); setFilters({ gender:'all',dateFrom:'',dateTo:'',region:'',sentiment:'all',duplicateMode:'include',sourceAnalysisId:'all' }); } catch (e:any) { setError(e.message); }
-    setLoading(false);
+    try {
+      const data = await getResults(id);
+      if (!isCurrent()) return;
+      setResults(data); setAnalysisId(id); setAnalysisMode(data.mode); setFilters({ gender:'all',dateFrom:'',dateTo:'',region:'',sentiment:'all',duplicateMode:'include',sourceAnalysisId:'all' });
+    } catch (e:any) {
+      if (!isCurrent()) return;
+      setError(e.message);
+    } finally {
+      if (isCurrent()) setLoading(false);
+    }
   }, []);
 
   const handleLogout = async () => {
     try {
-      const result = await logout();
-      if (result.ok === false) {
-        throw new Error('退出登录失败，请稍后重试。');
-      }
-      setLoggedIn(false);
-      setReanalyzing(false);
-      setResults(null);
-      setAnalysisId(null);
-      setSearchDraft({ ...EMPTY_SEARCH_DRAFT });
-      navigate('/', { replace: true });
+      const confirmation = logout().then(result => {
+        if (result.ok === false) throw new Error('退出登录失败，请稍后重试。');
+        return result;
+      });
+      await runConfirmedWorkflowTransition(workflowGuardRef.current, confirmation, () => {
+        cancelRef.current = true;
+        setLoggedIn(false);
+        setReanalyzing(false);
+        setLoading(false);
+        setStatusText('');
+        setError(null);
+        setResults(null);
+        setAnalysisId(null);
+        setSelectedGroupId(null);
+        setSearchDraft({ ...EMPTY_SEARCH_DRAFT });
+        navigate('/', { replace: true });
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : '退出登录失败，请检查本地服务后重试。';
       throw error instanceof Error ? error : new Error(message);
     }
   };
-  const handleStop = () => { cancelRef.current = true; };
+  const handleStop = () => {
+    cancelRef.current = true;
+    workflowGuardRef.current.invalidate();
+    setReanalyzing(false);
+    setLoading(false);
+    setStatusText('已取消');
+  };
+  const handleSelectGroup = useCallback((id: number) => {
+    workflowGuardRef.current.begin();
+    cancelRef.current = false;
+    setSelectedGroupId(id);
+    setError(null);
+    setReanalyzing(false);
+    setLoading(false);
+    setStatusText('');
+  }, []);
   const handleApplyFilters = (f: FilterState) => { setFilters(f); };
   const resolveClose = async (action: 'exit' | 'tray' | 'cancel') => {
     if (action === 'exit') await prepareRuntimeExit().catch(() => {});
@@ -424,6 +560,7 @@ function App() {
       <div className="header-accent-line" />
       {toast && <div className="app-toast" role="status">{toast}</div>}
       <div className="app-route-stage" key={location.pathname}>
+      <AppErrorBoundary diagnosticState={boundaryDiagnosticState}>
       <Routes location={location}>
         <Route path="/settings" element={(
           <SettingsPage
@@ -445,7 +582,7 @@ function App() {
             <span>{showHistory?'收起':'展开'}历史记录</span>
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{transform:showHistory?'rotate(180deg)':'rotate(0deg)',transition:'transform .2s'}}><path strokeLinecap="round" strokeLinejoin="round" d="M6 9l6 6 6-6"/></svg>
           </button>
-          {showHistory && <HistoryPanel onSelect={handleViewHistory} onSelectGroup={id => { setSelectedGroupId(id); setError(null); }} selectedId={analysisId} selectedGroupId={selectedGroupId} refreshKey={historyRefreshKey} onGroupChanged={() => setGroupRevision(current => current + 1)}/>}
+          {showHistory && <HistoryPanel onSelect={handleViewHistory} onSelectGroup={handleSelectGroup} selectedId={analysisId} selectedGroupId={selectedGroupId} refreshKey={historyRefreshKey} onGroupChanged={() => setGroupRevision(current => current + 1)}/>}
         </section>
         {selectedGroupId ? <EventWorkspace key={`${selectedGroupId}-${groupRevision}`} groupId={selectedGroupId} initialFilters={groupFilters[selectedGroupId] || EMPTY_FILTERS} onFiltersChange={next => setGroupFilters(current => ({ ...current, [selectedGroupId]: next }))} /> : <>
         {!loading && results && (<div className="app-alert app-alert--status">模式: {results.mode === 'llm' ? '大模型十分类' : 'NLP三分类'} · 共 {results.total_comments} 条评论</div>)}
@@ -552,6 +689,7 @@ function App() {
         )} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+      </AppErrorBoundary>
       </div>
       {updateInfo && (
           <div className="reanalyze-dialog" role="presentation">

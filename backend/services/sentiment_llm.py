@@ -6,6 +6,7 @@ import logging
 from collections.abc import Callable
 
 from services.llm_client import chat_completion_json
+from services.logging_config import get_logger, log_event
 
 EMOTION_LABELS = [
     "neutral", "joy", "support", "anticipation", "surprise",
@@ -18,6 +19,7 @@ LLM_CONTEXT_COMMENT_MAX_CHARS = 240
 LLM_DIAGNOSTIC_VALUE_MAX_CHARS = 80
 
 logger = logging.getLogger(__name__)
+dev_logger = get_logger("sentiment_llm")
 
 FEW_SHOT_EXAMPLES = [
     {"text": "心脏每分钟七十次，换算下来大概就是这个量级。", "label": "neutral", "reason": "陈述或提问默认中性"},
@@ -232,12 +234,13 @@ async def _analyze_batch_with_retry(
     repair_instruction: str | None = None
     for attempt in range(LLM_BATCH_RETRIES + 1):
         try:
-            return await _analyze_comment_batch(
+            result = await _analyze_comment_batch(
                 comments,
                 config,
                 contexts,
                 repair_instruction=repair_instruction,
             )
+            return result
         except Exception as exc:
             last_error = exc
             if isinstance(exc, ValueError):
@@ -246,6 +249,11 @@ async def _analyze_batch_with_retry(
                     "请严格按照既定 items、id、label 约束重新输出完整 JSON。"
                 )
             if attempt < LLM_BATCH_RETRIES:
+                log_event(
+                    dev_logger, "WARNING", "llm.batch_retried", "大模型情绪批次准备重试",
+                    count=len(comments), error_type=type(exc).__name__,
+                    attempt=attempt + 1,
+                )
                 await asyncio.sleep(attempt + 1)
     raise RuntimeError(
         f"大模型批次连续 {LLM_BATCH_RETRIES + 1} 次失败：{last_error}"
@@ -335,7 +343,7 @@ async def batch_analyze_llm(
         if progress_callback:
             progress_callback(processed_comments)
 
-    async def _run_batch(batch: list[dict]) -> None:
+    async def _run_batch(batch: list[dict], batch_index: int) -> None:
         nonempty_batch = [comment for comment in batch if comment.get("content", "").strip()]
         empty_batch = [comment for comment in batch if not comment.get("content", "").strip()]
         if empty_batch:
@@ -343,9 +351,15 @@ async def batch_analyze_llm(
         if not nonempty_batch:
             return
         async with semaphore:
-            await _analyze_batch_with_fallback(nonempty_batch, config, contexts, complete_batch)
+            log_event(dev_logger, "INFO", "llm.batch_started", "大模型情绪批次已开始", batch_index=batch_index, count=len(nonempty_batch))
+            try:
+                await _analyze_batch_with_fallback(nonempty_batch, config, contexts, complete_batch)
+            except Exception as exc:
+                log_event(dev_logger, "ERROR", "llm.batch_failed", "大模型情绪批次失败", batch_index=batch_index, count=len(nonempty_batch), error_type=type(exc).__name__)
+                raise
+            log_event(dev_logger, "INFO", "llm.batch_completed", "大模型情绪批次已完成", batch_index=batch_index, count=len(nonempty_batch))
 
-    batch_tasks = [asyncio.create_task(_run_batch(batch)) for batch in batches]
+    batch_tasks = [asyncio.create_task(_run_batch(batch, index)) for index, batch in enumerate(batches, start=1)]
     protocol_errors: list[str] = []
     try:
         for completed_task in asyncio.as_completed(batch_tasks):

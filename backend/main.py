@@ -2,7 +2,9 @@
 import hmac
 import json
 import os
+import secrets
 import sys
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -20,6 +22,16 @@ from api.settings_routes import router as settings_router
 from api.summary_routes import router as summary_router
 from models.database import init_db
 from services.runtime_paths import handshake_path
+from services.logging_config import (
+    configure_dev_logging,
+    get_logger,
+    log_event,
+    reset_request_id,
+    set_request_id,
+)
+
+
+logger = get_logger("app")
 
 
 def _desktop_mode() -> bool:
@@ -43,12 +55,64 @@ def _write_handshake() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    logging_enabled = configure_dev_logging()
+    if logging_enabled:
+        log_event(logger, "INFO", "backend.started", "后端开发诊断已启用")
     init_db()
     _write_handshake()
     yield
 
 
 app = FastAPI(title="B站舆论监测平台", version="0.1.0", lifespan=lifespan)
+
+
+def _route_template(request: Request) -> str:
+    route = request.scope.get("route")
+    return getattr(route, "path", None) or "<unmatched>"
+
+
+def _quiet_successful_request(path: str, status_code: int) -> bool:
+    return status_code < 400 and (
+        path.startswith("/api/status/")
+        or path in {"/api/runtime/health", "/api/runtime/activity"}
+    )
+
+
+def _is_dev_diagnostics_path(path: str) -> bool:
+    return path.startswith("/api/runtime/dev-diagnostics/")
+
+
+async def record_request_diagnostics(request: Request, call_next):
+    """Record a bounded request summary without headers, query strings, or bodies."""
+    request_id = secrets.token_hex(6)
+    token = set_request_id(request_id)
+    started = time.perf_counter()
+    try:
+        response = await call_next(request)
+        duration_ms = round((time.perf_counter() - started) * 1000, 2)
+        route = _route_template(request)
+        if not _is_dev_diagnostics_path(request.url.path):
+            level = "DEBUG" if _quiet_successful_request(route, response.status_code) else "INFO"
+            log_event(
+                logger, level, "api.request_completed", "API 请求已完成",
+                request_id=request_id, method=request.method, route=route,
+                status_code=response.status_code, duration_ms=duration_ms,
+            )
+        response.headers["X-Request-ID"] = request_id
+        return response
+    except Exception as exc:
+        if not _is_dev_diagnostics_path(request.url.path):
+            log_event(
+                logger, "ERROR", "api.request_failed", "API 请求发生未处理异常",
+                request_id=request_id, method=request.method, route=_route_template(request),
+                duration_ms=round((time.perf_counter() - started) * 1000, 2), exception=exc,
+            )
+        return JSONResponse(
+            {"detail": "服务器内部错误"}, status_code=500,
+            headers={"X-Request-ID": request_id},
+        )
+    finally:
+        reset_request_id(token)
 
 
 @app.middleware("http")
@@ -62,6 +126,11 @@ async def require_local_token(request: Request, call_next):
     return await call_next(request)
 
 
+# Register diagnostics after token validation so Starlette places diagnostics
+# outside it; rejected desktop requests still receive a correlation ID.
+app.middleware("http")(record_request_diagnostics)
+
+
 allowed_origins = ["http://localhost:5173", "http://127.0.0.1:5173"]
 if _desktop_mode():
     allowed_origins.append("http://tauri.localhost")
@@ -71,6 +140,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Request-ID"],
 )
 
 app.include_router(settings_router)

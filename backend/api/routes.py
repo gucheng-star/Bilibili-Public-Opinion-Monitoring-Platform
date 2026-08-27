@@ -13,6 +13,13 @@ from services.settings_store import get_task_config
 from services.runtime_state import activity
 from services.comment_quality import annotate_exact_duplicates, build_duplicate_statistics
 from services.ai_summary import LLM_LABELS, apply_filters, normalize_filters
+from services.logging_config import (
+    get_logger,
+    get_request_id,
+    log_event,
+    reset_request_id,
+    set_request_id,
+)
 from services.sentiment_test_fixtures import (
     FIXTURE_VIDEO_TITLE,
     build_fixture_comments,
@@ -20,6 +27,7 @@ from services.sentiment_test_fixtures import (
 )
 
 router = APIRouter(prefix='/api')
+logger = get_logger("analysis")
 TEST_FIXTURES_ENABLED = os.getenv("BILI_ENABLE_TEST_FIXTURES", "").lower() == "1"
 
 
@@ -80,18 +88,29 @@ async def get_video(bv: str):
     if not info: raise HTTPException(404, 'Video not found')
     return info
 
-async def _run_analysis(analysis_id: int, bv: str, avid: int, max_comments: int = 100, delay: float = 3.0, mode: str = "nlp"):
-    with activity("analysis"):
-        await _run_analysis_inner(analysis_id, bv, avid, max_comments, delay, mode)
+async def _run_analysis(
+    analysis_id: int, bv: str, avid: int, max_comments: int = 100,
+    delay: float = 3.0, mode: str = "nlp", request_id: str | None = None,
+):
+    token = set_request_id(request_id)
+    try:
+        with activity("analysis"):
+            log_event(logger, "INFO", "analysis.task_started", "视频分析任务已开始", analysis_id=analysis_id, task_type="single_video_analysis")
+            return await _run_analysis_inner(analysis_id, bv, avid, max_comments, delay, mode)
+    finally:
+        reset_request_id(token)
 
 
 async def _run_analysis_inner(analysis_id: int, bv: str, avid: int, max_comments: int = 100, delay: float = 3.0, mode: str = "nlp"):
     db = SessionLocal()
     try:
         analysis = db.query(Analysis).filter_by(id=analysis_id).first()
-        if not analysis: return
+        if not analysis:
+            log_event(logger, "WARNING", "analysis.task_aborted", "分析记录已不存在，任务已中止", analysis_id=analysis_id, task_type="single_video_analysis")
+            return False
         analysis.status = 'fetching'; analysis.mode = mode; analysis.total_comments = 0
         db.commit()
+        log_event(logger, "INFO", "analysis.fetch_started", "开始抓取评论", analysis_id=analysis_id, task_type="single_video_analysis")
 
         def report_fetch_progress(count: int):
             analysis.total_comments = count
@@ -106,13 +125,18 @@ async def _run_analysis_inner(analysis_id: int, bv: str, avid: int, max_comments
                 progress_callback=report_fetch_progress,
             )
         if not comments_raw:
-            analysis.status = 'error'; analysis.error_msg = 'No comments fetched'; db.commit(); return
+            analysis.status = 'error'; analysis.error_msg = 'No comments fetched'; db.commit()
+            log_event(logger, "WARNING", "analysis.task_failed", "未抓取到可分析评论", analysis_id=analysis_id, task_type="single_video_analysis")
+            return False
         analysis.status = 'analyzing'; analysis.total_comments = len(comments_raw); db.commit()
 
         if mode == "llm":
+            log_event(logger, "INFO", "analysis.llm_started", "开始大模型情绪分析", analysis_id=analysis_id, task_type="single_video_analysis", count=len(comments_raw))
             llm_config = get_task_config("sentiment")
             if not llm_config.get("api_key"):
-                analysis.status = 'error'; analysis.error_msg = 'API Key not configured'; db.commit(); return
+                analysis.status = 'error'; analysis.error_msg = 'API Key not configured'; db.commit()
+                log_event(logger, "WARNING", "analysis.task_failed", "情绪分析配置缺失", analysis_id=analysis_id, task_type="single_video_analysis")
+                return False
             comments_analyzed = await batch_analyze_llm(comments_raw, llm_config)
             for c in comments_analyzed:
                 db.add(Comment(analysis_id=analysis_id, rpid=c['rpid'], root_rpid=c.get('root_rpid'),
@@ -129,6 +153,7 @@ async def _run_analysis_inner(analysis_id: int, bv: str, avid: int, max_comments
                 llm_disgust=s['disgust'], llm_anticipation=s['anticipation'], llm_concern=s['concern'],
                 llm_sarcasm=s['sarcasm']))
         else:
+            log_event(logger, "INFO", "analysis.local_nlp_started", "开始本地情绪分析", analysis_id=analysis_id, task_type="single_video_analysis", count=len(comments_raw))
             comments_analyzed = batch_analyze(comments_raw)
             for c in comments_analyzed:
                 db.add(Comment(analysis_id=analysis_id, rpid=c['rpid'], root_rpid=c.get('root_rpid'),
@@ -139,11 +164,17 @@ async def _run_analysis_inner(analysis_id: int, bv: str, avid: int, max_comments
             s = summarize_sentiment(comments_analyzed)
             db.add(SentimentResult(analysis_id=analysis_id, positive_count=s['positive'],
                 negative_count=s['negative'], neutral_count=s['neutral']))
+            log_event(logger, "INFO", "analysis.local_nlp_completed", "本地情绪分析已完成", analysis_id=analysis_id, task_type="single_video_analysis", count=len(comments_analyzed))
         analysis.status = 'done'; db.commit()
+        log_event(logger, "INFO", "analysis.database_commit_completed", "分析结果已写入数据库", analysis_id=analysis_id, task_type="single_video_analysis", count=len(comments_analyzed))
+        log_event(logger, "INFO", "analysis.task_completed", "视频分析任务已完成", analysis_id=analysis_id, task_type="single_video_analysis", count=len(comments_analyzed))
+        return True
     except Exception as e:
+        log_event(logger, "ERROR", "analysis.task_failed", "视频分析任务失败", analysis_id=analysis_id, task_type="single_video_analysis", exception=e)
         db.rollback()
         a = db.query(Analysis).filter_by(id=analysis_id).first()
         if a: a.status = 'error'; a.error_msg = str(e); db.commit()
+        return False
     finally:
         db.close()
 
@@ -166,10 +197,15 @@ async def start_analysis(req: dict, background_tasks: BackgroundTasks):
         analysis = Analysis(bv=bv, avid=info['avid'], video_title=info['title'], mode=mode,
             video_cover=info['cover'], video_play=info['play'], status='pending')
         db.add(analysis); db.commit(); db.refresh(analysis)
-        background_tasks.add_task(_run_analysis, analysis.id, bv, info['avid'], max_comments, request_delay, mode=mode)
+        log_event(logger, "INFO", "analysis.task_created", "视频分析任务已创建", analysis_id=analysis.id, task_type="single_video_analysis")
+        background_tasks.add_task(
+            _run_analysis, analysis.id, bv, info['avid'], max_comments, request_delay,
+            mode=mode, request_id=get_request_id(),
+        )
         return {'analysis_id':analysis.id,'bv':bv,'video_title':info['title'],
             'video_cover':info['cover'],'video_play':info['play'],'status':'pending','mode':mode}
     except Exception as e:
+        log_event(logger, "ERROR", "analysis.task_create_failed", "创建视频分析任务失败", task_type="single_video_analysis", exception=e)
         db.rollback(); raise HTTPException(500, str(e))
     finally:
         db.close()
@@ -224,11 +260,16 @@ async def reanalyze(analysis_id: int, background_tasks: BackgroundTasks):
         db.commit()
 
         # Run LLM in background
-        background_tasks.add_task(_run_reanalyze, analysis_id, comments_data, llm_config, all_comments, a.mode)
+        log_event(logger, "INFO", "reanalyze.task_created", "大模型重分析任务已创建", analysis_id=analysis_id, task_type="llm_reanalysis", count=len(comments_data))
+        background_tasks.add_task(
+            _run_reanalyze, analysis_id, comments_data, llm_config, all_comments, a.mode,
+            request_id=get_request_id(),
+        )
         return {'analysis_id': analysis_id, 'status': 'analyzing', 'mode': 'llm'}
     except HTTPException:
         raise
     except Exception as e:
+        log_event(logger, "ERROR", "reanalyze.task_create_failed", "创建大模型重分析任务失败", analysis_id=analysis_id, task_type="llm_reanalysis", exception=e)
         db.rollback()
         a2 = db.query(Analysis).filter_by(id=analysis_id).first()
         if a2: a2.status = 'error'; a2.error_msg = str(e); db.commit()
@@ -240,12 +281,18 @@ async def reanalyze(analysis_id: int, background_tasks: BackgroundTasks):
 async def _run_reanalyze(
     analysis_id: int, comments_data: list[dict], llm_config: dict[str, str],
     context_comments: list[dict] | None = None, failure_mode: str = 'nlp',
+    request_id: str | None = None,
 ):
     """Background task: re-analyze existing comments with LLM."""
-    with activity("llm_sentiment"):
-        await _run_reanalyze_inner(
-            analysis_id, comments_data, llm_config, context_comments=context_comments, failure_mode=failure_mode,
-        )
+    token = set_request_id(request_id)
+    try:
+        with activity("llm_sentiment"):
+            log_event(logger, "INFO", "reanalyze.task_started", "大模型重分析任务已开始", analysis_id=analysis_id, task_type="llm_reanalysis", count=len(comments_data))
+            await _run_reanalyze_inner(
+                analysis_id, comments_data, llm_config, context_comments=context_comments, failure_mode=failure_mode,
+            )
+    finally:
+        reset_request_id(token)
 
 
 async def _run_reanalyze_inner(
@@ -276,6 +323,7 @@ async def _run_reanalyze_inner(
                 'processed_comments': initial_processed + processed_comments,
             })
             db.commit()
+            log_event(logger, "INFO", "reanalyze.batch_completed", "大模型批次结果已持久化", analysis_id=analysis_id, task_type="llm_reanalysis", count=initial_processed + processed_comments)
 
         # Run LLM analysis
         batch_kwargs = {'progress_callback': report_progress}
@@ -311,7 +359,11 @@ async def _run_reanalyze_inner(
             'processed_comments': len(all_comments),
         })
         db.commit()
+        log_event(logger, "INFO", "reanalyze.database_commit_completed", "大模型重分析结果已写入数据库", analysis_id=analysis_id, task_type="llm_reanalysis", count=len(all_comments))
+        log_event(logger, "INFO", "reanalyze.task_completed", "大模型重分析任务已完成", analysis_id=analysis_id, task_type="llm_reanalysis", count=len(all_comments))
+        return True
     except Exception as e:
+        log_event(logger, "ERROR", "reanalyze.task_failed", "大模型重分析任务失败", analysis_id=analysis_id, task_type="llm_reanalysis", exception=e)
         db.rollback()
         a = db.query(Analysis).filter_by(id=analysis_id).first()
         if a:
@@ -319,6 +371,7 @@ async def _run_reanalyze_inner(
             a.mode = failure_mode
             a.error_msg = str(e)
             db.commit()
+        return False
     finally:
         db.close()
 
