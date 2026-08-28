@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "test:diagnostics": "node --experimental-strip-types --test tests/devDiagnostics.test.mjs tests/latestRequestGuard.test.mjs",
+    "test:wordcloud-mask": "node --experimental-strip-types --test tests/wordCloudMask.test.mjs",
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",

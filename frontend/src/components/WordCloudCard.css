@@ -1,0 +1,49 @@
+.wordcloud-card__header { align-items:center; gap:.5rem; }
+.wordcloud-card__layout { display:flex; gap:.75rem; min-height:300px; }
+.wordcloud-card__chart { flex:1 1 60%; min-width:0; height:300px; }
+.wordcloud-card__keywords { flex:0 0 200px; max-height:340px; overflow-y:auto; padding-left:.75rem; border-left:1px solid var(--border); }
+.wordcloud-style { margin:.1rem 0 .9rem; border:1px solid var(--border); border-radius:var(--radius); background:color-mix(in srgb,var(--bg) 48%,var(--bg-card)); }
+.wordcloud-style__toggle { display:flex; align-items:center; justify-content:space-between; width:100%; padding:.48rem .65rem; color:var(--text-secondary); background:transparent; border:0; cursor:pointer; font-size:.6875rem; font-weight:650; text-align:left; }
+.wordcloud-style__toggle span:last-child { color:var(--accent); font-weight:500; }
+.wordcloud-style__body { padding:.1rem .65rem .7rem; border-top:1px solid var(--border); }
+.wordcloud-style__section { padding:.65rem 0; }
+.wordcloud-style__section + .wordcloud-style__section { border-top:1px solid var(--border); }
+.wordcloud-style__section-header { display:flex; align-items:flex-start; justify-content:space-between; gap:.75rem; }
+.wordcloud-style__section-header strong,.wordcloud-style__section-header small { display:block; }
+.wordcloud-style__section-header strong { color:var(--text-primary); font-size:.75rem; }
+.wordcloud-style__section-header small,.wordcloud-style__notice,.wordcloud-style__area { margin-top:.12rem; color:var(--text-muted); font-size:.625rem; }
+.wordcloud-style__switch,.wordcloud-style__check { display:inline-flex; align-items:center; gap:.35rem; color:var(--text-secondary); font-size:.6875rem; white-space:nowrap; }
+.wordcloud-style__switch input,.wordcloud-style__check input { accent-color:var(--accent); }
+.wordcloud-style__mask-actions { display:flex; flex-wrap:wrap; gap:.4rem; margin-top:.6rem; }
+.wordcloud-style__file-input { position:absolute; width:1px; height:1px; overflow:hidden; opacity:0; pointer-events:none; }
+.wordcloud-style__button,.wordcloud-style__reset,.wordcloud-style__palette button { padding:.32rem .55rem; color:var(--accent); background:var(--accent-soft); border:1px solid var(--border-accent); border-radius:var(--radius-sm); cursor:pointer; font-size:.6875rem; }
+.wordcloud-style__button--danger { color:var(--red); background:var(--red-soft); border-color:color-mix(in srgb,var(--red) 35%,transparent); }
+.wordcloud-style__previews { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.5rem; margin-top:.65rem; }
+.wordcloud-style__previews figure { min-width:0; overflow:hidden; border:1px solid var(--border); border-radius:var(--radius-sm); background:#fff; }
+.wordcloud-style__previews img,.wordcloud-style__preview-placeholder { display:block; width:100%; height:6.25rem; object-fit:contain; }
+.wordcloud-style__preview-placeholder { display:grid; place-items:center; color:#64748b; font-size:.625rem; }
+.wordcloud-style__previews figcaption { padding:.2rem .35rem; color:var(--text-muted); background:var(--bg-card); font-size:.6rem; }
+.wordcloud-style__range { display:grid; gap:.2rem; margin-top:.55rem; color:var(--text-secondary); font-size:.6875rem; }
+.wordcloud-style__range b { color:var(--accent); font-weight:650; }
+.wordcloud-style__range input { width:100%; accent-color:var(--accent); }
+.wordcloud-style__check { margin-top:.55rem; }
+.wordcloud-style__source-overlay { display:grid; gap:.15rem; margin-top:.55rem; padding:.5rem .55rem; background:color-mix(in srgb,var(--accent-soft) 45%,transparent); border:1px solid color-mix(in srgb,var(--border-accent) 65%,var(--border)); border-radius:var(--radius-sm); }
+.wordcloud-style__source-overlay .wordcloud-style__check,.wordcloud-style__source-overlay .wordcloud-style__range { margin-top:0; }
+.wordcloud-style__source-overlay small { color:var(--text-muted); font-size:.6rem; }
+.wordcloud-style__message { margin:.45rem 0 0; padding:.35rem .45rem; color:var(--yellow); background:var(--yellow-soft); border:1px solid color-mix(in srgb,var(--yellow) 35%,transparent); border-radius:var(--radius-sm); font-size:.625rem; }
+.wordcloud-style__grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:.55rem; }
+.wordcloud-style__grid label,.wordcloud-style__palette { display:grid; gap:.2rem; color:var(--text-secondary); font-size:.625rem; }
+.wordcloud-style__grid input[type='number'] { width:100%; min-height:2rem; padding:.25rem .5rem; color:var(--text-primary); background:var(--input-bg); border:1px solid var(--input-border); border-radius:var(--radius-sm); font-size:.6875rem; }
+.wordcloud-style__grid input[type='color'] { width:100%; height:1.8rem; padding:.1rem; background:var(--input-bg); border:1px solid var(--input-border); border-radius:var(--radius-sm); cursor:pointer; }
+.wordcloud-style__palette { grid-column:span 2; }
+.wordcloud-style__family { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,2fr); grid-column:span 2; gap:.5rem; align-items:end; }
+.wordcloud-style__family > label { min-width:0; }
+.wordcloud-style__family-preview { display:grid; grid-template-columns:repeat(6,1fr); grid-column:1/-1; height:.55rem; overflow:hidden; background:var(--bg-card); border:1px solid var(--border); border-radius:999px; }
+.wordcloud-style__family-preview span { min-width:0; }
+.wordcloud-style__palette > div { display:flex; flex-wrap:wrap; gap:.25rem; }
+.wordcloud-style__palette input[type='color'] { width:1.8rem; }
+.wordcloud-style__palette button { min-width:1.8rem; padding:.2rem; }
+.wordcloud-style__palette button:disabled { opacity:.45; cursor:not-allowed; }
+.wordcloud-style__reset { margin-top:.1rem; color:var(--text-secondary); background:transparent; border-color:var(--border); }
+.wordcloud-style button:focus-visible,.wordcloud-style input:focus-visible,.wordcloud-style select:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+@media (max-width:640px) { .wordcloud-card__layout { flex-direction:column; } .wordcloud-card__keywords { flex:1 1 auto; max-height:13rem; padding:.75rem 0 0; border-top:1px solid var(--border); border-left:0; } .wordcloud-style__previews { grid-template-columns:1fr; } .wordcloud-style__grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .wordcloud-style__palette,.wordcloud-style__family { grid-column:span 2; } }

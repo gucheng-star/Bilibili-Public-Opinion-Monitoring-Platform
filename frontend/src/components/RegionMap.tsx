@@ -73,8 +73,8 @@ export default function RegionMap({ data }: Props) {
       ],
       selectedMode:'multiple',
     },
-    geo:{map:'china',roam:false,layoutCenter:['59%','50%'],layoutSize:'98%',itemStyle:{areaColor:dark?'#1A2030':'#F3F4F6',borderColor:dark?'rgba(148,163,184,.22)':'#D1D5DB'},emphasis:{itemStyle:{areaColor:dark?'#2D3A50':'#FCE7EF'}}},
-    series:[{name:'地域',type:'map',map:'china',geoIndex:0,data:mapData}],
+    geo:{map:'china',roam:false,layoutCenter:['59%','50%'],layoutSize:'98%',itemStyle:{areaColor:'#F3F4F6',borderColor:dark?'rgba(148,163,184,.22)':'#D1D5DB'},label:{color:dark?'#FFF':'#1A1A2E'},emphasis:{itemStyle:{areaColor:dark?'#2D3A50':'#FCE7EF'},label:{color:dark?'#FFF':'#1A1A2E'}}},
+    series:[{name:'地域',type:'map',map:'china',geoIndex:0,data:mapData,label:{color:dark?'#FFF':'#1A1A2E'},emphasis:{label:{color:dark?'#FFF':'#1A1A2E'}}}],
   };
 
   const fallbackOption = {

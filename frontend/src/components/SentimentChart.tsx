@@ -91,12 +91,12 @@ export default function SentimentChart({
 
   return (
     <div className="card distribution-chart-card">
-      <div className="flex items-center justify-between mb-2 distribution-chart-header">
+      <div className="distribution-chart-header">
         <h3 className="text-xs font-semibold text-secondary" style={{letterSpacing:'.05em'}}>
           {isReanalyzing ? '情感分布（大模型分析中）' : hasReanalysisError ? '情感分布（大模型分析未完成）' : `情感分布${isLLM ? '（大模型十分类）' : '（NLP 三分类）'}`}
         </h3>
         {!isReanalyzing && !hasReanalysisError && (
-          <div className="flex items-center gap-2">
+          <div className="distribution-chart-header__controls">
             {backgroundReanalysis && (
               <button
                 type="button"
@@ -107,7 +107,6 @@ export default function SentimentChart({
                 {' '}{backgroundReanalysis.current}/{backgroundReanalysis.total}
               </button>
             )}
-            <DownloadChartButton echartRefs={chartRef} />
             <div className="segmented">
               <button className={type==='donut'?'active':''} onClick={toggle('donut')}>环形</button>
               <button className={type==='pie'?'active':''} onClick={toggle('pie')}>饼图</button>
@@ -125,6 +124,7 @@ export default function SentimentChart({
             </select>
           </div>
         )}
+        {!isReanalyzing && !hasReanalysisError && <DownloadChartButton echartRefs={chartRef} />}
       </div>
       {isReanalyzing || hasReanalysisError ? (
         <AnalysisProgress

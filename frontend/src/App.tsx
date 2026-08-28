@@ -631,7 +631,7 @@ function App() {
           {analysisId && <div className="card-enter mt-4">
             <AISummaryCard scope={{ kind: 'analysis', id: analysisId }} filters={filters} matchedCount={filteredComments.length} mode={results.mode}/>
           </div>}
-          <div className="grid grid-cols-1 md:grid-cols-2 md:grid-auto-rows-fr gap-4 mt-4 paired-chart-grid">
+          <div className="mt-4 distribution-chart-stack">
             <div className="card-enter">
               <SentimentChart
                 positive={filteredSentiment.positive}
@@ -647,18 +647,7 @@ function App() {
           </div>
           <div className="card-enter mt-4"><RegionMap data={filteredRegion}/></div>
           <div className="card-enter mt-4">
-            {keywordStatus === 'ready' ? (
-              <WordCloudCard keywords={filteredKeywords}/>
-            ) : (
-              <div className="card">
-                <h3 className="text-xs font-semibold text-secondary mb-2" style={{letterSpacing:'.05em'}}>词云</h3>
-                <div className="flex items-center justify-center h-64 text-muted text-sm" role="status">
-                  {keywordStatus === 'loading'
-                    ? '正在按当前筛选重新统计关键词…'
-                    : '当前筛选的关键词加载失败，请重新应用筛选。该过程不会调用付费模型。'}
-                </div>
-              </div>
-            )}
+            <WordCloudCard keywords={filteredKeywords} status={keywordStatus} scopeKey={`analysis:${analysisId ?? ''}`}/>
           </div>
           <div className="card-enter mt-4">
             <HeatTimeline timeline={filteredHeat.timeline} hourlyDistribution={filteredHeat.hourly_distribution} peakHour={filteredHeat.peak_hour} peakCount={filteredHeat.peak_count}/>

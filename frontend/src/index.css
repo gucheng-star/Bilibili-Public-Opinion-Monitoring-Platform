@@ -488,15 +488,29 @@ a:focus-visible {
   to { opacity:1; transform:translateY(0); }
 }
 
-/* Keep paired distribution charts inside equal, shrinkable grid tracks. */
-.paired-chart-grid { align-items: stretch; min-width: 0; }
-.paired-chart-grid > .card-enter { height: 100%; min-width: 0; }
+/* Pair distribution charts on desktop and stack them only when space is limited. */
+.distribution-chart-stack { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:1rem; min-width:0; }
+.distribution-chart-stack > .card-enter { min-width:0; margin:0 !important; }
 .distribution-chart-card {
-  height: 100%; min-width: 0; overflow: hidden;
+  min-width: 0; overflow: hidden;
   display: flex; flex-direction: column;
 }
-.distribution-chart-header { min-height: 2.25rem; flex-wrap: wrap; gap: .5rem; }
+.distribution-chart-header { display:flex; align-items:center; gap:.5rem; margin-bottom:.5rem; min-width:0; }
+.distribution-chart-header > h3 { flex:0 1 auto; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.distribution-chart-header__controls { display:flex; align-items:center; gap:.5rem; flex:1 1 auto; min-width:0; }
+.distribution-chart-header__controls .segmented { flex:0 0 auto; }
+.distribution-chart-header__controls .segmented button { min-width:2rem; padding-inline:.375rem; white-space:nowrap; }
+.distribution-chart-header > button { flex:0 0 auto; margin-left:auto; }
 .distribution-chart-card .echarts-for-react { min-width: 0; flex: 1 1 auto; }
+
+@media (max-width: 900px) {
+  .distribution-chart-stack { grid-template-columns:1fr; }
+}
+
+@media (max-width: 640px) {
+  .distribution-chart-header { align-items:flex-start; flex-wrap:wrap; }
+  .distribution-chart-header__controls { order:3; flex-basis:100%; flex-wrap:wrap; gap:.375rem; }
+}
 
 /* Region distribution mirrors a creator-dashboard split: map context + ranked detail. */
 .region-distribution-card { min-width:0; overflow:hidden; }

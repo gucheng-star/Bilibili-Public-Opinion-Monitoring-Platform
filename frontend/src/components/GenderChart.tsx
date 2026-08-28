@@ -38,16 +38,16 @@ export default function GenderChart({ male, female, unknown }: Props) {
   const toggle = (t: DistributionChartType) => () => selectType(t, chartRef.current?.getEchartsInstance());
 
   return <div className="card distribution-chart-card">
-    <div className="flex items-center justify-between mb-2 distribution-chart-header">
+    <div className="distribution-chart-header">
       <h3 className="text-xs font-semibold text-secondary" style={{letterSpacing:'.05em'}}>性别分布</h3>
-      <div className="flex items-center gap-2">
-        <DownloadChartButton echartRefs={chartRef} />
+      <div className="distribution-chart-header__controls">
         <div className="segmented">
           <button className={type==='donut'?'active':''} onClick={toggle('donut')}>环形</button>
           <button className={type==='pie'?'active':''} onClick={toggle('pie')}>饼图</button>
           <button className={type==='rose'?'active':''} onClick={toggle('rose')}>玫瑰</button>
         </div>
       </div>
+      <DownloadChartButton echartRefs={chartRef} />
     </div>
     <ReactECharts ref={chartRef} option={option} style={{height:260,width:'100%'}}/>
   </div>;
