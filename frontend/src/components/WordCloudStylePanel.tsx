@@ -116,6 +116,8 @@ export default function WordCloudStylePanel({
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const fontSizeError = minFontSize >= maxFontSize;
+  const minFontSizeMax = Math.min(40, maxFontSize - 1);
+  const maxFontSizeMin = Math.max(24, minFontSize + 1);
   const familyPreview = buildOpacityFamily(familyColor, familyMinOpacity);
 
   const updatePalette = (index: number, color: string) => {
@@ -171,8 +173,8 @@ export default function WordCloudStylePanel({
             <div className="wordcloud-style__family-preview" aria-label="家族多色色板预览">{familyPreview.map((color, index) => <span key={color} style={{ background: color }} title={`透明度 ${Math.round((familyMinOpacity + (1 - familyMinOpacity) * index / Math.max(1, familyPreview.length - 1)) * 100)}%`} />)}</div>
           </div>}
           {colorMode === 'custom' && <div className="wordcloud-style__palette"><span>调色板</span><div>{palette.map((color, index) => <input key={`palette-${index}`} aria-label={`调色板颜色 ${index + 1}`} type="color" value={color} onChange={event => updatePalette(index, event.target.value)} />)}<button type="button" disabled={palette.length >= 8} onClick={() => onPaletteChange([...palette, '#2563EB'])}>+</button><button type="button" disabled={palette.length <= 3} onClick={() => onPaletteChange(palette.slice(0, -1))}>−</button></div></div>}
-          <BoundedNumberInput label="最小字号" value={minFontSize} min={8} max={40} invalid={fontSizeError} onCommit={onMinFontSizeChange} />
-          <BoundedNumberInput label="最大字号" value={maxFontSize} min={24} max={100} invalid={fontSizeError} onCommit={onMaxFontSizeChange} />
+          <BoundedNumberInput label="最小字号" value={minFontSize} min={8} max={minFontSizeMax} invalid={fontSizeError} onCommit={value => onMinFontSizeChange(Math.min(value, maxFontSize - 1))} />
+          <BoundedNumberInput label="最大字号" value={maxFontSize} min={maxFontSizeMin} max={100} invalid={fontSizeError} onCommit={value => onMaxFontSizeChange(Math.max(value, minFontSize + 1))} />
           <label>字体<FilterSelect ariaLabel="字体" value={fontFamily} options={FONT_FAMILY_OPTIONS} onChange={onFontFamilyChange} /></label>
           {fontSizeError && <p className="wordcloud-style__message" role="alert">最小字号必须小于最大字号。</p>}
         </div>

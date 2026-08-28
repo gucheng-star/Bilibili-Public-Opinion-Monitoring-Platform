@@ -24,6 +24,176 @@ export interface BinarizedPixels {
 
 export type MaskValidity = 'valid' | 'too-small' | 'too-large';
 
+function matchesBytes(bytes: Uint8Array, offset: number, expected: readonly number[]): boolean {
+  return expected.every((value, index) => bytes[offset + index] === value);
+}
+
+function matchesAscii(bytes: Uint8Array, offset: number, expected: string): boolean {
+  if (offset < 0 || offset + expected.length > bytes.length) return false;
+  for (let index = 0; index < expected.length; index += 1) {
+    if (bytes[offset + index] !== expected.charCodeAt(index)) return false;
+  }
+  return true;
+}
+
+function readUint16BigEndian(bytes: Uint8Array, offset: number): number {
+  return bytes[offset] * 0x100 + bytes[offset + 1];
+}
+
+function readUint16LittleEndian(bytes: Uint8Array, offset: number): number {
+  return bytes[offset] + bytes[offset + 1] * 0x100;
+}
+
+function readUint24LittleEndian(bytes: Uint8Array, offset: number): number {
+  return bytes[offset] + bytes[offset + 1] * 0x100 + bytes[offset + 2] * 0x10000;
+}
+
+function readUint32BigEndian(bytes: Uint8Array, offset: number): number {
+  return bytes[offset] * 0x1000000
+    + bytes[offset + 1] * 0x10000
+    + bytes[offset + 2] * 0x100
+    + bytes[offset + 3];
+}
+
+function readUint32LittleEndian(bytes: Uint8Array, offset: number): number {
+  return bytes[offset]
+    + bytes[offset + 1] * 0x100
+    + bytes[offset + 2] * 0x10000
+    + bytes[offset + 3] * 0x1000000;
+}
+
+function checkedImageSize(width: number, height: number): ImageSize {
+  if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width <= 0 || height <= 0) {
+    throw new Error('图片尺寸无效，请更换一张图片。');
+  }
+  return { width, height };
+}
+
+function getPngMetadataSize(bytes: Uint8Array): ImageSize {
+  const signature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] as const;
+  if (bytes.length < 24
+    || !matchesBytes(bytes, 0, signature)
+    || !matchesAscii(bytes, 12, 'IHDR')
+    || readUint32BigEndian(bytes, 8) !== 13) {
+    throw new Error('PNG 文件头无效，无法读取图片尺寸。');
+  }
+  return checkedImageSize(readUint32BigEndian(bytes, 16), readUint32BigEndian(bytes, 20));
+}
+
+const JPEG_START_OF_FRAME_MARKERS = new Set([
+  0xc0, 0xc1, 0xc2, 0xc3,
+  0xc5, 0xc6, 0xc7,
+  0xc9, 0xca, 0xcb,
+  0xcd, 0xce, 0xcf,
+]);
+
+function getJpegMetadataSize(bytes: Uint8Array): ImageSize {
+  if (bytes.length < 4 || !matchesBytes(bytes, 0, [0xff, 0xd8])) {
+    throw new Error('JPEG 文件头无效，无法读取图片尺寸。');
+  }
+
+  let offset = 2;
+  while (offset < bytes.length) {
+    if (bytes[offset] !== 0xff) {
+      throw new Error('JPEG 文件结构无效，无法读取图片尺寸。');
+    }
+    while (offset < bytes.length && bytes[offset] === 0xff) offset += 1;
+    if (offset >= bytes.length) break;
+
+    const marker = bytes[offset];
+    offset += 1;
+    if (marker === 0xd9 || marker === 0xda) break;
+    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd8)) continue;
+    if (offset + 2 > bytes.length) break;
+
+    const segmentLength = readUint16BigEndian(bytes, offset);
+    if (segmentLength < 2 || offset + segmentLength > bytes.length) {
+      throw new Error('JPEG 文件结构无效，无法读取图片尺寸。');
+    }
+    if (JPEG_START_OF_FRAME_MARKERS.has(marker)) {
+      if (segmentLength < 7) throw new Error('JPEG 尺寸信息无效。');
+      return checkedImageSize(
+        readUint16BigEndian(bytes, offset + 5),
+        readUint16BigEndian(bytes, offset + 3),
+      );
+    }
+    offset += segmentLength;
+  }
+
+  throw new Error('JPEG 中未找到图片尺寸信息。');
+}
+
+function getWebpMetadataSize(bytes: Uint8Array): ImageSize {
+  if (bytes.length < 20 || !matchesAscii(bytes, 0, 'RIFF') || !matchesAscii(bytes, 8, 'WEBP')) {
+    throw new Error('WebP 文件头无效，无法读取图片尺寸。');
+  }
+
+  const declaredEnd = readUint32LittleEndian(bytes, 4) + 8;
+  if (declaredEnd < 20 || declaredEnd > bytes.length) {
+    throw new Error('WebP 文件结构无效，无法读取图片尺寸。');
+  }
+
+  let offset = 12;
+  while (offset + 8 <= declaredEnd) {
+    const chunkSize = readUint32LittleEndian(bytes, offset + 4);
+    const payloadOffset = offset + 8;
+    const chunkEnd = payloadOffset + chunkSize;
+    if (chunkEnd > declaredEnd) throw new Error('WebP 文件结构无效，无法读取图片尺寸。');
+
+    if (matchesAscii(bytes, offset, 'VP8X')) {
+      if (chunkSize < 10) throw new Error('WebP 尺寸信息无效。');
+      return checkedImageSize(
+        readUint24LittleEndian(bytes, payloadOffset + 4) + 1,
+        readUint24LittleEndian(bytes, payloadOffset + 7) + 1,
+      );
+    }
+    if (matchesAscii(bytes, offset, 'VP8L')) {
+      if (chunkSize < 5 || bytes[payloadOffset] !== 0x2f) throw new Error('WebP 尺寸信息无效。');
+      return checkedImageSize(
+        1 + bytes[payloadOffset + 1] + ((bytes[payloadOffset + 2] & 0x3f) << 8),
+        1 + (bytes[payloadOffset + 2] >>> 6)
+          + (bytes[payloadOffset + 3] << 2)
+          + ((bytes[payloadOffset + 4] & 0x0f) << 10),
+      );
+    }
+    if (matchesAscii(bytes, offset, 'VP8 ')) {
+      if (chunkSize < 10 || !matchesBytes(bytes, payloadOffset + 3, [0x9d, 0x01, 0x2a])) {
+        throw new Error('WebP 尺寸信息无效。');
+      }
+      return checkedImageSize(
+        readUint16LittleEndian(bytes, payloadOffset + 6) & 0x3fff,
+        readUint16LittleEndian(bytes, payloadOffset + 8) & 0x3fff,
+      );
+    }
+
+    offset = chunkEnd + (chunkSize % 2);
+  }
+
+  throw new Error('WebP 中未找到图片尺寸信息。');
+}
+
+/** Reads dimensions from the file container without invoking an image decoder. */
+export function getImageMetadataSize(bytes: Uint8Array, mimeType: string): ImageSize {
+  if (mimeType === 'image/png') return getPngMetadataSize(bytes);
+  if (mimeType === 'image/jpeg') return getJpegMetadataSize(bytes);
+  if (mimeType === 'image/webp') return getWebpMetadataSize(bytes);
+  throw new Error('仅支持 JPG、PNG 或 WebP 图片。');
+}
+
+export function isSourceImageSizeAllowed(size: ImageSize): boolean {
+  return Number.isSafeInteger(size.width)
+    && Number.isSafeInteger(size.height)
+    && size.width > 0
+    && size.height > 0
+    && size.width <= MAX_SOURCE_IMAGE_SIDE
+    && size.height <= MAX_SOURCE_IMAGE_SIDE;
+}
+
+export function areImageSizesCompatible(metadataSize: ImageSize, decodedSize: ImageSize): boolean {
+  return (metadataSize.width === decodedSize.width && metadataSize.height === decodedSize.height)
+    || (metadataSize.width === decodedSize.height && metadataSize.height === decodedSize.width);
+}
+
 export function getLuma(red: number, green: number, blue: number): number {
   return 0.299 * red + 0.587 * green + 0.114 * blue;
 }

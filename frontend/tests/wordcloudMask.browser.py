@@ -1,4 +1,8 @@
+import binascii
+import struct
+import zlib
 from pathlib import Path
+from tempfile import gettempdir
 from time import perf_counter
 
 from playwright.sync_api import sync_playwright
@@ -6,8 +10,24 @@ from playwright.sync_api import sync_playwright
 
 ROOT = Path(__file__).resolve().parents[1]
 IMAGE = ROOT / "public" / "signal-observatory-icon.png"
-SCREENSHOT_DIR = Path(r"C:\Users\21312\.codex\visualizations\2026\08\27\01a041c0-f76a-7b90-a7c9-b46745c86912")
+SCREENSHOT_DIR = Path(gettempdir()) / "bili-opinion-wordcloud-mask"
+SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
 URL = "http://127.0.0.1:5173/wordcloud-mask-harness.html"
+
+
+def png_chunk(kind: bytes, payload: bytes) -> bytes:
+    checksum = binascii.crc32(kind + payload) & 0xFFFFFFFF
+    return struct.pack(">I", len(payload)) + kind + payload + struct.pack(">I", checksum)
+
+
+def rgba_png(width: int, height: int, pixel: bytes) -> bytes:
+    row = b"\x00" + pixel * width
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + png_chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0))
+        + png_chunk(b"IDAT", zlib.compress(row * height))
+        + png_chunk(b"IEND", b"")
+    )
 
 
 with sync_playwright() as playwright:
@@ -37,12 +57,32 @@ with sync_playwright() as playwright:
 
     page.get_by_role("button", name="词云样式").click()
     started = perf_counter()
-    page.locator('input[type="file"]').set_input_files(str(IMAGE))
+    file_input = page.locator('input[type="file"]')
+    file_input.set_input_files(str(IMAGE))
+    file_input.set_input_files({
+        "name": "invalid.txt",
+        "mimeType": "text/plain",
+        "buffer": b"not an image",
+    })
     page.get_by_alt_text("词云蒙版预览，黑色为词语区域").wait_for()
     page.get_by_label("启用轮廓蒙版").wait_for(state="visible")
     page.wait_for_function("document.querySelector('input[aria-label=\"启用轮廓蒙版\"]')?.checked === true")
     upload_seconds = perf_counter() - started
     assert upload_seconds < 30
+
+    source_before_invalid_replacement = page.get_by_alt_text("原图缩略图").get_attribute("src")
+    file_input.set_input_files({
+        "name": "white.png",
+        "mimeType": "image/png",
+        "buffer": rgba_png(1, 1, b"\xff\xff\xff\xff"),
+    })
+    page.get_by_text("可生成区域过小，请调整阈值或反转词语区域。").wait_for()
+    assert page.get_by_alt_text("原图缩略图").get_attribute("src") != source_before_invalid_replacement
+    assert page.get_by_label("启用轮廓蒙版").is_disabled()
+    assert not page.get_by_label("启用轮廓蒙版").is_checked()
+
+    file_input.set_input_files(str(IMAGE))
+    page.wait_for_function("document.querySelector('input[aria-label=\"启用轮廓蒙版\"]')?.checked === true")
     first_ratio = page.locator(".wordcloud-style__area").inner_text()
 
     min_size = page.get_by_label("最小字号")
@@ -55,6 +95,21 @@ with sync_playwright() as playwright:
     assert max_size.input_value() == "0"
     page.get_by_role("heading", name="词云").click()
     assert max_size.input_value() == "24"
+
+    min_size.fill("40")
+    min_size.press("Enter")
+    assert min_size.input_value() == "23"
+    assert max_size.input_value() == "24"
+
+    max_size.fill("100")
+    max_size.press("Enter")
+    min_size.fill("40")
+    min_size.press("Enter")
+    max_size.fill("24")
+    max_size.press("Enter")
+    assert min_size.input_value() == "40"
+    assert max_size.input_value() == "41"
+    assert not page.get_by_text("最小字号必须小于最大字号。").is_visible()
 
     page.get_by_role("button", name="颜色方案").click()
     page.get_by_role("option", name="单色").click()
@@ -122,10 +177,22 @@ with sync_playwright() as playwright:
     assert page.get_by_label("最小字号").input_value() == "12"
     assert page.get_by_label("在词云中叠加原图").is_checked()
 
+    first_keyword = page.locator(".wordcloud-card__keywords button").first
+    first_keyword.click()
+    assert first_keyword.get_attribute("title") == "点击加入词云"
+
     page.get_by_role("button", name="切换分析").click()
     page.get_by_alt_text("原图缩略图").wait_for(state="detached")
     assert page.get_by_label("启用轮廓蒙版").is_disabled()
     assert page.get_by_role("button", name="颜色方案").inner_text().strip() == "家族多色"
+    assert first_keyword.get_attribute("title") == "点击排除"
+
+    file_input.set_input_files({
+        "name": "invalid.txt",
+        "mimeType": "text/plain",
+        "buffer": b"not an image",
+    })
+    assert page.get_by_text("仅支持 JPG、PNG 或 WebP 图片。").is_visible()
 
     for _ in range(10):
         page.locator('input[type="file"]').set_input_files(str(IMAGE))

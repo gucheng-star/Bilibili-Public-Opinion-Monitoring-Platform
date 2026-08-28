@@ -27,6 +27,25 @@ const FONT_FAMILIES: Record<WordCloudFontFamily, string> = {
 };
 
 const STYLE_UPDATE_DEBOUNCE_MS = 350;
+const EMPTY_EXCLUDED_WORDS = new Set<string>();
+
+interface ScopeContentState {
+  scopeKey: string;
+  excluded: Set<string>;
+  maskEnabled: boolean;
+  sourceImageVisible: boolean;
+  pendingMaskVersion: number | null;
+}
+
+function createScopeContentState(scopeKey: string): ScopeContentState {
+  return {
+    scopeKey,
+    excluded: new Set(),
+    maskEnabled: false,
+    sourceImageVisible: false,
+    pendingMaskVersion: null,
+  };
+}
 
 function useDebouncedValue<T>(value: T, delay: number) {
   const [debounced, setDebounced] = useState(value);
@@ -45,9 +64,8 @@ function stableColor(word: string, colors: string[]) {
 
 function WordCloudCard({ keywords, className, status = 'ready', scopeKey = 'default' }: Props) {
   const [dark, setDark] = useState(isDarkMode);
-  const [excluded, setExcluded] = useState<Set<string>>(new Set());
+  const [scopeContent, setScopeContent] = useState(() => createScopeContentState(scopeKey));
   const [styleExpanded, setStyleExpanded] = useState(false);
-  const [maskEnabled, setMaskEnabled] = useState(false);
   const [colorMode, setColorMode] = useState<WordCloudColorMode>('default');
   const [singleColor, setSingleColor] = useState('#FB7299');
   const [customPalette, setCustomPalette] = useState(DEFAULT_PALETTE);
@@ -56,14 +74,24 @@ function WordCloudCard({ keywords, className, status = 'ready', scopeKey = 'defa
   const [minFontSize, setMinFontSize] = useState(10);
   const [maxFontSize, setMaxFontSize] = useState(56);
   const [fontFamily, setFontFamily] = useState<WordCloudFontFamily>('system');
-  const [sourceImageVisible, setSourceImageVisible] = useState(false);
   const [sourceImageOpacity, setSourceImageOpacity] = useState(0.25);
   const [chartSize, setChartSize] = useState<ImageSize | null>(null);
-  const [pendingMaskVersion, setPendingMaskVersion] = useState<number | null>(null);
+  const [maskResourceScopeKey, setMaskResourceScopeKey] = useState<string | null>(null);
   const chartRef = useRef<ReactECharts | null>(null);
   const chartAreaRef = useRef<HTMLDivElement | null>(null);
+  const currentScopeRef = useRef(scopeKey);
+  currentScopeRef.current = scopeKey;
   const mask = useWordCloudMask(chartSize);
   const clearMask = mask.removeMask;
+  const isCurrentScope = scopeContent.scopeKey === scopeKey;
+  // During the commit where scopeKey changes, effects have not yet cleaned the
+  // hook. Deriving these values here keeps the previous scope's content out of
+  // that first render.
+  const excluded = isCurrentScope ? scopeContent.excluded : EMPTY_EXCLUDED_WORDS;
+  const maskEnabled = isCurrentScope && scopeContent.maskEnabled;
+  const sourceImageVisible = isCurrentScope && scopeContent.sourceImageVisible;
+  const pendingMaskVersion = isCurrentScope ? scopeContent.pendingMaskVersion : null;
+  const isCurrentMaskResource = maskResourceScopeKey === scopeKey;
 
   // Theme changes happen outside this component's props. Listen locally so
   // memoization can safely ignore unrelated parent updates such as LLM polling.
@@ -97,18 +125,18 @@ function WordCloudCard({ keywords, className, status = 'ready', scopeKey = 'defa
   }, []);
 
   useEffect(() => {
-    setMaskEnabled(false);
-    setSourceImageVisible(false);
-    setPendingMaskVersion(null);
+    setScopeContent(createScopeContentState(scopeKey));
+    setMaskResourceScopeKey(null);
     clearMask();
   }, [clearMask, scopeKey]);
 
   useEffect(() => {
     if (pendingMaskVersion !== null && mask.appliedVersion === pendingMaskVersion) {
-      setMaskEnabled(true);
-      setPendingMaskVersion(null);
+      setScopeContent(current => current.scopeKey === scopeKey
+        ? { ...current, maskEnabled: true, pendingMaskVersion: null }
+        : current);
     }
-  }, [mask.appliedVersion, pendingMaskVersion]);
+  }, [mask.appliedVersion, pendingMaskVersion, scopeKey]);
 
   const activeKeywords = useMemo(
     () => keywords.filter(k => !excluded.has(k.word)).slice(0, 200),
@@ -116,11 +144,12 @@ function WordCloudCard({ keywords, className, status = 'ready', scopeKey = 'defa
   );
 
   const toggleWord = (word: string) => {
-    setExcluded(prev => {
-      const next = new Set(prev);
+    setScopeContent(current => {
+      if (current.scopeKey !== scopeKey) return current;
+      const next = new Set(current.excluded);
       if (next.has(word)) next.delete(word);
       else next.add(word);
-      return next;
+      return { ...current, excluded: next };
     });
   };
 
@@ -140,10 +169,13 @@ function WordCloudCard({ keywords, className, status = 'ready', scopeKey = 'defa
     return defaultColors;
   }, [colorMode, defaultColors, renderedCustomPalette, renderedFamilyColor, renderedFamilyMinOpacity, renderedSingleColor]);
   const validFontRange = minFontSize < maxFontSize;
-  const activeMask = maskEnabled ? mask.appliedMask : null;
+  const hasPendingMask = pendingMaskVersion !== null;
+  const hasCurrentMaskVersion = isCurrentMaskResource
+    && (!hasPendingMask || mask.appliedVersion === pendingMaskVersion);
+  const canEnableMask = Boolean(mask.appliedMask) && hasCurrentMaskVersion;
+  const activeMask = maskEnabled && hasCurrentMaskVersion ? mask.appliedMask : null;
 
   const resetStyle = () => {
-    setMaskEnabled(false);
     setColorMode('default');
     setSingleColor('#FB7299');
     setCustomPalette(DEFAULT_PALETTE);
@@ -152,19 +184,24 @@ function WordCloudCard({ keywords, className, status = 'ready', scopeKey = 'defa
     setMinFontSize(10);
     setMaxFontSize(56);
     setFontFamily('system');
-    setSourceImageVisible(false);
     setSourceImageOpacity(0.25);
+    setScopeContent(current => current.scopeKey === scopeKey
+      ? { ...current, maskEnabled: false, sourceImageVisible: false, pendingMaskVersion: null }
+      : current);
+    setMaskResourceScopeKey(null);
     mask.resetMask();
   };
 
   const removeMask = () => {
-    setMaskEnabled(false);
-    setSourceImageVisible(false);
+    setScopeContent(current => current.scopeKey === scopeKey
+      ? { ...current, maskEnabled: false, sourceImageVisible: false, pendingMaskVersion: null }
+      : current);
+    setMaskResourceScopeKey(null);
     mask.removeMask();
   };
 
   const sourceGraphic = useMemo(() => {
-    if (!sourceImageVisible || !mask.sourcePreviewUrl || !mask.sourceSize || !chartSize) return [];
+    if (!isCurrentMaskResource || !sourceImageVisible || !mask.sourcePreviewUrl || !mask.sourceSize || !chartSize) return [];
     const seriesSize = { width: chartSize.width * 0.95, height: chartSize.height * 0.95 };
     const rect = getContainRect(mask.sourceSize, seriesSize);
     return [{
@@ -180,7 +217,19 @@ function WordCloudCard({ keywords, className, status = 'ready', scopeKey = 'defa
         opacity: renderedSourceImageOpacity,
       },
     }];
-  }, [chartSize, mask.sourcePreviewUrl, mask.sourceSize, renderedSourceImageOpacity, sourceImageVisible]);
+  }, [chartSize, isCurrentMaskResource, mask.sourcePreviewUrl, mask.sourceSize, renderedSourceImageOpacity, sourceImageVisible]);
+
+  const selectMaskFile = (file: File) => {
+    const selectedScopeKey = scopeKey;
+    setMaskResourceScopeKey(selectedScopeKey);
+    void mask.selectFile(file).then(version => {
+      if (!version || currentScopeRef.current !== selectedScopeKey) return;
+      setMaskResourceScopeKey(selectedScopeKey);
+      setScopeContent(current => current.scopeKey === selectedScopeKey
+        ? { ...current, maskEnabled: false, pendingMaskVersion: version }
+        : current);
+    });
+  };
 
   const cloudOption = useMemo(() => ({
     tooltip: { show: true, formatter: '{b}: {c} \u6b21' },
@@ -225,14 +274,22 @@ function WordCloudCard({ keywords, className, status = 'ready', scopeKey = 'defa
       </div>
       {keywords.length > 0 && <WordCloudStylePanel
         expanded={styleExpanded} onExpandedChange={setStyleExpanded}
-        maskEnabled={maskEnabled} canEnableMask={mask.canEnableMask} onMaskEnabledChange={setMaskEnabled}
-        sourcePreviewUrl={mask.sourcePreviewUrl} maskPreviewUrl={mask.maskPreviewUrl}
+        maskEnabled={maskEnabled} canEnableMask={canEnableMask} onMaskEnabledChange={enabled => {
+          setScopeContent(current => current.scopeKey === scopeKey
+            ? { ...current, maskEnabled: enabled }
+            : current);
+        }}
+        sourcePreviewUrl={isCurrentMaskResource ? mask.sourcePreviewUrl : null} maskPreviewUrl={isCurrentMaskResource ? mask.maskPreviewUrl : null}
         threshold={mask.threshold} onThresholdChange={mask.setThreshold}
         inverted={mask.inverted} onInvertedChange={mask.setInverted}
-        processing={mask.status !== 'idle'} message={mask.message} drawableRatio={mask.drawableRatio}
-        onSelectFile={file => { void mask.selectFile(file).then(version => { if (version) setPendingMaskVersion(version); }); }}
+        processing={isCurrentMaskResource && mask.status !== 'idle'} message={isCurrentMaskResource ? mask.message : null} drawableRatio={isCurrentMaskResource ? mask.drawableRatio : null}
+        onSelectFile={selectMaskFile}
         onRemoveMask={removeMask}
-        sourceImageVisible={sourceImageVisible} onSourceImageVisibleChange={setSourceImageVisible}
+        sourceImageVisible={sourceImageVisible} onSourceImageVisibleChange={visible => {
+          setScopeContent(current => current.scopeKey === scopeKey
+            ? { ...current, sourceImageVisible: visible }
+            : current);
+        }}
         sourceImageOpacity={sourceImageOpacity} onSourceImageOpacityChange={setSourceImageOpacity}
         colorMode={colorMode} onColorModeChange={setColorMode}
         singleColor={singleColor} onSingleColorChange={setSingleColor}
