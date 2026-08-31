@@ -3,7 +3,7 @@
 //! The main executable is copied to `data/update-runner` before launch, so the
 //! copied process can atomically replace the original executable after its
 //! parent exits.
-use crate::portable::sha256_file;
+use crate::portable::{sha256_file, PortablePaths};
 use std::{
     env,
     ffi::OsStr,
@@ -17,12 +17,16 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use windows_sys::Win32::{
-    Foundation::CloseHandle,
+    Foundation::{CloseHandle, WAIT_OBJECT_0},
     Storage::FileSystem::{ReplaceFileW, REPLACEFILE_WRITE_THROUGH},
-    System::Threading::{OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE},
+    System::Threading::{
+        OpenEventW, OpenProcess, SetEvent, WaitForSingleObject, EVENT_MODIFY_STATE,
+        PROCESS_SYNCHRONIZE,
+    },
 };
 
 const HEALTH_WAIT: Duration = Duration::from_secs(60);
+const PARENT_EXIT_WAIT_MS: u32 = 90_000;
 pub const RUNNER_ARGUMENT: &str = "--portable-update-runner";
 static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -34,6 +38,7 @@ struct Arguments {
     parent_pid: u32,
     expected_version: String,
     expected_sha256: String,
+    ready_event: String,
 }
 
 pub fn run_update_runner() -> anyhow::Result<()> {
@@ -45,7 +50,20 @@ pub fn run_update_runner() -> anyhow::Result<()> {
 
 fn run() -> anyhow::Result<()> {
     let arguments = parse_arguments()?;
-    wait_for_parent(arguments.parent_pid);
+    let install_root = arguments
+        .data_dir
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("数据目录没有安装根目录"))?
+        .to_path_buf();
+    let paths = PortablePaths::from_install_root(install_root)?;
+    if paths.data_dir != arguments.data_dir {
+        anyhow::bail!("更新器数据目录与安装根目录不一致")
+    }
+    let _installation_lock = paths.acquire_update_lock()?;
+    signal_ready_event(&arguments.ready_event)?;
+    if !wait_for_parent(arguments.parent_pid) {
+        anyhow::bail!("等待桌面程序退出超时，已取消更新")
+    }
 
     let backup_root = arguments
         .data_dir
@@ -130,15 +148,15 @@ fn parse_arguments() -> anyhow::Result<Arguments> {
         anyhow::bail!("未指定内部更新器模式");
     }
     while let Some(key) = iterator.next() {
-        if !key.starts_with("--") {
+        if !is_update_option(&key) {
             anyhow::bail!("未知的更新器参数：{key}");
         }
-        values.insert(
-            key,
-            iterator
-                .next()
-                .ok_or_else(|| anyhow::anyhow!("参数缺少值"))?,
-        );
+        let value = iterator
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("参数缺少值"))?;
+        if values.insert(key.clone(), value).is_some() {
+            anyhow::bail!("更新器参数不能重复：{key}");
+        }
     }
     let required = |name: &str| -> anyhow::Result<String> {
         values
@@ -158,6 +176,13 @@ fn parse_arguments() -> anyhow::Result<Arguments> {
     {
         anyhow::bail!("更新校验值格式无效");
     }
+    let ready_event = required("--ready-event")?;
+    if !ready_event.starts_with("Local\\BiliOpinionUpdateReady-")
+        || ready_event.len() > 160
+        || ready_event.contains('\0')
+    {
+        anyhow::bail!("更新协调信号无效")
+    }
     Ok(Arguments {
         staged_executable,
         target_executable,
@@ -165,18 +190,50 @@ fn parse_arguments() -> anyhow::Result<Arguments> {
         parent_pid: required("--parent-pid")?.parse()?,
         expected_version: required("--expected-version")?,
         expected_sha256,
+        ready_event,
     })
 }
 
-fn wait_for_parent(pid: u32) {
+fn is_update_option(key: &str) -> bool {
+    matches!(
+        key,
+        "--staged-exe"
+            | "--target-exe"
+            | "--data-dir"
+            | "--parent-pid"
+            | "--expected-version"
+            | "--expected-sha256"
+            | "--ready-event"
+    )
+}
+
+fn signal_ready_event(name: &str) -> anyhow::Result<()> {
+    let wide = wide_value(OsStr::new(name))?;
+    // SAFETY: the GUI creates this unguessable, NUL-terminated event name.
+    let event = unsafe { OpenEventW(EVENT_MODIFY_STATE, 0, wide.as_ptr()) };
+    if event.is_null() {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    // SAFETY: event is valid until it is closed below.
+    let success = unsafe { SetEvent(event) };
+    unsafe { CloseHandle(event) };
+    if success == 0 {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    Ok(())
+}
+
+fn wait_for_parent(pid: u32) -> bool {
     // The parent may have already exited before OpenProcess is called; that is safe.
     // SAFETY: this only obtains a synchronization handle for the supplied process ID.
     let handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) };
-    if !handle.is_null() {
-        // SAFETY: handle is valid until closed below. 90 seconds is a conservative exit bound.
-        unsafe { WaitForSingleObject(handle, 90_000) };
-        unsafe { CloseHandle(handle) };
+    if handle.is_null() {
+        return true;
     }
+    let completed = unsafe { WaitForSingleObject(handle, PARENT_EXIT_WAIT_MS) } == WAIT_OBJECT_0;
+    // SAFETY: handle is valid until closed below.
+    unsafe { CloseHandle(handle) };
+    completed
 }
 
 fn validate_runner_paths(
@@ -329,7 +386,11 @@ fn rollback_program_file(target: &Path, backup: &Path) -> anyhow::Result<()> {
 }
 
 fn wide_path(path: &Path) -> anyhow::Result<Vec<u16>> {
-    let mut value: Vec<u16> = OsStr::new(path).encode_wide().collect();
+    wide_value(OsStr::new(path))
+}
+
+fn wide_value(value: &OsStr) -> anyhow::Result<Vec<u16>> {
+    let mut value: Vec<u16> = value.encode_wide().collect();
     if value.contains(&0) {
         anyhow::bail!("更新程序路径包含无效 NUL 字符");
     }
@@ -473,5 +534,18 @@ mod tests {
         assert!(validate_runner_paths(&data, &current, &staged, &data.join("target.exe")).is_err());
         assert!(validate_runner_paths(&data, &target, &staged, &target).is_err());
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn updater_accepts_only_the_fixed_internal_argument_set() {
+        assert!(is_update_option("--staged-exe"));
+        assert!(is_update_option("--ready-event"));
+        assert!(!is_update_option("--mcp-stdio"));
+        assert!(!is_update_option("--extra"));
+    }
+
+    #[test]
+    fn parent_exit_wait_has_a_finite_bound() {
+        assert_eq!(PARENT_EXIT_WAIT_MS, 90_000);
     }
 }

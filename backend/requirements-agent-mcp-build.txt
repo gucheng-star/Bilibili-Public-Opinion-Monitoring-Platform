@@ -1,0 +1,3 @@
+# Reproducible onefile build dependencies for the internal MCP component.
+-r requirements-agent-mcp-runtime.txt
+pyinstaller==6.21.0

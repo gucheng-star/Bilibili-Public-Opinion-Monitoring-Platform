@@ -39,6 +39,7 @@ jobs:
           python -m venv backend\venv
           backend\venv\Scripts\python.exe -m pip install --upgrade pip
           backend\venv\Scripts\python.exe -m pip install -r backend\requirements-portable.txt
+          backend\venv\Scripts\python.exe -m pip install -r backend\requirements-agent-mcp-build.txt
       - name: Run backend tests
         shell: pwsh
         run: |
@@ -66,6 +67,12 @@ jobs:
           $version = "${{ github.ref_name }}".TrimStart('v')
           .\scripts\assemble-portable.ps1 -Version $version
           "version=$version" >> $env:GITHUB_OUTPUT
+      - name: Smoke-test versioned release EXE MCP stdio mode
+        shell: pwsh
+        run: |
+          $version = "${{ steps.package.outputs.version }}"
+          $assetPath = Join-Path "dist\portable" "BiliOpinionMonitor-$version-windows-x64.exe"
+          backend\venv\Scripts\python.exe .\scripts\smoke-final-mcp.py $assetPath
       - name: Sign portable manifest payload
         shell: pwsh
         env:

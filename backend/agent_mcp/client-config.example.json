@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "bili-readonly-preview": {
+      "command": "D:\\path\\to\\BiliOpinionMonitor-<version>-windows-x64.exe",
+      "args": [
+        "--mcp-stdio"
+      ],
+      "env": {
+        "BILI_MCP_DB_PATH": "D:\\path\\to\\approved-copy\\data.db"
+      }
+    }
+  }
+}

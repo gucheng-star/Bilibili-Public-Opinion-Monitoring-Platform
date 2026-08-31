@@ -1,0 +1,3 @@
+# Product runtime for the internal read-only stdio MCP component.
+# Do not add the Inspector/CLI extra here.
+mcp==2.1.0

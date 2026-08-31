@@ -17,6 +17,8 @@ frontend/src-tauri/target/
 
 # Local desktop packaging outputs
 backend/dist/
+backend/dist-agent-mcp/
+frontend/src-tauri/resources/*.exe
 dist/
 
 # Environment & Secrets

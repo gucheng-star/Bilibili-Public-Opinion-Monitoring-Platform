@@ -59,6 +59,10 @@ if (-not (Test-Path -LiteralPath $outputExecutable -PathType Leaf)) {
     throw "Failed to create expected versioned portable executable: $outputExecutable"
 }
 
+$sourceHash = Get-Sha256Hex $desktopExecutable
 $hash = Get-Sha256Hex $outputExecutable
+if ($sourceHash -cne $hash) {
+    throw "Versioned portable executable does not match the Tauri build output."
+}
 Write-Output $outputExecutable
 Write-Output "SHA256=$hash"
