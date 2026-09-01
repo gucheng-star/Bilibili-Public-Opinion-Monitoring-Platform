@@ -1,19 +1,19 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import type { AnalysisMode, CommentData, SentimentLabel, SentimentLLM } from '../types';
+import { COMMENT_PAGE_SIZE, buildCommentTree, getCommentPreview, isLongComment, type CommentNode } from '../utils/commentTree';
 
-interface Props { comments: CommentData[]; mode: AnalysisMode; allCommentRpids: ReadonlySet<string>; showSource?: boolean; }
+interface Props {
+  comments: CommentData[];
+  mode: AnalysisMode;
+  allCommentRpids: ReadonlySet<string>;
+  showSource?: boolean;
+  sortBy: 'time' | 'likes';
+  onSortChange: (sortBy: 'time' | 'likes') => void;
+  page: number;
+  onPageChange: (page: number) => void;
+}
 
 type LlmSentimentLabel = keyof SentimentLLM;
-type CommentNode = { comment: CommentData; children: CommentNode[]; parentHidden: boolean };
-
-const COMMENT_PREVIEW_LENGTH = 72;
-
-function getCommentPreview(content: string): string {
-  const characters = Array.from(content);
-  return characters.length > COMMENT_PREVIEW_LENGTH
-    ? `${characters.slice(0, COMMENT_PREVIEW_LENGTH).join('')}…`
-    : content;
-}
 
 const TAG: Record<SentimentLabel, { label: string; bg: string; color: string }> = {
   positive: { label: '正面', bg: 'var(--green-soft)', color: 'var(--green)' },
@@ -36,21 +36,15 @@ const LLM_TAG: Record<LlmSentimentLabel, { label: string; bg: string; color: str
 
 const UNCLASSIFIED_TAG = { label: '未分类', bg: 'rgba(148,163,184,.06)', color: 'var(--text-muted)' };
 
-function commentKey(comment: CommentData, rpid = comment.rpid): string {
-  return `${comment.source_analysis_id ?? 'single'}:${rpid}`;
-}
+export default function CommentTable({ comments, mode, allCommentRpids, showSource = false, sortBy, onSortChange, page, onPageChange }: Props) {
+  const [expandedIds, setExpandedIds] = useState<ReadonlySet<number>>(new Set());
 
-export default function CommentTable({ comments, mode, allCommentRpids, showSource = false }: Props) {
-  const [sortBy, setSortBy] = useState<'time'|'likes'>('time');
-  const [page, setPage] = useState(1);
-  const pageSize = 30;
-
-  const tipEl = useRef<HTMLDivElement|null>(null);
+  const tipEl = useRef<HTMLDivElement | null>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const rafId = useRef(0);
   const hideTimer = useRef(0);
 
-  useEffect(() => { setPage(1); }, [mode, comments, sortBy]);
+  useEffect(() => { setExpandedIds(new Set()); }, [comments]);
 
   // Create persistent tooltip DOM element (portal style, command-style updates)
   useEffect(() => {
@@ -70,7 +64,7 @@ export default function CommentTable({ comments, mode, allCommentRpids, showSour
       // Confine: clamp to viewport
       const vw = window.innerWidth, vh = window.innerHeight;
       const rect = el.getBoundingClientRect();
-      const finalX = Math.min(Math.max(x, rect.width/2), vw - rect.width/2);
+      const finalX = Math.min(Math.max(x, rect.width / 2), vw - rect.width / 2);
       const finalY = Math.min(Math.max(y - 8, rect.height), vh - 4);
       el.style.left = finalX + 'px';
       el.style.top = finalY + 'px';
@@ -104,33 +98,27 @@ export default function CommentTable({ comments, mode, allCommentRpids, showSour
     }
   }, [moveTip]);
 
+  const toggleExpanded = (id: number) => {
+    hideTip();
+    setExpandedIds(current => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
   const sorted = useMemo(() => {
-    let list = [...comments];
-    list.sort((a,b) => sortBy==='likes' ? b.likes-a.likes : new Date(b.post_time||0).getTime()-new Date(a.post_time||0).getTime());
+    const list = [...comments];
+    list.sort((a, b) => sortBy === 'likes' ? b.likes - a.likes : new Date(b.post_time || 0).getTime() - new Date(a.post_time || 0).getTime());
     return list;
   }, [comments, sortBy]);
 
-  const treeRoots = useMemo(() => {
-    const nodesByRpid = new Map<string, CommentNode>();
-    sorted.forEach(comment => nodesByRpid.set(commentKey(comment), { comment, children: [], parentHidden: false }));
-    const roots: CommentNode[] = [];
-    nodesByRpid.forEach(node => {
-      const parent = node.comment.parent_rpid ? nodesByRpid.get(commentKey(node.comment, node.comment.parent_rpid)) : undefined;
-      if (parent && parent !== node) parent.children.push(node);
-      else {
-        node.parentHidden = Boolean(
-          node.comment.parent_rpid
-          && allCommentRpids.has(commentKey(node.comment, node.comment.parent_rpid))
-          && !parent,
-        );
-        roots.push(node);
-      }
-    });
-    return roots;
-  }, [sorted, allCommentRpids]);
+  const treeRoots = useMemo(() => buildCommentTree(sorted, allCommentRpids), [sorted, allCommentRpids]);
 
-  const pages = Math.max(1, Math.ceil(treeRoots.length/pageSize));
-  const pagedRoots = treeRoots.slice((page-1)*pageSize, page*pageSize);
+  const pages = Math.max(1, Math.ceil(treeRoots.length / COMMENT_PAGE_SIZE));
+  const safePage = Math.min(page, pages);
+  const pagedRoots = treeRoots.slice((safePage - 1) * COMMENT_PAGE_SIZE, safePage * COMMENT_PAGE_SIZE);
   const replyCount = sorted.length - treeRoots.length;
 
   const renderNode = (node: CommentNode, depth = 0): React.ReactNode[] => {
@@ -138,12 +126,14 @@ export default function CommentTable({ comments, mode, allCommentRpids, showSour
     const t = mode === 'llm'
       ? LLM_TAG[c.sentiment_llm_label as LlmSentimentLabel] || UNCLASSIFIED_TAG
       : TAG[c.sentiment_label] || TAG.neutral;
+    const long = isLongComment(c.content);
+    const expanded = expandedIds.has(c.id);
     return [
       <tr key={c.id} className={depth ? 'comment-tree-row comment-tree-row--reply' : 'comment-tree-row'}>
-        <td style={{padding:'.6rem .5rem',color:'var(--text-primary)'}} className="truncate" title={c.username}>{c.username}</td>
-        <td style={{padding:'.6rem .5rem',color:'var(--text-muted)',fontSize:'.6875rem'}}>{c.ip_location||'-'}</td>
+        <td style={{ padding: '.6rem .5rem', color: 'var(--text-primary)' }} className="truncate" title={c.username}>{c.username}</td>
+        <td style={{ padding: '.6rem .5rem', color: 'var(--text-muted)', fontSize: '.6875rem' }}>{c.ip_location || '-'}</td>
         {showSource && (
-          <td className="comment-table__source-column" style={{padding:'.6rem .5rem',color:'var(--text-secondary)',fontSize:'.6875rem'}}>
+          <td className="comment-table__source-column" style={{ padding: '.6rem .5rem', color: 'var(--text-secondary)', fontSize: '.6875rem' }}>
             <span
               className="comment-table__source-text"
               onMouseEnter={e => showTip(c.source_video_title || c.source_bv || '-', e.clientX, e.clientY)}
@@ -153,12 +143,30 @@ export default function CommentTable({ comments, mode, allCommentRpids, showSour
             </span>
           </td>
         )}
-        <td style={{padding:'.6rem .5rem',color:'var(--text-secondary)',cursor:'pointer'}}>
-          <div className="comment-tree__content" style={{paddingLeft: `${depth * 1.25}rem`}}
-            onMouseEnter={e=>{showTip(c.content,e.clientX,e.clientY);}}
-            onMouseLeave={hideTip}>
+        <td style={{ padding: '.6rem .5rem', color: 'var(--text-secondary)' }}>
+          <div className="comment-tree__content" style={{ paddingLeft: `${depth * 1.25}rem` }}>
             {depth > 0 && <span className="comment-tree__branch" aria-hidden="true">↳</span>}
-            <span className="comment-tree__text">{getCommentPreview(c.content)}</span>
+            {long ? (
+              <button
+                type="button"
+                className="comment-content-toggle"
+                aria-expanded={expanded}
+                onClick={() => toggleExpanded(c.id)}
+                onMouseEnter={e => { if (!expanded) showTip(c.content, e.clientX, e.clientY); }}
+                onMouseLeave={hideTip}
+              >
+                <span className="comment-tree__text">{expanded ? c.content : getCommentPreview(c.content)}</span>
+                <span className="comment-content-toggle__caret" aria-hidden="true">{expanded ? '收起' : '展开'}</span>
+              </button>
+            ) : (
+              <span
+                className="comment-tree__text"
+                onMouseEnter={e => showTip(c.content, e.clientX, e.clientY)}
+                onMouseLeave={hideTip}
+              >
+                {c.content}
+              </span>
+            )}
             {c.is_exact_duplicate && (
               <span className="duplicate-comment-tag" title="仅表示原始评论文本逐字符完全一致，不代表水军或异常账号">
                 相同内容 × {c.duplicate_group_size}
@@ -167,13 +175,13 @@ export default function CommentTable({ comments, mode, allCommentRpids, showSour
             {node.parentHidden && <span className="comment-parent-hidden">父评论已被当前筛选隐藏</span>}
           </div>
         </td>
-        <td style={{padding:'.6rem .5rem',textAlign:'center',color:'var(--text-secondary)',fontSize:'.8125rem'}}>{c.likes}</td>
-        <td style={{padding:'.6rem .5rem',textAlign:'center'}}>
-          <div style={{display:'inline-flex',justifyContent:'center'}}>
-            <span style={{fontSize:'.6875rem',padding:'.125rem .375rem',borderRadius:'.25rem',background:t.bg,color:t.color}}>{t.label}</span>
+        <td style={{ padding: '.6rem .5rem', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '.8125rem' }}>{c.likes}</td>
+        <td style={{ padding: '.6rem .5rem', textAlign: 'center' }}>
+          <div style={{ display: 'inline-flex', justifyContent: 'center' }}>
+            <span style={{ fontSize: '.6875rem', padding: '.125rem .375rem', borderRadius: '.25rem', background: t.bg, color: t.color }}>{t.label}</span>
           </div>
         </td>
-        <td style={{padding:'.6rem .5rem',color:'var(--text-muted)',fontSize:'.6875rem'}}>{c.post_time?new Date(c.post_time).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}):'-'}</td>
+        <td style={{ padding: '.6rem .5rem', color: 'var(--text-muted)', fontSize: '.6875rem' }}>{c.post_time ? new Date(c.post_time).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-'}</td>
       </tr>,
       ...node.children.flatMap(child => renderNode(child, depth + 1)),
     ];
@@ -181,25 +189,25 @@ export default function CommentTable({ comments, mode, allCommentRpids, showSour
 
   return <div className="card" ref={cardRef} onMouseMove={onCardMove}>
     <div className="flex items-center justify-between mb-3">
-      <h3 className="text-xs font-semibold text-secondary" style={{letterSpacing:'.05em'}}>评论列表 ({sorted.length})</h3>
+      <h3 className="text-xs font-semibold text-secondary" style={{ letterSpacing: '.05em' }}>评论列表 ({sorted.length})</h3>
       <div className="flex items-center gap-2">
         <span className="comment-tree__legend">{treeRoots.length} 个根评论 · {replyCount} 条回复</span>
-        <select value={sortBy} onChange={e=>setSortBy(e.target.value as any)} className="select-sm">
+        <select value={sortBy} onChange={e => onSortChange(e.target.value as 'time' | 'likes')} className="select-sm">
           <option value="time">按时间</option><option value="likes">按点赞</option>
         </select>
       </div>
     </div>
     <div className="overflow-x-auto">
-      <table className={`comment-table${showSource ? ' comment-table--with-source' : ''}`} style={{fontSize:'.8125rem',width:'100%'}}>
+      <table className={`comment-table${showSource ? ' comment-table--withSource' : ''}`} style={{ fontSize: '.8125rem', width: '100%' }}>
         <thead>
-          <tr style={{borderBottom:'1px solid var(--border)'}}>
-            <th style={{padding:'.5rem',textAlign:'left',fontWeight:500,color:'var(--text-muted)',fontSize:'.6875rem',letterSpacing:'.05em',width:'12%',minWidth:'72px'}}>用户</th>
-            <th style={{padding:'.5rem',textAlign:'left',fontWeight:500,color:'var(--text-muted)',fontSize:'.6875rem',letterSpacing:'.05em',width:'10%',minWidth:'60px'}}>IP属地</th>
-            {showSource && <th className="comment-table__source-column" style={{padding:'.5rem',textAlign:'left',fontWeight:500,color:'var(--text-muted)',fontSize:'.6875rem',letterSpacing:'.05em'}}>来源视频</th>}
-            <th className="comment-table__content-column" style={{padding:'.5rem',textAlign:'left',fontWeight:500,color:'var(--text-muted)',fontSize:'.6875rem',letterSpacing:'.05em'}}>内容</th>
-            <th style={{padding:'.5rem',textAlign:'center',fontWeight:500,color:'var(--text-muted)',fontSize:'.6875rem',letterSpacing:'.05em',width:'7%',minWidth:'50px'}}>点赞</th>
-            <th style={{padding:'.5rem',textAlign:'center',fontWeight:500,color:'var(--text-muted)',fontSize:'.6875rem',letterSpacing:'.05em',width:'9%',minWidth:'56px'}}>情感</th>
-            <th style={{padding:'.5rem',textAlign:'left',fontWeight:500,color:'var(--text-muted)',fontSize:'.6875rem',letterSpacing:'.05em',width:'12%',minWidth:'90px'}}>时间</th>
+          <tr style={{ borderBottom: '1px solid var(--border)' }}>
+            <th style={{ padding: '.5rem', textAlign: 'left', fontWeight: 500, color: 'var(--text-muted)', fontSize: '.6875rem', letterSpacing: '.05em', width: '12%', minWidth: '72px' }}>用户</th>
+            <th style={{ padding: '.5rem', textAlign: 'left', fontWeight: 500, color: 'var(--text-muted)', fontSize: '.6875rem', letterSpacing: '.05em', width: '10%', minWidth: '60px' }}>IP属地</th>
+            {showSource && <th className="comment-table__source-column" style={{ padding: '.5rem', textAlign: 'left', fontWeight: 500, color: 'var(--text-muted)', fontSize: '.6875rem', letterSpacing: '.05em' }}>来源视频</th>}
+            <th className="comment-table__content-column" style={{ padding: '.5rem', textAlign: 'left', fontWeight: 500, color: 'var(--text-muted)', fontSize: '.6875rem', letterSpacing: '.05em' }}>内容</th>
+            <th style={{ padding: '.5rem', textAlign: 'center', fontWeight: 500, color: 'var(--text-muted)', fontSize: '.6875rem', letterSpacing: '.05em', width: '7%', minWidth: '50px' }}>点赞</th>
+            <th style={{ padding: '.5rem', textAlign: 'center', fontWeight: 500, color: 'var(--text-muted)', fontSize: '.6875rem', letterSpacing: '.05em', width: '9%', minWidth: '56px' }}>情感</th>
+            <th style={{ padding: '.5rem', textAlign: 'left', fontWeight: 500, color: 'var(--text-muted)', fontSize: '.6875rem', letterSpacing: '.05em', width: '12%', minWidth: '90px' }}>时间</th>
           </tr>
         </thead>
         <tbody>
@@ -207,10 +215,10 @@ export default function CommentTable({ comments, mode, allCommentRpids, showSour
         </tbody>
       </table>
     </div>
-    {pages>1 && <div className="flex items-center justify-center gap-2 mt-3">
-      <button onClick={()=>setPage(Math.max(1,page-1))} disabled={page===1} style={{padding:'.25rem .5rem',fontSize:'.75rem',color:'var(--text-secondary)',background:'transparent',border:'1px solid var(--border)',borderRadius:'.25rem',cursor:'pointer',opacity:page===1?.4:1}}>上一页</button>
-      <span className="text-xs text-muted">{page} / {pages}</span>
-      <button onClick={()=>setPage(Math.min(pages,page+1))} disabled={page===pages} style={{padding:'.25rem .5rem',fontSize:'.75rem',color:'var(--text-secondary)',background:'transparent',border:'1px solid var(--border)',borderRadius:'.25rem',cursor:'pointer',opacity:page===pages?.4:1}}>下一页</button>
+    {pages > 1 && <div className="flex items-center justify-center gap-2 mt-3">
+      <button onClick={() => onPageChange(Math.max(1, safePage - 1))} disabled={safePage === 1} style={{ padding: '.25rem .5rem', fontSize: '.75rem', color: 'var(--text-secondary)', background: 'transparent', border: '1px solid var(--border)', borderRadius: '.25rem', cursor: 'pointer', opacity: safePage === 1 ? .4 : 1 }}>上一页</button>
+      <span className="text-xs text-muted">{safePage} / {pages}</span>
+      <button onClick={() => onPageChange(Math.min(pages, safePage + 1))} disabled={safePage === pages} style={{ padding: '.25rem .5rem', fontSize: '.75rem', color: 'var(--text-secondary)', background: 'transparent', border: '1px solid var(--border)', borderRadius: '.25rem', cursor: 'pointer', opacity: safePage === pages ? .4 : 1 }}>下一页</button>
     </div>}
   </div>;
 }

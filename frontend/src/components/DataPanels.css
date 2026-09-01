@@ -70,6 +70,7 @@
 .history-panel__record.is-selected::after { right: .5rem; left: .5rem; height: 3px; opacity: 1; transform: scaleX(1); }
 .history-panel__item:hover .history-panel__record.is-selected, .history-panel__item:focus-within .history-panel__record.is-selected { border-color: var(--accent-hover); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 40%, transparent), var(--shadow-hover); }
 .history-panel__record-title { color: var(--text-primary); font-weight: 600; }
+.history-panel__record--group { padding-right: 3.4rem; }
 .history-panel__record.is-selected .history-panel__record-title { color: var(--accent); }
 .history-panel__record-meta { margin-top: .08rem; color: var(--text-muted); font-size: .625rem; }
 .history-panel__record--select { display:grid; grid-template-columns:auto minmax(0,1fr); column-gap:.45rem; align-items:center; cursor:pointer; }

@@ -7,6 +7,9 @@
 .app-brand__icon { width: 2rem; height: 2rem; flex: 0 0 auto; border-radius: .55rem; box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent), 0 .35rem 1rem color-mix(in srgb, var(--accent) 16%, transparent); }
 .app-brand__mark { color:var(--accent); font-size:1.25rem; font-weight:750; }
 .app-brand__name { color:var(--text-primary); font-size:1rem; font-weight:650; }
+.app-header__new-btn { display:inline-flex; align-items:center; padding:.3rem .6rem; border:1px solid var(--border-accent); border-radius:var(--radius-sm); color:var(--accent); background:color-mix(in srgb, var(--bg-card) 88%, transparent); font-size:.75rem; font-weight:600; cursor:pointer; transition:color .18s ease, background .18s ease, border-color .18s ease; }
+.app-header__new-btn:hover { color:var(--text-primary); background:var(--bg-card-hover); }
+.app-header__new-btn:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
 .command-deck { position: relative; padding: .8rem; border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--border)); border-radius: .75rem; background: linear-gradient(100deg, color-mix(in srgb, var(--accent) 8%, var(--bg-card)), var(--bg-card)); box-shadow: inset 0 1px 0 color-mix(in srgb, white 12%, transparent); }
 .command-deck__label { display: flex; align-items: center; gap: .45rem; margin: 0 0 .55rem .1rem; color: var(--text-muted); font: 600 .62rem/1 ui-monospace, SFMono-Regular, Consolas, monospace; letter-spacing: .14em; }
 .command-deck__label span { width: 1.65rem; height: 1px; background: var(--accent); }
@@ -48,9 +51,10 @@
 }
 .app-header button:focus-visible, .app-main button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 @media (max-width: 640px) {
-  .app-header__bar { align-items: center; flex-wrap: wrap; gap: .75rem; }
-  .app-brand { width: 100%; white-space: nowrap; }
-  .app-header__actions { width: 100%; justify-content: flex-end; }
+  .app-header__bar { min-width: 0; }
+  .app-brand { min-width: 0; }
+  .app-brand__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .app-header__actions { flex: 0 0 auto; }
   .command-deck { padding: .65rem; }
   .app-toast { width: calc(100% - 2rem); text-align: center; }
 }

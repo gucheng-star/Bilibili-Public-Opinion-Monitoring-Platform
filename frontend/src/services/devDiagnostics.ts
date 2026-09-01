@@ -29,7 +29,7 @@ type Breadcrumb = {
 };
 export type DiagnosticState = {
   route?: string;
-  view_type?: 'single' | 'group' | 'settings';
+  view_type?: 'single' | 'group' | 'settings' | 'comments';
   analysis_id?: number | null;
   group_id?: number | null;
   analysis_mode?: 'nlp' | 'llm';

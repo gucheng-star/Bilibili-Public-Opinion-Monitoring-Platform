@@ -7,7 +7,8 @@ import GenderChart from './components/GenderChart';
 import RegionMap from './components/RegionMap';
 import WordCloudCard from './components/WordCloudCard';
 import HeatTimeline from './components/HeatTimeline';
-import CommentTable from './components/CommentTable';
+import CommentEntryCard from './components/CommentEntryCard';
+import { AnalysisCommentDetailPage, GroupCommentDetailPage } from './components/CommentDetailPage';
 import HistoryPanel from './components/HistoryPanel';
 import ThemeToggle from './components/ThemeToggle';
 import LoginPage from './components/LoginPage';
@@ -23,24 +24,16 @@ import { checkForUpdates, downloadUpdate, installDownloadedUpdate, isDesktopRunt
 import { activeFilterFields, recordBreadcrumb, setDiagnosticState, type DiagnosticState } from './services/devDiagnostics';
 import { LatestRequestGuard, runConfirmedWorkflowTransition } from './services/latestRequestGuard';
 import type { AnalysisResult, FilterState, AnalysisMode, KeywordItem, SentimentLLM } from './types';
+import { EMPTY_FILTERS, applyCommentFilters, applyDuplicateMode, buildDuplicateGroups, listRegions, normalizeProvince } from './utils/commentFilters';
+import { filtersEqual, filtersSearchString, searchParamsToFilters } from './utils/commentQuery';
+import { buildCommentTree, commentKey } from './utils/commentTree';
 import './AppShell.css';
 
-const PROVINCES = new Set(['北京','天津','上海','重庆','河北','山西','辽宁','吉林','黑龙江','江苏','浙江','安徽','福建','江西','山东','河南','湖北','湖南','广东','海南','四川','贵州','云南','陕西','甘肃','青海','台湾','内蒙古','广西','西藏','宁夏','新疆','香港','澳门']);
 const LLM_EMOTIONS: (keyof SentimentLLM)[] = ['neutral', 'joy', 'support', 'anticipation', 'surprise', 'anger', 'sadness', 'concern', 'disgust', 'sarcasm'];
 const EMPTY_SEARCH_DRAFT: SearchDraft = { rawInput: '', bv: '', videoInfo: null };
-const EMPTY_FILTERS: FilterState = { gender: 'all', dateFrom: '', dateTo: '', region: '', sentiment: 'all', duplicateMode: 'include', sourceAnalysisId: 'all' };
 
 function getLlmProgressText(processed: number, total: number): string {
   return `正在分析评论 ${Math.min(processed, total)} / ${total}`;
-}
-
-function normalizeProvince(raw: string): string {
-  const s = (raw || '').replace(/^IP属地[：:]/, '');
-  if (!s || s === '未知' || s === '其它' || s === '中国') return '';
-  if (PROVINCES.has(s)) return s;
-  for (const p of PROVINCES) { if (s.startsWith(p)) return p; }
-  if (s.startsWith('中国') && s.length > 2) { const sf = s.slice(2); if (PROVINCES.has(sf)) return sf; }
-  return s;
 }
 
 function App() {
@@ -64,6 +57,9 @@ function App() {
   const [searchDraft, setSearchDraft] = useState<SearchDraft>(() => ({ ...EMPTY_SEARCH_DRAFT }));
   const cancelRef = useRef(false);
   const workflowGuardRef = useRef(new LatestRequestGuard());
+  const commandDeckRef = useRef<HTMLElement>(null);
+  const scrolledPastRef = useRef(false);
+  const [scrolledPast, setScrolledPast] = useState(false);
 
   const [analysisMode, setAnalysisMode] = useState<AnalysisMode>('nlp');
   const [maxComments, setMaxComments] = useState(100);
@@ -80,9 +76,15 @@ function App() {
   const [updateBusy, setUpdateBusy] = useState(false);
   const [closeRequest, setCloseRequest] = useState<{ requestId?: string } | null>(null);
   const currentDiagnosticFilters = selectedGroupId === null ? filters : groupFilters[selectedGroupId] || EMPTY_FILTERS;
+  const analysisCommentsId = /^\/analysis\/(\d+)\/comments$/.exec(location.pathname)?.[1];
+  const groupCommentsId = /^\/analysis-groups\/(\d+)\/comments$/.exec(location.pathname)?.[1];
   const boundaryDiagnosticState: DiagnosticState = location.pathname === '/settings'
     ? { route: location.pathname, view_type: 'settings' }
-    : selectedGroupId !== null
+    : analysisCommentsId
+      ? { route: location.pathname, view_type: 'comments', analysis_id: Number(analysisCommentsId) }
+      : groupCommentsId
+        ? { route: location.pathname, view_type: 'comments', group_id: Number(groupCommentsId) }
+        : selectedGroupId !== null
       ? {
           route: location.pathname,
           view_type: 'group',
@@ -119,6 +121,7 @@ function App() {
   }, [currentDiagnosticFilters]);
   useEffect(() => {
     if (location.pathname !== '/settings' && selectedGroupId !== null) return;
+    if (/^\/(analysis|analysis-groups)\/\d+\/comments$/.test(location.pathname)) return;
     setDiagnosticState({
       route: location.pathname,
       view_type: location.pathname === '/settings' ? 'settings' : 'single',
@@ -140,9 +143,49 @@ function App() {
 
   useEffect(() => { getAuthStatus().then(d=>setLoggedIn(d.logged_in)).catch(()=>setLoggedIn(false)); }, []);
   useEffect(() => { getSettings().then(s => { setHasApiKey(s.llm.sentiment.has_api_key); }).catch(() => {}); }, []);
+  // Restore filters from the workspace URL on first load (refresh / shared link).
+  useEffect(() => {
+    if (location.pathname !== '/') return;
+    const parsed = searchParamsToFilters(new URLSearchParams(location.search), EMPTY_FILTERS);
+    if (!filtersEqual(parsed, EMPTY_FILTERS)) setFilters(parsed);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // Mirror active filters into the workspace URL so refresh and share stay stable.
+  useEffect(() => {
+    if (location.pathname !== '/') return;
+    const search = filtersSearchString(filters);
+    if (search !== location.search) navigate({ pathname: '/', search }, { replace: true });
+  }, [filters, location.pathname, location.search, navigate]);
   useEffect(() => {
     setFilters(current => current.sentiment === 'all' ? current : { ...current, sentiment: 'all' });
   }, [results?.mode]);
+
+  useEffect(() => {
+    if (!isWorkspacePage) {
+      scrolledPastRef.current = false;
+      setScrolledPast(false);
+      return;
+    }
+    const onScroll = () => {
+      const el = commandDeckRef.current;
+      const nextScrolledPast = el ? el.getBoundingClientRect().bottom < 0 : false;
+      if (nextScrolledPast === scrolledPastRef.current) return;
+      scrolledPastRef.current = nextScrolledPast;
+      setScrolledPast(nextScrolledPast);
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    onScroll();
+    return () => window.removeEventListener('scroll', onScroll);
+  }, [isWorkspacePage]);
+
+  const handleNewAnalysis = () => {
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    window.scrollTo({ top: 0, behavior: reduceMotion ? 'auto' : 'smooth' });
+    requestAnimationFrame(() => {
+      const input = commandDeckRef.current?.querySelector('input');
+      input?.focus({ preventScroll: true });
+    });
+  };
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(()=>setToast(null), 4000); };
 
@@ -353,6 +396,7 @@ function App() {
         setResults(null);
         setAnalysisId(null);
         setSelectedGroupId(null);
+        setFilters({ ...EMPTY_FILTERS });
         setSearchDraft({ ...EMPTY_SEARCH_DRAFT });
         navigate('/', { replace: true });
       });
@@ -378,70 +422,47 @@ function App() {
     setStatusText('');
   }, []);
   const handleApplyFilters = (f: FilterState) => { setFilters(f); };
+  const handleGroupFiltersChange = useCallback((groupId: number, next: FilterState) => {
+    setGroupFilters(current => ({ ...current, [groupId]: next }));
+  }, []);
+  const handleDetailLoadAnalysis = useCallback((data: AnalysisResult) => {
+    setSelectedGroupId(null);
+    setReanalyzing(false);
+    setLoading(false);
+    setStatusText('');
+    setError(null);
+    setResults(data);
+    setAnalysisId(data.analysis_id);
+    setAnalysisMode(data.mode);
+    setFilters({ ...EMPTY_FILTERS });
+  }, []);
   const resolveClose = async (action: 'exit' | 'tray' | 'cancel') => {
     if (action === 'exit') await prepareRuntimeExit().catch(() => {});
     await respondToCloseRequest(action, closeRequest?.requestId).catch(() => {});
     setCloseRequest(null);
   };
 
-  const duplicateFilteredComments = useMemo(() => {
-    if (!results) return [];
-    if (filters.duplicateMode === 'deduplicate') {
-      return results.comments.filter(comment => !comment.is_exact_duplicate || comment.is_duplicate_canonical);
-    }
-    if (filters.duplicateMode === 'exclude_groups') {
-      return results.comments.filter(comment => !comment.is_exact_duplicate);
-    }
-    return results.comments;
-  }, [results, filters.duplicateMode]);
+  const duplicateFilteredComments = useMemo(
+    () => (results ? applyDuplicateMode(results.comments, filters.duplicateMode) : []),
+    [results, filters.duplicateMode],
+  );
 
-  const filteredComments = useMemo(() => {
-    let comments = [...duplicateFilteredComments];
-    if (filters.gender === 'male') comments = comments.filter(c => c.gender === '男');
-    if (filters.gender === 'female') comments = comments.filter(c => c.gender === '女');
-    if (filters.dateFrom) comments = comments.filter(c => c.post_time && c.post_time.slice(0, 10) >= filters.dateFrom);
-    if (filters.dateTo) comments = comments.filter(c => c.post_time && c.post_time.slice(0, 10) <= filters.dateTo);
-    if (filters.region) { comments = comments.filter(c => normalizeProvince(c.ip_location) === filters.region); }
-    if (filters.sentiment !== 'all') {
-      comments = results?.mode === 'llm'
-        ? comments.filter(c => c.sentiment_llm_label === filters.sentiment)
-        : comments.filter(c => c.sentiment_label === filters.sentiment);
-    }
-    return comments;
-  }, [results, filters, duplicateFilteredComments]);
+  const filteredComments = useMemo(
+    () => (results ? applyCommentFilters(results.comments, filters, results.mode) : []),
+    [results, filters],
+  );
 
-  const duplicateGroups = useMemo(() => {
-    if (!results) return [];
-    const groups = new Map<string, typeof results.comments>();
-    for (const comment of results.comments) {
-      if (!comment.duplicate_group_key) continue;
-      const members = groups.get(comment.duplicate_group_key) || [];
-      members.push(comment);
-      groups.set(comment.duplicate_group_key, members);
-    }
-    return Array.from(groups.entries()).map(([key, members]) => {
-      let firstPostTime: string | null = null;
-      let lastPostTime: string | null = null;
-      for (const member of members) {
-        const postTime = member.post_time;
-        if (!postTime) continue;
-        if (!firstPostTime || postTime < firstPostTime) firstPostTime = postTime;
-        if (!lastPostTime || postTime > lastPostTime) lastPostTime = postTime;
-      }
-      return {
-        key,
-        content: members[0]?.content || '',
-        count: members.length,
-        firstPostTime,
-        lastPostTime,
-      };
-    }).sort((left, right) => right.count - left.count || left.key.localeCompare(right.key));
-  }, [results]);
+  const duplicateGroups = useMemo(() => buildDuplicateGroups(results?.comments || []), [results]);
 
   const allCommentRpids = useMemo(
-    () => new Set((results?.comments || []).map(comment => String(comment.rpid))),
+    () => new Set((results?.comments || []).map(comment => commentKey(comment))),
     [results],
   );
+
+  const entryTreeStats = useMemo(() => {
+    const roots = buildCommentTree(filteredComments, allCommentRpids);
+    return { rootCount: roots.length, replyCount: filteredComments.length - roots.length };
+  }, [filteredComments, allCommentRpids]);
 
   const filteredSentiment = useMemo(() => ({
     positive: filteredComments.filter(c => c.sentiment_label === 'positive').length,
@@ -519,12 +540,7 @@ function App() {
       });
   }, [analysisId, filteredComments.length, filters, results]);
 
-  const availableRegions = useMemo(() => {
-    if (!results) return [];
-    const s = new Set<string>();
-    results.comments.forEach(c => { const p = normalizeProvince(c.ip_location); if (p) s.add(p); });
-    return Array.from(s).sort();
-  }, [results]);
+  const availableRegions = useMemo(() => listRegions(results?.comments || []), [results]);
 
   if (loggedIn === null) return <div className="app-shell app-shell--booting" aria-label="正在加载应用"><div className="pulse-dot"></div></div>;
   if (!loggedIn) return <LoginPage onLogin={()=>setLoggedIn(true)}/>;
@@ -532,29 +548,19 @@ function App() {
   return (
     <div className="app-shell min-h-screen">
       <header className="app-header sticky top-0 z-10">
-        <div className="app-header__inner max-w-7xl mx-auto px-4 py-4" key={`header-${location.pathname}`}>
-          <div className="app-header__bar route-reveal-element flex items-center justify-between mb-3">
+        <div className="app-header__inner max-w-7xl mx-auto px-4 py-3" key={`header-${location.pathname}`}>
+          <div className="app-header__bar route-reveal-element flex items-center justify-between">
             <div className="app-brand flex items-center gap-2">
               <img className="app-brand__icon" src="/signal-observatory-icon.png" alt="" aria-hidden="true" />
               <span className="app-brand__mark">B站</span>
               <span className="app-brand__name">舆论监测平台</span>
             </div>
             <div className="app-header__actions flex items-center gap-3">
+              {scrolledPast && (results !== null || selectedGroupId !== null) && <button type="button" className="app-header__new-btn" onClick={handleNewAnalysis}>新建分析</button>}
               {isWorkspacePage && <SettingsEntry />}
               <ThemeToggle/>
             </div>
           </div>
-          {isWorkspacePage && <section className="command-deck route-reveal-element" aria-label="视频分析指令舱">
-            <div className="command-deck__label"><span aria-hidden="true"></span>VIDEO SIGNAL COMMAND</div>
-            <SearchBar
-              onAnalyze={handleAnalyze}
-              loading={loading}
-              maxComments={maxComments}
-              delay={delay}
-              draft={searchDraft}
-              onDraftChange={setSearchDraft}
-            />
-          </section>}
         </div>
       </header>
       <div className="header-accent-line" />
@@ -576,6 +582,17 @@ function App() {
         )} />
         <Route path="/" element={(
       <main className="app-main app-route-page max-w-7xl mx-auto px-4 py-6">
+        <section ref={commandDeckRef} className="command-deck route-reveal-element" aria-label="视频分析指令舱">
+          <div className="command-deck__label"><span aria-hidden="true"></span>VIDEO SIGNAL COMMAND</div>
+          <SearchBar
+            onAnalyze={handleAnalyze}
+            loading={loading}
+            maxComments={maxComments}
+            delay={delay}
+            draft={searchDraft}
+            onDraftChange={setSearchDraft}
+          />
+        </section>
         {error && <div className="app-alert app-alert--error" role="alert">{error}</div>}
         <section className="history-rail mb-4" aria-label="历史记录">
           <button onClick={()=>setShowHistory(!showHistory)} className="history-rail__toggle flex items-center gap-1 text-xs text-muted mb-2" aria-expanded={showHistory}>
@@ -652,7 +669,15 @@ function App() {
           <div className="card-enter mt-4">
             <HeatTimeline timeline={filteredHeat.timeline} hourlyDistribution={filteredHeat.hourly_distribution} peakHour={filteredHeat.peak_hour} peakCount={filteredHeat.peak_count}/>
           </div>
-          <div className="card-enter mt-4"><CommentTable comments={filteredComments} mode={analysisMode} allCommentRpids={allCommentRpids}/></div>
+          <div className="card-enter mt-4">
+            <CommentEntryCard
+              total={filteredComments.length}
+              rootCount={entryTreeStats.rootCount}
+              replyCount={entryTreeStats.replyCount}
+              to={`/analysis/${analysisId}/comments`}
+              search={filtersSearchString(filters)}
+            />
+          </div>
         </>}
         </>}
 
@@ -675,6 +700,20 @@ function App() {
           </div>
         )}
       </main>
+        )} />
+        <Route path="/analysis/:analysisId/comments" element={(
+          <AnalysisCommentDetailPage
+            results={results}
+            filters={filters}
+            onFiltersChange={handleApplyFilters}
+            onLoadAnalysis={handleDetailLoadAnalysis}
+          />
+        )} />
+        <Route path="/analysis-groups/:groupId/comments" element={(
+          <GroupCommentDetailPage
+            groupFilters={groupFilters}
+            onGroupFiltersChange={handleGroupFiltersChange}
+          />
         )} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
