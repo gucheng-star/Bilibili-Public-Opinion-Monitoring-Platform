@@ -18,8 +18,13 @@
 .app-alert { margin-bottom: .75rem; padding: .55rem .8rem; border: 1px solid; border-radius: .45rem; font-size: .75rem; font-weight: 600; }
 .app-alert--error { color: var(--red); background: var(--red-soft); border-color: var(--red); }
 .app-alert--status { color: var(--green); background: var(--green-soft); border-color: var(--green); }
-.history-rail { position: relative; padding: .65rem .8rem .05rem; border-left: 2px solid color-mix(in srgb, var(--accent) 62%, var(--border)); background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 5%, transparent), transparent 65%); }
-.history-rail__toggle { border: 0; padding: 0; background: none; cursor: pointer; }
+.history-rail { position: relative; margin-top: .5rem; }
+.history-rail__card { position: relative; padding: .65rem .8rem .05rem; overflow: hidden; border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border)); border-radius: var(--radius-lg); background: linear-gradient(100deg, color-mix(in srgb, var(--accent) 7%, var(--bg-card)), var(--bg-card)); box-shadow: inset 0 1px 0 color-mix(in srgb, white 8%, transparent), var(--shadow-sm); }
+.history-rail__card::before { position: absolute; inset: 0 auto 0 0; width: 2px; content: ''; background: linear-gradient(180deg, var(--accent), color-mix(in srgb, var(--accent) 24%, transparent)); }
+.history-rail__toggle { position: relative; z-index: 1; display: inline-flex; border: 0; padding: .25rem .35rem; color: var(--text-muted); background: color-mix(in srgb, var(--bg-card) 72%, transparent); border-radius: var(--radius-sm); cursor: pointer; transition: color .18s ease, background .18s ease; }
+.history-rail__toggle:hover { color: var(--text-primary); background: var(--accent-soft); }
+.history-rail__toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.history-rail__card > .history-panel { border-color: transparent; background: transparent; box-shadow: none; }
 .app-state { min-height: 18rem; border: 1px dashed color-mix(in srgb, var(--border) 78%, var(--accent)); border-radius: .75rem; background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 3%, var(--bg-card)), var(--bg-card)); }
 .app-state__pulse { width: .875rem; height: .875rem; margin-bottom: 1.5rem; }
 .app-state__empty-icon { opacity: .24; color: var(--accent); }

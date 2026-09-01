@@ -32,7 +32,20 @@ def rgba_png(width: int, height: int, pixel: bytes) -> bytes:
 
 with sync_playwright() as playwright:
     browser = playwright.chromium.launch(headless=True)
-    page = browser.new_page(viewport={"width": 1280, "height": 900}, accept_downloads=True)
+    page = browser.new_page(viewport={"width": 1115, "height": 898}, accept_downloads=True)
+    page.add_init_script(
+        """
+        (() => {
+          let count = 0;
+          const dispatch = EventTarget.prototype.dispatchEvent;
+          EventTarget.prototype.dispatchEvent = function(event) {
+            if (event?.type === 'wordcloudstart') count += 1;
+            return dispatch.call(this, event);
+          };
+          Object.defineProperty(window, '__wordCloudStartCount', { get: () => count });
+        })();
+        """
+    )
     console_problems: list[str] = []
     failed_requests: list[str] = []
     request_urls: list[str] = []
@@ -51,11 +64,39 @@ with sync_playwright() as playwright:
 
     started = perf_counter()
     page.goto(URL, wait_until="networkidle")
-    page.get_by_role("heading", name="词云").wait_for()
+    page.get_by_role("heading", name="词云", exact=True).wait_for()
     initial_seconds = perf_counter() - started
     assert page.get_by_text("词频列表 (200)").is_visible()
+    page.wait_for_timeout(250)
+    initial_layout_count = page.evaluate("window.__wordCloudStartCount")
+    assert initial_layout_count == 1, initial_layout_count
 
-    page.get_by_role("button", name="词云样式").click()
+    style_trigger = page.get_by_role("button", name="样式设置", exact=True)
+    card_height = page.locator(".wordcloud-card").bounding_box()["height"]
+    style_trigger.click()
+    drawer = page.get_by_role("dialog", name="词云样式设置")
+    drawer.wait_for()
+    assert style_trigger.get_attribute("aria-expanded") == "true"
+    assert drawer.get_attribute("aria-modal") == "false"
+    opened_card_height = page.locator(".wordcloud-card").bounding_box()["height"]
+    assert abs(opened_card_height - card_height) < 2
+    assert page.evaluate("document.activeElement?.getAttribute('aria-label')") == "关闭词云样式设置"
+    page.get_by_role("button", name="关闭词云样式设置", exact=True).click()
+    drawer.wait_for(state="detached")
+    page.wait_for_function("document.activeElement?.textContent?.trim() === '样式设置'")
+    style_trigger.click()
+    drawer.wait_for()
+    style_trigger.click()
+    drawer.wait_for(state="detached")
+    page.wait_for_function("document.activeElement?.textContent?.trim() === '样式设置'")
+    style_trigger.click()
+    drawer.wait_for()
+    page.keyboard.press("Escape")
+    drawer.wait_for(state="detached")
+    page.wait_for_function("document.activeElement?.textContent?.trim() === '样式设置'")
+    style_trigger.click()
+    drawer.wait_for()
+    page.get_by_role("tab", name="轮廓蒙版").click()
     started = perf_counter()
     file_input = page.locator('input[type="file"]')
     file_input.set_input_files(str(IMAGE))
@@ -85,15 +126,16 @@ with sync_playwright() as playwright:
     page.wait_for_function("document.querySelector('input[aria-label=\"启用轮廓蒙版\"]')?.checked === true")
     first_ratio = page.locator(".wordcloud-style__area").inner_text()
 
+    page.get_by_role("tab", name="基础样式").click()
     min_size = page.get_by_label("最小字号")
     max_size = page.get_by_label("最大字号")
     min_size.fill("1")
     assert min_size.input_value() == "1"
-    page.get_by_role("heading", name="词云").click()
+    page.get_by_role("heading", name="词云", exact=True).click()
     assert min_size.input_value() == "8"
     max_size.fill("0")
     assert max_size.input_value() == "0"
-    page.get_by_role("heading", name="词云").click()
+    page.get_by_role("heading", name="词云", exact=True).click()
     assert max_size.input_value() == "24"
 
     min_size.fill("40")
@@ -134,12 +176,14 @@ with sync_playwright() as playwright:
     assert family_opacity.input_value() == "70"
     page.get_by_role("button", name="字体").click()
     page.get_by_role("option", name="微软雅黑").click()
+    page.get_by_role("tab", name="轮廓蒙版").click()
     page.get_by_label("在词云中叠加原图").check()
     overlay_range = page.locator(".wordcloud-style__source-overlay input[type='range']")
     overlay_range.fill("35")
     assert overlay_range.input_value() == "35"
     page.screenshot(path=str(SCREENSHOT_DIR / "wordcloud-mask-wide.png"), full_page=True)
 
+    page.get_by_role("tab", name="轮廓蒙版").click()
     threshold_range = page.locator(".wordcloud-style__section").first.locator("input[type='range']").first
     threshold_range.fill("210")
     assert page.locator(".wordcloud-style__area").inner_text() == first_ratio
@@ -157,6 +201,7 @@ with sync_playwright() as playwright:
     inverted_ratio = page.locator(".wordcloud-style__area").inner_text()
     assert inverted_ratio != first_ratio
 
+    page.get_by_role("tab", name="基础样式").click()
     page.get_by_label("最小字号").fill("12")
     page.get_by_label("最小字号").press("Enter")
     page.get_by_label("最大字号").fill("60")
@@ -171,22 +216,27 @@ with sync_playwright() as playwright:
     page.get_by_role("button", name="切换筛选加载").click()
     assert page.get_by_text("正在按当前筛选重新统计关键词…").is_visible()
     page.get_by_role("button", name="恢复筛选结果").click()
+    page.get_by_role("tab", name="轮廓蒙版").click()
     page.get_by_alt_text("原图缩略图").wait_for()
     assert page.get_by_label("启用轮廓蒙版").is_checked()
+    assert page.get_by_label("在词云中叠加原图").is_checked()
+    page.get_by_role("tab", name="基础样式").click()
     assert page.get_by_role("button", name="颜色方案").inner_text().strip() == "家族多色"
     assert page.get_by_label("最小字号").input_value() == "12"
-    assert page.get_by_label("在词云中叠加原图").is_checked()
 
     first_keyword = page.locator(".wordcloud-card__keywords button").first
     first_keyword.click()
     assert first_keyword.get_attribute("title") == "点击加入词云"
 
     page.get_by_role("button", name="切换分析").click()
+    page.get_by_role("tab", name="轮廓蒙版").click()
     page.get_by_alt_text("原图缩略图").wait_for(state="detached")
     assert page.get_by_label("启用轮廓蒙版").is_disabled()
+    page.get_by_role("tab", name="基础样式").click()
     assert page.get_by_role("button", name="颜色方案").inner_text().strip() == "家族多色"
     assert first_keyword.get_attribute("title") == "点击排除"
 
+    page.get_by_role("tab", name="轮廓蒙版").click()
     file_input.set_input_files({
         "name": "invalid.txt",
         "mimeType": "text/plain",
@@ -203,8 +253,18 @@ with sync_playwright() as playwright:
     page.wait_for_timeout(250)
     layout_direction = page.locator(".wordcloud-card__layout").evaluate("element => getComputedStyle(element).flexDirection")
     preview_columns = page.locator(".wordcloud-style__previews").evaluate("element => getComputedStyle(element).gridTemplateColumns")
+    drawer_position = drawer.evaluate("element => getComputedStyle(element).position")
+    drawer_backdrop_filter = drawer.evaluate("element => getComputedStyle(element).backdropFilter")
+    drawer_box = drawer.bounding_box()
+    card_box = page.locator(".wordcloud-card").bounding_box()
     assert layout_direction == "column"
     assert " " not in preview_columns.strip()
+    assert drawer_position == "absolute"
+    assert "blur" in drawer_backdrop_filter
+    assert drawer_box is not None and card_box is not None
+    assert drawer_box["x"] >= card_box["x"] and drawer_box["y"] >= card_box["y"]
+    assert drawer_box["x"] + drawer_box["width"] <= card_box["x"] + card_box["width"] + 1
+    assert drawer_box["y"] + drawer_box["height"] <= card_box["y"] + card_box["height"] + 1
     page.screenshot(path=str(SCREENSHOT_DIR / "wordcloud-mask-mobile.png"), full_page=True)
 
     external_requests = [

@@ -5,6 +5,7 @@ import type { SentimentLLM, AnalysisMode } from '../types';
 import useDistributionChartTransition, { type DistributionChartType } from '../hooks/useDistributionChartTransition';
 import DownloadChartButton from './DownloadChartButton';
 import AnalysisProgress from './AnalysisProgress';
+import FilterSelect, { type FilterSelectOption } from './FilterSelect';
 
 interface Props {
   positive: number; negative: number; neutral: number;
@@ -37,6 +38,11 @@ const LLM_LABELS: Record<string, string> = {
   neutral: '中性', joy: '喜悦', support: '支持', anticipation: '期待', surprise: '惊讶',
   anger: '愤怒', sadness: '悲伤', concern: '担忧', disgust: '厌恶', sarcasm: '反讽',
 };
+
+const MODE_OPTIONS: readonly FilterSelectOption<AnalysisMode>[] = [
+  { value: 'nlp', label: 'NLP 三分类' },
+  { value: 'llm', label: '大模型 十分类' },
+];
 
 export default function SentimentChart({
   positive,
@@ -112,16 +118,7 @@ export default function SentimentChart({
               <button className={type==='pie'?'active':''} onClick={toggle('pie')}>饼图</button>
               <button className={type==='rose'?'active':''} onClick={toggle('rose')}>玫瑰</button>
             </div>
-            <select value={mode} onChange={e => onModeChange(e.target.value as AnalysisMode)}
-              style={{
-                padding: '.25rem .375rem', fontSize: '.6875rem',
-                background: 'var(--bg)', color: 'var(--text-primary)',
-                border: '1px solid var(--border)', borderRadius: '.375rem',
-                cursor: 'pointer', outline: 'none',
-              }}>
-              <option value="nlp">NLP 三分类</option>
-              <option value="llm">大模型 十分类</option>
-            </select>
+            <FilterSelect ariaLabel="情感分析模式" value={mode} options={MODE_OPTIONS} onChange={onModeChange} />
           </div>
         )}
         {!isReanalyzing && !hasReanalysisError && <DownloadChartButton echartRefs={chartRef} />}

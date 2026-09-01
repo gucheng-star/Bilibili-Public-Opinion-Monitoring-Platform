@@ -22,15 +22,17 @@ interface ShellProps {
   onFiltersChange: (filters: FilterState) => void;
   duplicateStatistics: DuplicateStatistics;
   showSource?: boolean;
+  workspaceGroupId?: number;
   sources?: Array<{ analysis_id: number; video_title: string; bv: string }>;
 }
 
 function CommentDetailShell({
   title, scopeLabel, mode, totalComments, comments, filters, onFiltersChange,
-  duplicateStatistics, showSource = false, sources,
+  duplicateStatistics, showSource = false, workspaceGroupId, sources,
 }: ShellProps) {
   const location = useLocation();
   const navigate = useNavigate();
+  const mainRef = useRef<HTMLElement>(null);
   const [searchDraft, setSearchDraft] = useState('');
   const [q, setQ] = useState('');
   const [sort, setSort] = useState<DetailSort>('time');
@@ -45,6 +47,13 @@ function CommentDetailShell({
   locationRef.current = location;
   const qRef = useRef(q);
   qRef.current = q;
+
+  // A detail route is a new reading context: never inherit the overview's
+  // scroll position when navigating from the lower comment entry card.
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+    mainRef.current?.focus({ preventScroll: true });
+  }, []);
 
   // Hydrate filters / search / sort / page from the URL once on mount, so
   // refreshed or shared links restore the exact detail view.
@@ -62,11 +71,14 @@ function CommentDetailShell({
 
   useEffect(() => {
     if (!hydrated) return;
-    const search = buildDetailSearch(filtersRef.current, { q, sort, page });
+    const params = new URLSearchParams(buildDetailSearch(filtersRef.current, { q, sort, page }));
+    if (showSource && mode === 'llm') params.set('mode', 'llm');
+    const query = params.toString();
+    const search = query ? `?${query}` : '';
     if (search !== locationRef.current.search) {
       navigate({ pathname: locationRef.current.pathname, search }, { replace: true });
     }
-  }, [hydrated, filters, q, sort, page, navigate]);
+  }, [hydrated, filters, mode, page, q, showSource, sort, navigate]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -96,6 +108,11 @@ function CommentDetailShell({
 
   const applyFilters = (next: FilterState) => { onFiltersChange(next); setPage(1); };
   const changeSort = (next: DetailSort) => { setSort(next); setPage(1); };
+  const overviewParams = new URLSearchParams(filtersSearchString(filters));
+  if (workspaceGroupId) overviewParams.set('group', String(workspaceGroupId));
+  if (showSource && mode === 'llm') overviewParams.set('mode', 'llm');
+  const overviewQuery = overviewParams.toString();
+  const overviewSearch = overviewQuery ? `?${overviewQuery}` : '';
   const clearAll = () => {
     setSearchDraft('');
     setQ('');
@@ -104,9 +121,9 @@ function CommentDetailShell({
   };
 
   return (
-    <main className="app-main comment-detail max-w-7xl mx-auto px-4 py-6">
+    <main ref={mainRef} tabIndex={-1} className="app-main comment-detail max-w-7xl mx-auto px-4 py-6">
       <div className="comment-detail__topbar">
-        <Link className="comment-detail__back" to={{ pathname: '/', search: filtersSearchString(filters) }}>← 返回概览</Link>
+        <Link className="comment-detail__back" to={{ pathname: '/', search: overviewSearch }}>← 返回概览</Link>
       </div>
       <header className="comment-detail__header">
         <h1 className="comment-detail__title">评论明细</h1>
@@ -247,8 +264,10 @@ interface GroupDetailProps {
 
 export function GroupCommentDetailPage({ groupFilters, onGroupFiltersChange }: GroupDetailProps) {
   const { groupId: rawId } = useParams();
+  const location = useLocation();
   const groupId = Number(rawId);
   const valid = Number.isInteger(groupId) && groupId > 0;
+  const requestedMode: AnalysisMode = new URLSearchParams(location.search).get('mode') === 'llm' ? 'llm' : 'nlp';
   const [result, setResult] = useState<GroupAnalysisResult | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
@@ -258,13 +277,13 @@ export function GroupCommentDetailPage({ groupFilters, onGroupFiltersChange }: G
     let cancelled = false;
     setResult(null);
     setErrorMessage(null);
-    getGroupResults(groupId, 'nlp')
+    getGroupResults(groupId, requestedMode)
       .then(data => { if (!cancelled) setResult(data); })
       .catch((reason: unknown) => {
         if (!cancelled) setErrorMessage(reason instanceof Error ? reason.message : '读取舆情事件失败');
       });
     return () => { cancelled = true; };
-  }, [groupId, valid, reloadKey]);
+  }, [groupId, reloadKey, requestedMode, valid]);
 
   if (!valid) return <Navigate to="/" replace />;
   if (!result) {
@@ -284,6 +303,7 @@ export function GroupCommentDetailPage({ groupFilters, onGroupFiltersChange }: G
       onFiltersChange={next => onGroupFiltersChange(groupId, next)}
       duplicateStatistics={result.duplicate_statistics}
       showSource
+      workspaceGroupId={groupId}
       sources={result.members}
     />
   );

@@ -43,6 +43,7 @@ function App() {
   const [analysisId, setAnalysisId] = useState<number | null>(null);
   const [selectedGroupId, setSelectedGroupId] = useState<number | null>(null);
   const [groupFilters, setGroupFilters] = useState<Record<number, FilterState>>({});
+  const [groupModes, setGroupModes] = useState<Record<number, AnalysisMode>>({});
   const [groupRevision, setGroupRevision] = useState(0);
   const [results, setResults] = useState<AnalysisResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -65,10 +66,12 @@ function App() {
   const [maxComments, setMaxComments] = useState(100);
   const [delay, setDelay] = useState(3.0);
   const [filters, setFilters] = useState<FilterState>(EMPTY_FILTERS);
+  const [workspaceFiltersHydrated, setWorkspaceFiltersHydrated] = useState(false);
   const [filteredKeywords, setFilteredKeywords] = useState<KeywordItem[]>([]);
   const [keywordStatus, setKeywordStatus] = useState<'ready' | 'loading' | 'error'>('ready');
   const keywordRequestRef = useRef(0);
   const pollStatusRef = useRef<string | null>(null);
+  const resultModeRef = useRef<AnalysisMode | null>(null);
   const [hasApiKey, setHasApiKey] = useState(false);
   const [reanalyzing, setReanalyzing] = useState(false);
   const [reanalyzeModal, setReanalyzeModal] = useState(false);
@@ -143,20 +146,51 @@ function App() {
 
   useEffect(() => { getAuthStatus().then(d=>setLoggedIn(d.logged_in)).catch(()=>setLoggedIn(false)); }, []);
   useEffect(() => { getSettings().then(s => { setHasApiKey(s.llm.sentiment.has_api_key); }).catch(() => {}); }, []);
-  // Restore filters from the workspace URL on first load (refresh / shared link).
+  // Hydrate workspace filters before mirroring state back into the URL, so a
+  // refreshed or shared link cannot be replaced with empty default filters.
   useEffect(() => {
-    if (location.pathname !== '/') return;
-    const parsed = searchParamsToFilters(new URLSearchParams(location.search), EMPTY_FILTERS);
-    if (!filtersEqual(parsed, EMPTY_FILTERS)) setFilters(parsed);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  // Mirror active filters into the workspace URL so refresh and share stay stable.
+    if (location.pathname !== '/') {
+      setWorkspaceFiltersHydrated(false);
+      return;
+    }
+    const params = new URLSearchParams(location.search);
+    const parsed = searchParamsToFilters(params, EMPTY_FILTERS);
+    const rawGroupId = Number(params.get('group'));
+    const groupId = Number.isInteger(rawGroupId) && rawGroupId > 0 ? rawGroupId : null;
+    if (groupId !== null) {
+      const requestedMode: AnalysisMode = params.get('mode') === 'llm' ? 'llm' : 'nlp';
+      setSelectedGroupId(current => current === groupId ? current : groupId);
+      setGroupFilters(current => filtersEqual(current[groupId] ?? EMPTY_FILTERS, parsed)
+        ? current
+        : { ...current, [groupId]: parsed });
+      setGroupModes(current => current[groupId] === requestedMode
+        ? current
+        : { ...current, [groupId]: requestedMode });
+    } else {
+      setSelectedGroupId(current => current === null ? current : null);
+      setFilters(current => filtersEqual(current, parsed) ? current : parsed);
+    }
+    setWorkspaceFiltersHydrated(true);
+  }, [location.pathname, location.search]);
+  // Mirror the active single-analysis or event workspace into the URL so refresh
+  // and share restore the same filters and analysis mode.
   useEffect(() => {
-    if (location.pathname !== '/') return;
-    const search = filtersSearchString(filters);
+    if (location.pathname !== '/' || !workspaceFiltersHydrated) return;
+    let search = filtersSearchString(filters);
+    if (selectedGroupId !== null) {
+      const params = new URLSearchParams(filtersSearchString(groupFilters[selectedGroupId] ?? EMPTY_FILTERS));
+      params.set('group', String(selectedGroupId));
+      if (groupModes[selectedGroupId] === 'llm') params.set('mode', 'llm');
+      const query = params.toString();
+      search = query ? `?${query}` : '';
+    }
     if (search !== location.search) navigate({ pathname: '/', search }, { replace: true });
-  }, [filters, location.pathname, location.search, navigate]);
+  }, [filters, groupFilters, groupModes, location.pathname, location.search, navigate, selectedGroupId, workspaceFiltersHydrated]);
   useEffect(() => {
+    const previousMode = resultModeRef.current;
+    const nextMode = results?.mode ?? null;
+    resultModeRef.current = nextMode;
+    if (!previousMode || !nextMode || previousMode === nextMode) return;
     setFilters(current => current.sentiment === 'all' ? current : { ...current, sentiment: 'all' });
   }, [results?.mode]);
 
@@ -595,13 +629,22 @@ function App() {
         </section>
         {error && <div className="app-alert app-alert--error" role="alert">{error}</div>}
         <section className="history-rail mb-4" aria-label="历史记录">
-          <button onClick={()=>setShowHistory(!showHistory)} className="history-rail__toggle flex items-center gap-1 text-xs text-muted mb-2" aria-expanded={showHistory}>
-            <span>{showHistory?'收起':'展开'}历史记录</span>
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{transform:showHistory?'rotate(180deg)':'rotate(0deg)',transition:'transform .2s'}}><path strokeLinecap="round" strokeLinejoin="round" d="M6 9l6 6 6-6"/></svg>
-          </button>
-          {showHistory && <HistoryPanel onSelect={handleViewHistory} onSelectGroup={handleSelectGroup} selectedId={analysisId} selectedGroupId={selectedGroupId} refreshKey={historyRefreshKey} onGroupChanged={() => setGroupRevision(current => current + 1)}/>}
+          <div className="history-rail__card">
+            <button onClick={()=>setShowHistory(!showHistory)} className="history-rail__toggle flex items-center gap-1 text-xs text-muted mb-2" aria-expanded={showHistory}>
+              <span>{showHistory?'收起':'展开'}历史记录</span>
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{transform:showHistory?'rotate(180deg)':'rotate(0deg)',transition:'transform .2s'}}><path strokeLinecap="round" strokeLinejoin="round" d="M6 9l6 6 6-6"/></svg>
+            </button>
+            {showHistory && <HistoryPanel
+              onSelect={handleViewHistory}
+              onSelectGroup={handleSelectGroup}
+              selectedId={analysisId}
+              selectedGroupId={selectedGroupId}
+              refreshKey={historyRefreshKey}
+              onGroupChanged={() => setGroupRevision(current => current + 1)}
+            />}
+          </div>
         </section>
-        {selectedGroupId ? <EventWorkspace key={`${selectedGroupId}-${groupRevision}`} groupId={selectedGroupId} initialFilters={groupFilters[selectedGroupId] || EMPTY_FILTERS} onFiltersChange={next => setGroupFilters(current => ({ ...current, [selectedGroupId]: next }))} /> : <>
+        {selectedGroupId ? <EventWorkspace key={`${selectedGroupId}-${groupRevision}`} groupId={selectedGroupId} initialFilters={groupFilters[selectedGroupId] || EMPTY_FILTERS} initialMode={groupModes[selectedGroupId] || 'nlp'} onFiltersChange={next => setGroupFilters(current => ({ ...current, [selectedGroupId]: next }))} onModeChange={mode => setGroupModes(current => current[selectedGroupId] === mode ? current : { ...current, [selectedGroupId]: mode })} /> : <>
         {!loading && results && (<div className="app-alert app-alert--status">模式: {results.mode === 'llm' ? '大模型十分类' : 'NLP三分类'} · 共 {results.total_comments} 条评论</div>)}
 
         {loading && !results && (
@@ -648,26 +691,26 @@ function App() {
           {analysisId && <div className="card-enter mt-4">
             <AISummaryCard scope={{ kind: 'analysis', id: analysisId }} filters={filters} matchedCount={filteredComments.length} mode={results.mode}/>
           </div>}
-          <div className="mt-4 distribution-chart-stack">
-            <div className="card-enter">
-              <SentimentChart
-                positive={filteredSentiment.positive}
-                negative={filteredSentiment.negative}
-                neutral={filteredSentiment.neutral}
-                mode={analysisMode}
-                llm={results.mode === 'llm' ? filteredLlmSentiment : null}
-                onModeChange={handleModeChange}
-                reanalysis={reanalyzing ? { state: 'running', current: progress, total: progressMax, statusText } : undefined}
-              />
-            </div>
-            <div className="card-enter"><GenderChart male={filteredGender.male} female={filteredGender.female} unknown={filteredGender.unknown}/></div>
-          </div>
-          <div className="card-enter mt-4"><RegionMap data={filteredRegion}/></div>
           <div className="card-enter mt-4">
-            <WordCloudCard keywords={filteredKeywords} status={keywordStatus} scopeKey={`analysis:${analysisId ?? ''}`}/>
+            <SentimentChart
+              positive={filteredSentiment.positive}
+              negative={filteredSentiment.negative}
+              neutral={filteredSentiment.neutral}
+              mode={analysisMode}
+              llm={results.mode === 'llm' ? filteredLlmSentiment : null}
+              onModeChange={handleModeChange}
+              reanalysis={reanalyzing ? { state: 'running', current: progress, total: progressMax, statusText } : undefined}
+            />
           </div>
           <div className="card-enter mt-4">
             <HeatTimeline timeline={filteredHeat.timeline} hourlyDistribution={filteredHeat.hourly_distribution} peakHour={filteredHeat.peak_hour} peakCount={filteredHeat.peak_count}/>
+          </div>
+          <div className="card-enter mt-4">
+            <WordCloudCard keywords={filteredKeywords} status={keywordStatus} scopeKey={`analysis:${analysisId ?? ''}`}/>
+          </div>
+          <div className="mt-4 distribution-chart-stack">
+            <div className="card-enter"><GenderChart male={filteredGender.male} female={filteredGender.female} unknown={filteredGender.unknown}/></div>
+            <div className="card-enter"><RegionMap data={filteredRegion}/></div>
           </div>
           <div className="card-enter mt-4">
             <CommentEntryCard

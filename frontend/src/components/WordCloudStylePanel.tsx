@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import FilterSelect, { type FilterSelectOption } from './FilterSelect';
 import { buildOpacityFamily } from '../utils/wordCloudColors';
 
@@ -65,8 +65,6 @@ function BoundedNumberInput({ label, value, min, max, invalid, onCommit }: Bound
 }
 
 interface Props {
-  expanded: boolean;
-  onExpandedChange: (expanded: boolean) => void;
   maskEnabled: boolean;
   canEnableMask: boolean;
   onMaskEnabledChange: (enabled: boolean) => void;
@@ -105,7 +103,7 @@ interface Props {
 }
 
 export default function WordCloudStylePanel({
-  expanded, onExpandedChange, maskEnabled, canEnableMask, onMaskEnabledChange,
+  maskEnabled, canEnableMask, onMaskEnabledChange,
   sourcePreviewUrl, maskPreviewUrl, threshold, onThresholdChange, inverted, onInvertedChange,
   processing, message, drawableRatio, onSelectFile, onRemoveMask,
   sourceImageVisible, onSourceImageVisibleChange, sourceImageOpacity, onSourceImageOpacityChange,
@@ -115,6 +113,8 @@ export default function WordCloudStylePanel({
   fontFamily, onFontFamilyChange, onReset,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const tabId = useId();
+  const [activeTab, setActiveTab] = useState<'basic' | 'mask'>('basic');
   const fontSizeError = minFontSize >= maxFontSize;
   const minFontSizeMax = Math.min(40, maxFontSize - 1);
   const maxFontSizeMin = Math.max(24, minFontSize + 1);
@@ -128,10 +128,11 @@ export default function WordCloudStylePanel({
 
   return (
     <section className="wordcloud-style" aria-label="词云样式">
-      <button type="button" className="wordcloud-style__toggle" aria-expanded={expanded} onClick={() => onExpandedChange(!expanded)}>
-        <span>词云样式</span><span aria-hidden="true">{expanded ? '收起' : '展开'}</span>
-      </button>
-      {expanded && <div className="wordcloud-style__body">
+      <div className="wordcloud-style__tabs" role="tablist" aria-label="词云样式分类">
+        <button id={`${tabId}-basic-tab`} type="button" role="tab" aria-selected={activeTab === 'basic'} aria-controls={`${tabId}-basic-panel`} onClick={() => setActiveTab('basic')}>基础样式</button>
+        <button id={`${tabId}-mask-tab`} type="button" role="tab" aria-selected={activeTab === 'mask'} aria-controls={`${tabId}-mask-panel`} onClick={() => setActiveTab('mask')}>轮廓蒙版</button>
+      </div>
+      {activeTab === 'mask' && <div id={`${tabId}-mask-panel`} className="wordcloud-style__tab-panel" role="tabpanel" aria-labelledby={`${tabId}-mask-tab`}>
         <div className="wordcloud-style__section">
           <div className="wordcloud-style__section-header">
             <div><strong>轮廓蒙版</strong><small>图片仅在本机内存处理，不会上传或保存。</small></div>
@@ -163,7 +164,8 @@ export default function WordCloudStylePanel({
           </>}
           {message && <p className="wordcloud-style__message" role="status">{message}</p>}
         </div>
-
+      </div>}
+      {activeTab === 'basic' && <div id={`${tabId}-basic-panel`} className="wordcloud-style__tab-panel" role="tabpanel" aria-labelledby={`${tabId}-basic-tab`}>
         <div className="wordcloud-style__section wordcloud-style__grid">
           <label>颜色方案<FilterSelect ariaLabel="颜色方案" value={colorMode} options={COLOR_MODE_OPTIONS} onChange={onColorModeChange} /></label>
           {colorMode === 'single' && <label>单色<input type="color" value={singleColor} onChange={event => onSingleColorChange(event.target.value)} /></label>}
@@ -172,14 +174,14 @@ export default function WordCloudStylePanel({
             <label className="wordcloud-style__range"><span>最低透明度 <b>{Math.round(familyMinOpacity * 100)}%</b></span><input type="range" min="10" max="90" value={Math.round(familyMinOpacity * 100)} onChange={event => onFamilyMinOpacityChange(Number(event.target.value) / 100)} /></label>
             <div className="wordcloud-style__family-preview" aria-label="家族多色色板预览">{familyPreview.map((color, index) => <span key={color} style={{ background: color }} title={`透明度 ${Math.round((familyMinOpacity + (1 - familyMinOpacity) * index / Math.max(1, familyPreview.length - 1)) * 100)}%`} />)}</div>
           </div>}
-          {colorMode === 'custom' && <div className="wordcloud-style__palette"><span>调色板</span><div>{palette.map((color, index) => <input key={`palette-${index}`} aria-label={`调色板颜色 ${index + 1}`} type="color" value={color} onChange={event => updatePalette(index, event.target.value)} />)}<button type="button" disabled={palette.length >= 8} onClick={() => onPaletteChange([...palette, '#2563EB'])}>+</button><button type="button" disabled={palette.length <= 3} onClick={() => onPaletteChange(palette.slice(0, -1))}>−</button></div></div>}
+          {colorMode === 'custom' && <div className="wordcloud-style__palette"><span>调色板</span><div>{palette.map((color, index) => <input key={`palette-${index}`} aria-label={`调色板颜色 ${index + 1}`} type="color" value={color} onChange={event => updatePalette(index, event.target.value)} />)}<button type="button" aria-label="增加调色板颜色" disabled={palette.length >= 8} onClick={() => onPaletteChange([...palette, '#2563EB'])}>+</button><button type="button" aria-label="减少调色板颜色" disabled={palette.length <= 3} onClick={() => onPaletteChange(palette.slice(0, -1))}>−</button></div></div>}
           <BoundedNumberInput label="最小字号" value={minFontSize} min={8} max={minFontSizeMax} invalid={fontSizeError} onCommit={value => onMinFontSizeChange(Math.min(value, maxFontSize - 1))} />
           <BoundedNumberInput label="最大字号" value={maxFontSize} min={maxFontSizeMin} max={100} invalid={fontSizeError} onCommit={value => onMaxFontSizeChange(Math.max(value, minFontSize + 1))} />
           <label>字体<FilterSelect ariaLabel="字体" value={fontFamily} options={FONT_FAMILY_OPTIONS} onChange={onFontFamilyChange} /></label>
           {fontSizeError && <p className="wordcloud-style__message" role="alert">最小字号必须小于最大字号。</p>}
         </div>
-        <button type="button" className="wordcloud-style__reset" onClick={onReset}>恢复默认样式</button>
       </div>}
+      <button type="button" className="wordcloud-style__reset" onClick={onReset}>恢复默认样式</button>
     </section>
   );
 }

@@ -1,13 +1,16 @@
 .wordcloud-card__header { align-items:center; gap:.5rem; }
+.wordcloud-card__actions { display:flex; align-items:center; gap:.45rem; }
+.wordcloud-card__style-trigger { padding:.32rem .55rem; color:var(--accent); background:var(--accent-soft); border:1px solid var(--border-accent); border-radius:var(--radius-sm); cursor:pointer; font-size:.6875rem; }
+.wordcloud-card { position:relative; }
 .wordcloud-card__layout { display:flex; gap:.75rem; min-height:300px; }
 .wordcloud-card__chart { flex:1 1 60%; min-width:0; height:300px; }
 .wordcloud-card__keywords { flex:0 0 200px; max-height:340px; overflow-y:auto; padding-left:.75rem; border-left:1px solid var(--border); }
-.wordcloud-style { margin:.1rem 0 .9rem; border:1px solid var(--border); border-radius:var(--radius); background:color-mix(in srgb,var(--bg) 48%,var(--bg-card)); }
-.wordcloud-style__toggle { display:flex; align-items:center; justify-content:space-between; width:100%; padding:.48rem .65rem; color:var(--text-secondary); background:transparent; border:0; cursor:pointer; font-size:.6875rem; font-weight:650; text-align:left; }
-.wordcloud-style__toggle span:last-child { color:var(--accent); font-weight:500; }
-.wordcloud-style__body { padding:.1rem .65rem .7rem; border-top:1px solid var(--border); }
+.wordcloud-style { min-width:0; }
+.wordcloud-style__tabs { display:flex; gap:.25rem; padding:.65rem 0 0; border-bottom:1px solid var(--border); }
+.wordcloud-style__tabs button { padding:.4rem .55rem; color:var(--text-muted); background:transparent; border:0; border-bottom:2px solid transparent; cursor:pointer; font-size:.75rem; font-weight:650; }
+.wordcloud-style__tabs button[aria-selected='true'] { color:var(--accent); border-bottom-color:var(--accent); }
+.wordcloud-style__tab-panel { min-width:0; }
 .wordcloud-style__section { padding:.65rem 0; }
-.wordcloud-style__section + .wordcloud-style__section { border-top:1px solid var(--border); }
 .wordcloud-style__section-header { display:flex; align-items:flex-start; justify-content:space-between; gap:.75rem; }
 .wordcloud-style__section-header strong,.wordcloud-style__section-header small { display:block; }
 .wordcloud-style__section-header strong { color:var(--text-primary); font-size:.75rem; }
@@ -44,6 +47,8 @@
 .wordcloud-style__palette input[type='color'] { width:1.8rem; }
 .wordcloud-style__palette button { min-width:1.8rem; padding:.2rem; }
 .wordcloud-style__palette button:disabled { opacity:.45; cursor:not-allowed; }
-.wordcloud-style__reset { margin-top:.1rem; color:var(--text-secondary); background:transparent; border-color:var(--border); }
+.wordcloud-style__reset { display:block; width:100%; margin:.1rem 0 .25rem; color:var(--text-secondary); background:transparent; border-color:var(--border); }
 .wordcloud-style button:focus-visible,.wordcloud-style input:focus-visible,.wordcloud-style select:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+/* The style panel lives inside this card and overlays only the keyword rail. */
+@media (min-width:641px) { .wordcloud-card--style-drawer-open .wordcloud-card__keywords { opacity:.2; filter:blur(1px); } }
 @media (max-width:640px) { .wordcloud-card__layout { flex-direction:column; } .wordcloud-card__keywords { flex:1 1 auto; max-height:13rem; padding:.75rem 0 0; border-top:1px solid var(--border); border-left:0; } .wordcloud-style__previews { grid-template-columns:1fr; } .wordcloud-style__grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .wordcloud-style__palette,.wordcloud-style__family { grid-column:span 2; } }

@@ -32,6 +32,7 @@ backend/settings.json
 
 # Logs
 *.log
+logs/
 
 # Agent / AI tooling (local only, not tracked)
 .agents/

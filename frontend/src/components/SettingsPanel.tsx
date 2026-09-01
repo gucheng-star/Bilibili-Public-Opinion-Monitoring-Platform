@@ -192,21 +192,13 @@ export default function SettingsPanel({ maxComments, onMaxCommentsChange, delay,
 
   return (
     <div className="card settings-panel">
-      <div className="settings-intro">
-        <div><span className="settings-eyebrow">模型路由</span><h2>为两项 AI 工作分别选择模型</h2></div>
-        <p>密钥只保存在本机后端，页面仅显示掩码。调用模型可能产生费用。</p>
-      </div>
-      {settings && <div className="llm-task-layout">
-        <LLMTaskEditor task="sentiment" title="情绪分析模型" description="为评论生成十分类情感标签" saved={settings.llm.sentiment} onSaved={handleSaved} />
-        <LLMTaskEditor task="summary" title="智能总结模型" description="归纳筛选后的统计与代表观点" saved={settings.llm.summary} onSaved={handleSaved} />
-      </div>}
       <section className="crawl-settings crawl-settings--primary" aria-labelledby="crawl-settings-title">
         <div className="crawl-settings__header">
           <div>
-            <span className="settings-eyebrow">抓取策略</span>
-            <h2 id="crawl-settings-title">评论抓取参数</h2>
+            <span className="settings-eyebrow">默认抓取策略</span>
+            <h2 id="crawl-settings-title">默认抓取参数</h2>
           </div>
-          <p>设置单次分析的评论数量与请求间隔，兼顾覆盖范围和访问节奏。</p>
+          <p>新分析默认使用这些参数，用于设置评论数量与请求间隔，兼顾覆盖范围和访问节奏。</p>
         </div>
         <div className="crawl-settings__controls">
           <div className="crawl-settings__field crawl-settings__field--count">
@@ -225,7 +217,16 @@ export default function SettingsPanel({ maxComments, onMaxCommentsChange, delay,
             </div>
           </div>
         </div>
+        {delay < 2 && <div className="settings-warning">间隔过短可能触发 B 站风控，建议设置为 3 秒以上。</div>}
       </section>
+      <div className="settings-intro">
+        <div><span className="settings-eyebrow">模型路由</span><h2>为两项 AI 工作分别选择模型</h2></div>
+        <p>密钥只保存在本机后端，页面仅显示掩码。调用模型可能产生费用。</p>
+      </div>
+      {settings && <div className="llm-task-layout">
+        <LLMTaskEditor task="sentiment" title="情绪分析模型" description="为评论生成十分类情感标签" saved={settings.llm.sentiment} onSaved={handleSaved} />
+        <LLMTaskEditor task="summary" title="智能总结模型" description="归纳筛选后的统计与代表观点" saved={settings.llm.summary} onSaved={handleSaved} />
+      </div>}
       {desktopMode && <section className="crawl-settings desktop-update-settings">
         <div>
           <label className="text-xs text-secondary mb-1" style={{ display: 'block' }}>便携版更新</label>
@@ -233,7 +234,6 @@ export default function SettingsPanel({ maxComments, onMaxCommentsChange, delay,
         </div>
         <button type="button" className="btn btn-ghost" onClick={onCheckUpdate}>检查更新</button>
       </section>}
-      {delay < 2 && <div className="settings-warning">间隔过短可能触发 B 站风控，建议设置为 3 秒以上。</div>}
     </div>
   );
 }

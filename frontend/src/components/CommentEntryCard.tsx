@@ -19,7 +19,7 @@ export default function CommentEntryCard({ total, rootCount, replyCount, to, sea
             : '当前筛选没有命中评论'}
         </p>
       </div>
-      <span className="comment-entry__link" aria-hidden="true">查看全部评论 →</span>
+      <span className="comment-entry__button" aria-hidden="true">查看全部评论 →</span>
     </Link>
   );
 }

@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "B站舆论监测平台",
-  "version": "0.1.0",
+  "version": "0.1.1-beta",
   "identifier": "com.guchengstar.bili-opinion-monitor",
   "build": {
     "beforeDevCommand": "pnpm run dev",

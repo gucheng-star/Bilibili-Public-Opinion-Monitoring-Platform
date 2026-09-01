@@ -6,6 +6,7 @@ import { isDarkMode } from '../utils';
 import { getContainRect, type ImageSize } from '../utils/wordCloudMask';
 import { buildOpacityFamily } from '../utils/wordCloudColors';
 import DownloadChartButton from './DownloadChartButton';
+import StyleDrawer from './StyleDrawer';
 import WordCloudStylePanel, { type WordCloudColorMode, type WordCloudFontFamily } from './WordCloudStylePanel';
 import { useWordCloudMask } from '../hooks/useWordCloudMask';
 import './WordCloudCard.css';
@@ -28,6 +29,10 @@ const FONT_FAMILIES: Record<WordCloudFontFamily, string> = {
 
 const STYLE_UPDATE_DEBOUNCE_MS = 350;
 const EMPTY_EXCLUDED_WORDS = new Set<string>();
+// Keep ECharts' option stable while ResizeObserver records the chart size.
+// A new empty array causes echarts-for-react to restart the asynchronous
+// word-cloud layout even when no source image needs positioning.
+const EMPTY_SOURCE_GRAPHIC: [] = [];
 
 interface ScopeContentState {
   scopeKey: string;
@@ -65,7 +70,7 @@ function stableColor(word: string, colors: string[]) {
 function WordCloudCard({ keywords, className, status = 'ready', scopeKey = 'default' }: Props) {
   const [dark, setDark] = useState(isDarkMode);
   const [scopeContent, setScopeContent] = useState(() => createScopeContentState(scopeKey));
-  const [styleExpanded, setStyleExpanded] = useState(false);
+  const [styleDrawerOpen, setStyleDrawerOpen] = useState(false);
   const [colorMode, setColorMode] = useState<WordCloudColorMode>('default');
   const [singleColor, setSingleColor] = useState('#FB7299');
   const [customPalette, setCustomPalette] = useState(DEFAULT_PALETTE);
@@ -79,7 +84,9 @@ function WordCloudCard({ keywords, className, status = 'ready', scopeKey = 'defa
   const [maskResourceScopeKey, setMaskResourceScopeKey] = useState<string | null>(null);
   const chartRef = useRef<ReactECharts | null>(null);
   const chartAreaRef = useRef<HTMLDivElement | null>(null);
+  const styleTriggerRef = useRef<HTMLButtonElement | null>(null);
   const currentScopeRef = useRef(scopeKey);
+  const appliedScopeRef = useRef(scopeKey);
   currentScopeRef.current = scopeKey;
   const mask = useWordCloudMask(chartSize);
   const clearMask = mask.removeMask;
@@ -125,6 +132,8 @@ function WordCloudCard({ keywords, className, status = 'ready', scopeKey = 'defa
   }, []);
 
   useEffect(() => {
+    if (appliedScopeRef.current === scopeKey) return;
+    appliedScopeRef.current = scopeKey;
     setScopeContent(createScopeContentState(scopeKey));
     setMaskResourceScopeKey(null);
     clearMask();
@@ -200,8 +209,13 @@ function WordCloudCard({ keywords, className, status = 'ready', scopeKey = 'defa
     mask.removeMask();
   };
 
+  const closeStyleDrawer = () => {
+    setStyleDrawerOpen(false);
+    window.requestAnimationFrame(() => styleTriggerRef.current?.focus());
+  };
+
   const sourceGraphic = useMemo(() => {
-    if (!isCurrentMaskResource || !sourceImageVisible || !mask.sourcePreviewUrl || !mask.sourceSize || !chartSize) return [];
+    if (!isCurrentMaskResource || !sourceImageVisible || !mask.sourcePreviewUrl || !mask.sourceSize || !chartSize) return EMPTY_SOURCE_GRAPHIC;
     const seriesSize = { width: chartSize.width * 0.95, height: chartSize.height * 0.95 };
     const rect = getContainRect(mask.sourceSize, seriesSize);
     return [{
@@ -267,13 +281,23 @@ function WordCloudCard({ keywords, className, status = 'ready', scopeKey = 'defa
       : activeKeywords.length === 0 && keywords.length ? '已全部排除' : '暂无关键词';
 
   return (
-    <div className={"card" + (className ? " " + className : "")}>
+    <div className={"card wordcloud-card" + (styleDrawerOpen ? ' wordcloud-card--style-drawer-open' : '') + (className ? " " + className : "")}>
       <div className="flex items-center justify-between mb-2">
         <h3 className="text-xs font-semibold text-secondary" style={{letterSpacing:'.05em'}}>{"\u8bcd\u4e91"}</h3>
-        {keywords.length > 0 && <DownloadChartButton echartRefs={chartRef} />}
+        {keywords.length > 0 && <div className="wordcloud-card__actions">
+          <button
+            ref={styleTriggerRef}
+            type="button"
+            className="wordcloud-card__style-trigger"
+            aria-expanded={styleDrawerOpen}
+            aria-controls="wordcloud-style-drawer"
+            onClick={() => styleDrawerOpen ? closeStyleDrawer() : setStyleDrawerOpen(true)}
+          >样式设置</button>
+          <DownloadChartButton echartRefs={chartRef} />
+        </div>}
       </div>
-      {keywords.length > 0 && <WordCloudStylePanel
-        expanded={styleExpanded} onExpandedChange={setStyleExpanded}
+      {keywords.length > 0 && <StyleDrawer open={styleDrawerOpen} onClose={closeStyleDrawer}>
+        <WordCloudStylePanel
         maskEnabled={maskEnabled} canEnableMask={canEnableMask} onMaskEnabledChange={enabled => {
           setScopeContent(current => current.scopeKey === scopeKey
             ? { ...current, maskEnabled: enabled }
@@ -301,7 +325,8 @@ function WordCloudCard({ keywords, className, status = 'ready', scopeKey = 'defa
         onMaxFontSizeChange={setMaxFontSize}
         fontFamily={fontFamily} onFontFamilyChange={setFontFamily}
         onReset={resetStyle}
-      />}
+        />
+      </StyleDrawer>}
       <div className="wordcloud-card__layout">
         <div className="wordcloud-card__chart" ref={chartAreaRef}>
           {!keywords.length || activeKeywords.length === 0 || status !== 'ready' ? (
