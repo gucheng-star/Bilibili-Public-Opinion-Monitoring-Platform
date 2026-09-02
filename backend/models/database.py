@@ -9,6 +9,14 @@ from sqlalchemy import Column, Integer, String, Text, Float, DateTime, ForeignKe
 from sqlalchemy.orm import DeclarativeBase, relationship, sessionmaker
 
 from services.runtime_paths import database_path
+from services.sentiment_contract import (
+    LLM_SENTIMENT_SCHEMA_NONE,
+    LLM_SENTIMENT_SCHEMA_V1,
+    LLM_SENTIMENT_SCHEMA_V2,
+    V1_EMOTION_LABELS,
+    V2_EMOTION_LABELS,
+    V2_STYLE_LABELS,
+)
 
 
 DB_PATH = str(database_path())
@@ -43,6 +51,9 @@ class Analysis(Base):
     mode = Column(String(10), default="nlp")
     total_comments = Column(Integer, default=0)
     processed_comments = Column(Integer, default=0)
+    sentiment_llm_schema_version = Column(
+        Integer, nullable=False, default=LLM_SENTIMENT_SCHEMA_NONE, server_default="0",
+    )
     error_msg = Column(Text)
     created_at = Column(DateTime, default=datetime.now)
 
@@ -69,6 +80,9 @@ class Comment(Base):
     sentiment_score = Column(Float)
     sentiment_llm_label = Column(String(20), default="")
     sentiment_llm_style = Column(String(20), default="plain")
+    sentiment_llm_schema_version = Column(
+        Integer, nullable=False, default=LLM_SENTIMENT_SCHEMA_NONE, server_default="0",
+    )
     post_time = Column(DateTime, nullable=False)
 
     analysis = relationship("Analysis", back_populates="comments")
@@ -94,6 +108,9 @@ class SentimentResult(Base):
     llm_concern = Column(Integer, default=0)
     llm_trust = Column(Integer, default=0)
     llm_sarcasm = Column(Integer, default=0)
+    sentiment_llm_schema_version = Column(
+        Integer, nullable=False, default=LLM_SENTIMENT_SCHEMA_NONE, server_default="0",
+    )
 
     analysis = relationship("Analysis", back_populates="sentiment")
 
@@ -279,6 +296,11 @@ def _pending_column_migrations(eng):
             migrations.append(("analyses", "ALTER TABLE analyses ADD COLUMN mode VARCHAR(10) DEFAULT 'nlp'"))
         if "processed_comments" not in cols:
             migrations.append(("analyses", "ALTER TABLE analyses ADD COLUMN processed_comments INTEGER DEFAULT 0"))
+        if "sentiment_llm_schema_version" not in cols:
+            migrations.append((
+                "analyses",
+                "ALTER TABLE analyses ADD COLUMN sentiment_llm_schema_version INTEGER NOT NULL DEFAULT 0",
+            ))
     if "comments" in inspector.get_table_names():
         cols = {c["name"] for c in inspector.get_columns("comments")}
         if "sentiment_llm_label" not in cols:
@@ -289,6 +311,11 @@ def _pending_column_migrations(eng):
             migrations.append(("comments", "ALTER TABLE comments ADD COLUMN root_rpid INTEGER"))
         if "parent_rpid" not in cols:
             migrations.append(("comments", "ALTER TABLE comments ADD COLUMN parent_rpid INTEGER"))
+        if "sentiment_llm_schema_version" not in cols:
+            migrations.append((
+                "comments",
+                "ALTER TABLE comments ADD COLUMN sentiment_llm_schema_version INTEGER NOT NULL DEFAULT 0",
+            ))
     if "sentiment_results" in inspector.get_table_names():
         cols = {c["name"] for c in inspector.get_columns("sentiment_results")}
         llm_fields = [
@@ -298,68 +325,169 @@ def _pending_column_migrations(eng):
         for field in llm_fields:
             if field not in cols:
                 migrations.append(("sentiment_results", f"ALTER TABLE sentiment_results ADD COLUMN {field} INTEGER DEFAULT 0"))
+        if "sentiment_llm_schema_version" not in cols:
+            migrations.append((
+                "sentiment_results",
+                "ALTER TABLE sentiment_results ADD COLUMN sentiment_llm_schema_version INTEGER NOT NULL DEFAULT 0",
+            ))
 
     return migrations
 
 
 def _schema_change_required(eng) -> bool:
-    """Check before create_all so an existing database is backed up first."""
+    """Check before create_all so every mutating upgrade is backed up first."""
     source = Path(DB_PATH)
     if not source.exists():
         return False
     from sqlalchemy import inspect
     existing = set(inspect(eng).get_table_names())
     required = {"analysis_groups", "analysis_group_items", "analysis_group_summaries"}
-    return bool(required - existing or _pending_column_migrations(eng))
+    return bool(
+        required - existing
+        or _pending_column_migrations(eng)
+        or _pending_llm_sentiment_version_backfill(eng)
+    )
+
+
+def _pending_llm_sentiment_version_backfill(eng) -> bool:
+    """Return whether the version migration would update an already-current schema."""
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(eng)
+    tables = set(inspector.get_table_names())
+    columns = {
+        table: {column["name"] for column in inspector.get_columns(table)}
+        for table in {"analyses", "comments", "sentiment_results"} & tables
+    }
+
+    # Missing columns are handled by _pending_column_migrations(), which is
+    # already a backup trigger.  Do not query a partially known schema here.
+    with eng.connect() as connection:
+        if {"comments"} <= tables and "sentiment_llm_schema_version" in columns["comments"]:
+            legacy_labels = ", ".join(f"'{label}'" for label in sorted(V1_EMOTION_LABELS))
+            if connection.execute(text(
+                "SELECT EXISTS (SELECT 1 FROM comments "
+                "WHERE sentiment_llm_schema_version IS NULL "
+                "OR (sentiment_llm_schema_version = 0 "
+                f"AND sentiment_llm_label IN ({legacy_labels})))"
+            )).scalar():
+                return True
+
+        if {"analyses"} <= tables and "sentiment_llm_schema_version" in columns["analyses"]:
+            if connection.execute(text(
+                "SELECT EXISTS (SELECT 1 FROM analyses "
+                "WHERE sentiment_llm_schema_version IS NULL)"
+            )).scalar():
+                return True
+
+        if {"sentiment_results"} <= tables and "sentiment_llm_schema_version" in columns["sentiment_results"]:
+            if connection.execute(text(
+                "SELECT EXISTS (SELECT 1 FROM sentiment_results "
+                "WHERE sentiment_llm_schema_version IS NULL)"
+            )).scalar():
+                return True
+
+        if (
+            {"analyses", "comments"} <= tables
+            and "sentiment_llm_schema_version" in columns["analyses"]
+            and "sentiment_llm_schema_version" in columns["comments"]
+            and connection.execute(text(
+                "SELECT EXISTS (SELECT 1 FROM analyses "
+                "WHERE sentiment_llm_schema_version = 0 "
+                "AND EXISTS (SELECT 1 FROM comments "
+                "            WHERE comments.analysis_id = analyses.id) "
+                "AND NOT EXISTS (SELECT 1 FROM comments "
+                "                WHERE comments.analysis_id = analyses.id "
+                "                  AND comments.sentiment_llm_schema_version != 1))"
+            )).scalar()
+        ):
+            return True
+
+        if (
+            {"analyses", "sentiment_results"} <= tables
+            and "sentiment_llm_schema_version" in columns["analyses"]
+            and "sentiment_llm_schema_version" in columns["sentiment_results"]
+            and connection.execute(text(
+                "SELECT EXISTS (SELECT 1 FROM sentiment_results "
+                "WHERE sentiment_llm_schema_version = 0 "
+                "AND EXISTS (SELECT 1 FROM analyses "
+                "            WHERE analyses.id = sentiment_results.analysis_id "
+                "              AND analyses.sentiment_llm_schema_version = 1))"
+            )).scalar()
+        ):
+            return True
+
+    return False
 
 
 def _migrate(eng):
-    """Apply pending ALTER statements atomically; errors must stop startup."""
+    """Apply pending schema and non-destructive LLM-version migrations atomically."""
     from sqlalchemy import inspect, text
     migrations = _pending_column_migrations(eng)
-    if not migrations:
-        return
+    needs_version_backfill = bool(migrations) or _pending_llm_sentiment_version_backfill(eng)
     tables = set(inspect(eng).get_table_names())
     with eng.begin() as connection:
         for _table, sql in migrations:
             connection.execute(text(sql))
-        if "comments" in tables:
-            # Normalize historical taxonomies before readiness checks can
-            # mistake valid legacy labels for unfinished paid work.
-            connection.execute(text(
-                "UPDATE comments SET sentiment_llm_label = 'support' "
-                "WHERE sentiment_llm_label = 'trust'"
-            ))
-            connection.execute(text(
-                "UPDATE comments SET sentiment_llm_label = 'concern' "
-                "WHERE sentiment_llm_label = 'fear'"
-            ))
-            connection.execute(text(
-                "UPDATE comments SET sentiment_llm_label = 'sarcasm' "
-                "WHERE sentiment_llm_style = 'sarcasm' AND sentiment_llm_label IN "
-                "('neutral','joy','support','anticipation','surprise','anger',"
-                "'sadness','concern','disgust')"
-            ))
-        if {"comments", "sentiment_results"} <= tables:
-            for label in (
-                "neutral", "joy", "support", "anticipation", "surprise",
-                "anger", "sadness", "concern", "disgust", "sarcasm",
-            ):
-                connection.execute(text(
-                    f"UPDATE sentiment_results SET llm_{label} = ("
-                    "SELECT COUNT(*) FROM comments "
-                    "WHERE comments.analysis_id = sentiment_results.analysis_id "
-                    f"AND comments.sentiment_llm_label = '{label}')"
-                ))
-            connection.execute(text(
-                "UPDATE sentiment_results SET llm_trust = 0, llm_fear = 0"
-            ))
+        if needs_version_backfill:
+            _migrate_llm_sentiment_versions(connection, tables)
+
+
+def _migrate_llm_sentiment_versions(connection, tables: set[str]) -> None:
+    """Mark historical complete results without rewriting their V1 payloads."""
+    from sqlalchemy import text
+
+    if "comments" in tables:
+        connection.execute(text(
+            "UPDATE comments SET sentiment_llm_schema_version = 0 "
+            "WHERE sentiment_llm_schema_version IS NULL"
+        ))
+        legacy_labels = ", ".join(f"'{label}'" for label in sorted(V1_EMOTION_LABELS))
+        connection.execute(text(
+            "UPDATE comments SET sentiment_llm_schema_version = 1 "
+            "WHERE sentiment_llm_schema_version = 0 "
+            f"AND sentiment_llm_label IN ({legacy_labels})"
+        ))
+
+    if "analyses" in tables:
+        connection.execute(text(
+            "UPDATE analyses SET sentiment_llm_schema_version = 0 "
+            "WHERE sentiment_llm_schema_version IS NULL"
+        ))
+    if "sentiment_results" in tables:
+        connection.execute(text(
+            "UPDATE sentiment_results SET sentiment_llm_schema_version = 0 "
+            "WHERE sentiment_llm_schema_version IS NULL"
+        ))
+
+    if {"analyses", "comments"} <= tables:
+        connection.execute(text(
+            "UPDATE analyses SET sentiment_llm_schema_version = :v1 "
+            "WHERE sentiment_llm_schema_version = :none "
+            "AND EXISTS (SELECT 1 FROM comments "
+            "            WHERE comments.analysis_id = analyses.id) "
+            "AND NOT EXISTS (SELECT 1 FROM comments "
+            "                WHERE comments.analysis_id = analyses.id "
+            "                  AND comments.sentiment_llm_schema_version != :v1)"
+        ), {"none": LLM_SENTIMENT_SCHEMA_NONE, "v1": LLM_SENTIMENT_SCHEMA_V1})
+
+    if {"analyses", "sentiment_results"} <= tables:
+        connection.execute(text(
+            "UPDATE sentiment_results SET sentiment_llm_schema_version = :v1 "
+            "WHERE sentiment_llm_schema_version = :none "
+            "AND EXISTS (SELECT 1 FROM analyses "
+            "            WHERE analyses.id = sentiment_results.analysis_id "
+            "              AND analyses.sentiment_llm_schema_version = :v1)"
+        ), {"none": LLM_SENTIMENT_SCHEMA_NONE, "v1": LLM_SENTIMENT_SCHEMA_V1})
 
 
 def _validate_schema(eng) -> None:
-    """Reject a partially created event schema instead of serving corrupted data."""
+    """Reject incomplete schema or invalid versioned sentiment state at startup."""
     from sqlalchemy import inspect
     required_columns = {
+        "analyses": {"sentiment_llm_schema_version"},
+        "comments": {"sentiment_llm_schema_version"},
+        "sentiment_results": {"sentiment_llm_schema_version"},
         "analysis_groups": {"id", "name", "description", "created_at", "updated_at"},
         "analysis_group_items": {"id", "group_id", "analysis_id", "position", "added_at"},
         "analysis_group_summaries": {
@@ -377,3 +505,70 @@ def _validate_schema(eng) -> None:
         missing = expected - actual
         if missing:
             raise RuntimeError(f"数据表 {table} 缺少字段：{', '.join(sorted(missing))}")
+    _validate_llm_sentiment_schema_versions(eng, inspector)
+
+
+def _validate_llm_sentiment_schema_versions(eng, inspector) -> None:
+    """Validate the durable V1/V2 boundary without changing stored data."""
+    from sqlalchemy import text
+
+    version_column = "sentiment_llm_schema_version"
+    for table in ("analyses", "comments", "sentiment_results"):
+        column = next(
+            item for item in inspector.get_columns(table) if item["name"] == version_column
+        )
+        if "INT" not in str(column["type"]).upper():
+            raise RuntimeError(f"数据表 {table} 的 {version_column} 必须具有 INTEGER affinity")
+        if column["nullable"]:
+            raise RuntimeError(f"数据表 {table} 的 {version_column} 必须为 NOT NULL")
+        if str(column["default"]).strip().strip("()'") != "0":
+            raise RuntimeError(f"数据表 {table} 的 {version_column} 默认值必须为 0")
+
+    v1_labels = ", ".join(f"'{label}'" for label in sorted(V1_EMOTION_LABELS))
+    v2_emotions = ", ".join(f"'{label}'" for label in sorted(V2_EMOTION_LABELS))
+    v2_styles = ", ".join(f"'{label}'" for label in sorted(V2_STYLE_LABELS))
+    with eng.connect() as connection:
+        for table in ("analyses", "comments", "sentiment_results"):
+            if connection.execute(text(
+                f"SELECT EXISTS (SELECT 1 FROM {table} "
+                f"WHERE {version_column} IS NULL OR {version_column} NOT IN (0, 1, 2))"
+            )).scalar():
+                raise RuntimeError(f"数据表 {table} 存在非法大模型情感 Schema 版本")
+
+        if connection.execute(text(
+            "SELECT EXISTS (SELECT 1 FROM comments "
+            "WHERE sentiment_llm_schema_version = :v1 "
+            f"AND (sentiment_llm_label IS NULL OR sentiment_llm_label NOT IN ({v1_labels})))"
+        ), {"v1": LLM_SENTIMENT_SCHEMA_V1}).scalar():
+            raise RuntimeError("评论 V1 大模型情感标签非法")
+
+        if connection.execute(text(
+            "SELECT EXISTS (SELECT 1 FROM comments "
+            "WHERE sentiment_llm_schema_version = :v2 "
+            f"AND (sentiment_llm_label IS NULL OR sentiment_llm_label NOT IN ({v2_emotions}) "
+            "OR sentiment_llm_style IS NULL "
+            f"OR sentiment_llm_style NOT IN ({v2_styles})))"
+        ), {"v2": LLM_SENTIMENT_SCHEMA_V2}).scalar():
+            raise RuntimeError("评论 V2 大模型情感或表达风格非法")
+
+        if connection.execute(text(
+            "SELECT EXISTS (SELECT 1 FROM analyses "
+            "WHERE sentiment_llm_schema_version > :none "
+            "AND (NOT EXISTS (SELECT 1 FROM comments "
+            "                WHERE comments.analysis_id = analyses.id) "
+            "     OR EXISTS (SELECT 1 FROM comments "
+            "               WHERE comments.analysis_id = analyses.id "
+            "                 AND comments.sentiment_llm_schema_version "
+            "                     < analyses.sentiment_llm_schema_version)))"
+        ), {"none": LLM_SENTIMENT_SCHEMA_NONE}).scalar():
+            raise RuntimeError("分析大模型情感 Schema 版本高于其评论覆盖范围")
+
+        if connection.execute(text(
+            "SELECT EXISTS (SELECT 1 FROM sentiment_results "
+            "WHERE sentiment_llm_schema_version > :none "
+            "AND NOT EXISTS (SELECT 1 FROM analyses "
+            "                WHERE analyses.id = sentiment_results.analysis_id "
+            "                  AND analyses.sentiment_llm_schema_version "
+            "                      >= sentiment_results.sentiment_llm_schema_version))"
+        ), {"none": LLM_SENTIMENT_SCHEMA_NONE}).scalar():
+            raise RuntimeError("大模型情感汇总 Schema 版本高于来源分析")

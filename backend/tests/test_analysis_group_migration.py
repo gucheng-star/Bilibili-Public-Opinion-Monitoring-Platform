@@ -10,7 +10,7 @@ from models import database
 
 
 class AnalysisGroupMigrationTests(unittest.TestCase):
-    def test_migration_normalizes_legacy_labels_and_rebuilds_ten_class_counts(self):
+    def test_migration_preserves_labels_when_partial_tables_lack_analysis(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "legacy-taxonomy.sqlite3"
             connection = sqlite3.connect(path)
@@ -19,7 +19,8 @@ class AnalysisGroupMigrationTests(unittest.TestCase):
                 "sentiment_llm_label VARCHAR(20), sentiment_llm_style VARCHAR(20))"
             )
             connection.execute(
-                "CREATE TABLE sentiment_results (id INTEGER PRIMARY KEY, analysis_id INTEGER)"
+                "CREATE TABLE sentiment_results (id INTEGER PRIMARY KEY, analysis_id INTEGER, "
+                "llm_neutral INTEGER, llm_support INTEGER, llm_fear INTEGER, llm_sarcasm INTEGER)"
             )
             connection.executemany(
                 "INSERT INTO comments (id, analysis_id, sentiment_llm_label, sentiment_llm_style) "
@@ -31,7 +32,11 @@ class AnalysisGroupMigrationTests(unittest.TestCase):
                     (4, "anger", "plain"),
                 ],
             )
-            connection.execute("INSERT INTO sentiment_results (id, analysis_id) VALUES (1, 7)")
+            connection.execute(
+                "INSERT INTO sentiment_results "
+                "(id, analysis_id, llm_neutral, llm_support, llm_fear, llm_sarcasm) "
+                "VALUES (1, 7, 61, 62, 63, 64)"
+            )
             connection.commit()
             connection.close()
             engine = create_engine(f"sqlite:///{path}")
@@ -43,13 +48,17 @@ class AnalysisGroupMigrationTests(unittest.TestCase):
                         "SELECT sentiment_llm_label FROM comments ORDER BY id"
                     )
                 ]
-                counts = connection.execute(
-                    "SELECT llm_support, llm_concern, llm_sarcasm, llm_anger, "
-                    "llm_trust, llm_fear FROM sentiment_results WHERE analysis_id = 7"
+                comment_versions = connection.execute(
+                    "SELECT sentiment_llm_schema_version FROM comments ORDER BY id"
+                ).fetchall()
+                summary_version = connection.execute(
+                    "SELECT sentiment_llm_schema_version, llm_neutral, llm_support, llm_fear, llm_sarcasm "
+                    "FROM sentiment_results WHERE analysis_id = 7"
                 ).fetchone()
                 connection.close()
-                self.assertEqual(labels, ["support", "concern", "sarcasm", "anger"])
-                self.assertEqual(counts, (1, 1, 1, 1, 0, 0))
+                self.assertEqual(labels, ["trust", "fear", "anger", "anger"])
+                self.assertEqual(comment_versions, [(0,), (0,), (1,), (1,)])
+                self.assertEqual(summary_version, (0, 61, 62, 63, 64))
             finally:
                 engine.dispose()
 
