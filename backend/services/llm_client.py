@@ -278,58 +278,49 @@ async def chat_completion(
     if check_dns:
         await _ensure_public_hostname(base_url)
 
-    models = [model]
-    fallback = config.get("fallback_model", "").strip()
-    if fallback and fallback != model:
-        models.append(fallback)
-
-    last_error: Exception | None = None
+    # Retry and fallback ownership belongs to the sentiment scheduler.  Keep
+    # this compatibility parameter so summary callers do not break, but every
+    # invocation below performs exactly one HTTP request for exactly one model.
+    _ = retries
     capabilities = _provider_capabilities(config)
-    for candidate in models:
-        for attempt in range(retries + 1):
-            payload: dict[str, Any] = {
-                "model": candidate,
-                "messages": messages,
-                "temperature": temperature,
-                "max_tokens": max_tokens,
-            }
-            payload.update(_task_payload(capabilities, task))
-            if response_format and capabilities.supports_json_object:
-                payload["response_format"] = response_format
-            try:
-                async with httpx.AsyncClient(
-                    timeout=httpx.Timeout(60.0),
-                    follow_redirects=False,
-                ) as client:
-                    response = await client.post(
-                        _chat_url(base_url),
-                        headers={
-                            "Authorization": f"Bearer {api_key}",
-                            "Content-Type": "application/json",
-                        },
-                        json=payload,
-                    )
-                if 300 <= response.status_code < 400:
-                    raise LLMRequestError(
-                        "模型服务返回重定向，已拒绝跟随",
-                        category="redirect",
-                        status_code=response.status_code,
-                    )
-                response.raise_for_status()
-                return _extract_content(response.json()), candidate
-            except LLMRequestError as exc:
-                last_error = exc
-            except httpx.TimeoutException as exc:
-                last_error = LLMRequestError("模型服务响应超时", category="timeout")
-                last_error.__cause__ = exc
-            except httpx.HTTPStatusError as exc:
-                last_error = _status_error(exc.response.status_code, exc.response)
-            except (httpx.HTTPError, ValueError, TypeError) as exc:
-                last_error = LLMRequestError("无法连接模型服务，请检查接口配置", category="connection")
-                last_error.__cause__ = exc
-            if attempt < retries:
-                await asyncio.sleep(attempt + 1)
-    raise last_error or LLMRequestError("模型请求失败")
+    payload: dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+    payload.update(_task_payload(capabilities, task))
+    if response_format and capabilities.supports_json_object:
+        payload["response_format"] = response_format
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(60.0),
+            follow_redirects=False,
+        ) as client:
+            response = await client.post(
+                _chat_url(base_url),
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+        if 300 <= response.status_code < 400:
+            raise LLMRequestError(
+                "模型服务返回重定向，已拒绝跟随",
+                category="redirect",
+                status_code=response.status_code,
+            )
+        response.raise_for_status()
+        return _extract_content(response.json()), model
+    except LLMRequestError:
+        raise
+    except httpx.TimeoutException as exc:
+        raise LLMRequestError("模型服务响应超时", category="timeout") from exc
+    except httpx.HTTPStatusError as exc:
+        raise _status_error(exc.response.status_code, exc.response) from exc
+    except (httpx.HTTPError, ValueError, TypeError) as exc:
+        raise LLMRequestError("无法连接模型服务，请检查接口配置", category="connection") from exc
 
 
 async def chat_completion_json(

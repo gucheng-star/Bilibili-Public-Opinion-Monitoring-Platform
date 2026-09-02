@@ -168,28 +168,25 @@ class DevFaultScenarioTests(unittest.IsolatedAsyncioTestCase):
                 "_analyze_comment_batch",
                 new=AsyncMock(side_effect=LLMRequestError("local authentication failure")),
             ) as analyze_batch,
-            patch.object(sentiment_llm.asyncio, "sleep", new=AsyncMock()) as sleep,
         ):
-            with self.assertRaisesRegex(RuntimeError, "连续 3 次失败"):
+            with self.assertRaises(LLMRequestError):
                 await sentiment_llm.batch_analyze_llm(
                     comments,
                     {"api_key": API_KEY_SENTINEL},
                     concurrency=1,
                 )
 
-        self.assertEqual(analyze_batch.await_count, 3)
-        self.assertEqual(sleep.await_count, 2)
+        self.assertEqual(analyze_batch.await_count, 1)
         entries = self._entries()
         self.assertEqual(
             [entry["event"] for entry in entries],
-            ["llm.batch_started", "llm.batch_retried", "llm.batch_retried", "llm.batch_failed"],
+            ["llm.batch_started", "llm.scheduler_attempt_failed"],
         )
-        self.assertTrue(all(entry["component"] == "sentiment_llm" for entry in entries))
         self.assertEqual(entries[0]["batch_index"], 1)
-        self.assertEqual([entry["attempt"] for entry in entries[1:3]], [1, 2])
-        self.assertTrue(all(entry["error_type"] == "LLMRequestError" for entry in entries[1:3]))
-        self.assertEqual(entries[3]["batch_index"], 1)
-        self.assertEqual(entries[3]["error_type"], "RuntimeError")
+        self.assertEqual(entries[1]["component"], "llm_scheduler")
+        self.assertEqual(entries[1]["batch_index"], 1)
+        self.assertEqual(entries[1]["attempt"], 1)
+        self.assertEqual(entries[1]["stage"], "permanent")
         self._assert_secrets_absent()
 
     async def test_invalid_llm_label_uses_real_protocol_retry_and_failure_logging(self):
@@ -198,7 +195,6 @@ class DevFaultScenarioTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(sentiment_llm, "chat_completion_json", new=AsyncMock(return_value=invalid_result)) as chat,
-            patch.object(sentiment_llm.asyncio, "sleep", new=AsyncMock()) as sleep,
         ):
             with self.assertRaises(sentiment_llm.LLMProtocolFailure):
                 await sentiment_llm.batch_analyze_llm(
@@ -207,17 +203,14 @@ class DevFaultScenarioTests(unittest.IsolatedAsyncioTestCase):
                     concurrency=1,
                 )
 
-        self.assertEqual(chat.await_count, 3)
-        self.assertEqual([call.args for call in sleep.await_args_list], [(1,), (2,)])
+        self.assertEqual(chat.await_count, 2)
         entries = self._entries()
         self.assertEqual(
             [entry["event"] for entry in entries],
-            ["llm.batch_started", "llm.batch_retried", "llm.batch_retried", "llm.batch_failed"],
+            ["llm.batch_started", "llm.scheduler_attempt_failed", "llm.scheduler_attempt_failed"],
         )
         self.assertEqual(entries[0]["batch_index"], 1)
-        self.assertTrue(all(entry["error_type"] == "ValueError" for entry in entries[1:3]))
-        self.assertEqual(entries[3]["batch_index"], 1)
-        self.assertEqual(entries[3]["error_type"], "LLMProtocolFailure")
+        self.assertTrue(all(entry["stage"] == "protocol" for entry in entries[1:]))
         self._assert_secrets_absent()
 
     async def test_failing_log_handler_does_not_mask_video_timeout(self):

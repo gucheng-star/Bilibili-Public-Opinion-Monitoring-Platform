@@ -2,25 +2,22 @@
 
 import asyncio
 import json
-import logging
 from collections.abc import Callable
 
 from services.llm_client import chat_completion_json
 from services.logging_config import get_logger, log_event
+from services.llm_scheduler import LLMScheduler, MAX_TOTAL_ATTEMPTS, ProtocolBatchError
 from services.sentiment_contract import V1_EMOTION_LABELS, V2_EMOTION_LABELS, V2_STYLE_LABELS
 
 EMOTION_LABELS = tuple(sorted(V2_EMOTION_LABELS))
 STYLE_LABELS = tuple(sorted(V2_STYLE_LABELS))
 LLM_BATCH_SIZE = 10
 LLM_BATCH_CONCURRENCY = 3
-LLM_BATCH_RETRIES = 2
 LLM_VIDEO_TITLE_MAX_CHARS = 200
 LLM_CONTEXT_COMMENT_MAX_CHARS = 240
 LLM_COMMENT_MAX_CHARS = 1000
 LLM_BATCH_INPUT_MAX_CHARS = 6000
-LLM_DIAGNOSTIC_VALUE_MAX_CHARS = 80
 
-logger = logging.getLogger(__name__)
 dev_logger = get_logger("sentiment_llm")
 
 FEW_SHOT_EXAMPLES = [
@@ -58,17 +55,6 @@ class LLMProtocolFailure(RuntimeError):
     def __init__(self, messages: list[str]):
         self.messages = tuple(messages)
         super().__init__("；".join(messages))
-
-
-def _diagnostic_value(value: object) -> str:
-    """Serialize one bounded protocol value without logging prompts or secrets."""
-    try:
-        text = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
-    except (TypeError, ValueError):
-        text = f"<{type(value).__name__}>"
-    if len(text) <= LLM_DIAGNOSTIC_VALUE_MAX_CHARS:
-        return text
-    return text[:LLM_DIAGNOSTIC_VALUE_MAX_CHARS] + "..."
 
 
 def _build_few_shot_messages():
@@ -222,13 +208,6 @@ async def _analyze_comment_batch(
         if comment_id in labels_by_protocol_id:
             raise ValueError("模型返回格式不符合要求：包含重复的批次条目 ID")
         if emotion not in V2_EMOTION_LABELS or style not in V2_STYLE_LABELS:
-            logger.warning(
-                "LLM sentiment protocol rejected emotion/style provider=%s model=%s batch_size=%d emotion=%s style=%s",
-                _diagnostic_value(config.get("provider", "")),
-                _diagnostic_value(config.get("model", "")),
-                len(comments),
-                _diagnostic_value(emotion), _diagnostic_value(style),
-            )
             raise ValueError("模型返回格式不符合要求：包含非法情感或表达风格")
         labels_by_protocol_id[comment_id] = {"emotion": emotion, "style": style}
 
@@ -255,90 +234,18 @@ async def test_sentiment_connection(config: dict[str, str]) -> int:
 
 async def _analyze_batch_with_retry(
     comments: list[dict], config: dict[str, str], contexts: dict[str, dict[str, str]],
-    video_title: str | None = None,
 ) -> dict[str, dict[str, str]]:
-    """Retry only the failed batch so valid completed batches are preserved."""
-    last_error: Exception | None = None
-    repair_instruction: str | None = None
-    for attempt in range(LLM_BATCH_RETRIES + 1):
-        try:
-            result = await _analyze_comment_batch(
-                comments,
-                config,
-                contexts,
-                repair_instruction=repair_instruction,
-                video_title=video_title,
-            )
-            return result
-        except Exception as exc:
-            last_error = exc
-            if isinstance(exc, ValueError):
-                repair_instruction = (
-                    f"上一次返回未通过协议校验：{exc}。"
-                    "请严格按照既定 items、id、emotion、style 约束重新输出完整 JSON。"
-                )
-            if attempt < LLM_BATCH_RETRIES:
-                log_event(
-                    dev_logger, "WARNING", "llm.batch_retried", "大模型情绪批次准备重试",
-                    count=len(comments), error_type=type(exc).__name__,
-                    attempt=attempt + 1,
-                )
-                await asyncio.sleep(attempt + 1)
-    raise RuntimeError(
-        f"大模型批次连续 {LLM_BATCH_RETRIES + 1} 次失败：{last_error}"
-    ) from last_error
-
-
-async def _analyze_batch_with_fallback(
-    comments: list[dict], config: dict[str, str], contexts: dict[str, dict[str, str]],
-    on_success: Callable[[list[dict], dict[str, dict[str, str]]], None],
-    video_title: str | None = None,
-) -> dict[str, dict[str, str]]:
-    """Retry a batch, then bisect it so one malformed reply does not waste good work.
-
-    A provider can occasionally return a malformed multi-item response.  After
-    the normal bounded retries fail, recursively split the batch.  Successful
-    leaves are reported immediately; a persistently bad single comment remains
-    an explicit, retryable failure instead of cancelling previously completed
-    labels.
-    """
-    try:
-        if video_title is None:
-            labels = await _analyze_batch_with_retry(comments, config, contexts)
-        else:
-            labels = await _analyze_batch_with_retry(comments, config, contexts, video_title)
-    except Exception as exc:
-        # Only malformed/invalid model responses benefit from smaller JSON
-        # payloads.  Retrying a network, authentication, rate-limit, or
-        # provider failure as multiple subrequests would increase cost and
-        # pressure without improving the outcome.
-        is_protocol_failure = isinstance(exc.__cause__, ValueError)
-        if not is_protocol_failure:
-            raise
-        if len(comments) > 1 and is_protocol_failure:
-            midpoint = len(comments) // 2
-            labels: dict[str, dict[str, str]] = {}
-            protocol_errors: list[str] = []
-            # Run both halves even when one contains an isolated protocol
-            # failure.  A non-protocol failure still propagates immediately,
-            # avoiding extra provider requests during network/auth/rate limits.
-            for half in (comments[:midpoint], comments[midpoint:]):
-                try:
-                    labels.update(
-                        await _analyze_batch_with_fallback(half, config, contexts, on_success, video_title)
-                    )
-                except LLMProtocolFailure as protocol_error:
-                    protocol_errors.extend(protocol_error.messages)
-            if protocol_errors:
-                raise LLMProtocolFailure(protocol_errors) from exc
-            return labels
-        protocol_detail = exc.__cause__ if isinstance(exc.__cause__, ValueError) else exc
-        raise LLMProtocolFailure([
-            f"单条评论连续 {LLM_BATCH_RETRIES + 1} 次未能完成大模型协议校验："
-            f"{protocol_detail}"
-        ]) from exc
-    on_success(comments, labels)
-    return labels
+    """Compatibility seam for tests; one request only, retries live in scheduler."""
+    request_config = dict(config)
+    repair_instruction = request_config.pop("_scheduler_repair_instruction", None)
+    video_title = request_config.pop("_scheduler_video_title", None)
+    return await _analyze_comment_batch(
+        comments,
+        request_config,
+        contexts,
+        repair_instruction=repair_instruction,
+        video_title=video_title,
+    )
 
 
 async def batch_analyze_llm(
@@ -359,7 +266,14 @@ async def batch_analyze_llm(
     # for context without turning those completed comments into model targets.
     contexts = _build_comment_contexts(context_comments if context_comments is not None else comments_to_analyze)
     batches = _build_llm_batches(comments_to_analyze, contexts, video_title)
-    semaphore = asyncio.Semaphore(concurrency)
+    # The scheduler owns all actual HTTP concurrency.  Keep this legacy
+    # argument for callers while no longer allowing per-call semaphores to
+    # create an independent retry/fallback budget.
+    _ = concurrency
+    scheduler = LLMScheduler(
+        config,
+        max_total_attempts=MAX_TOTAL_ATTEMPTS * max(1, len(batches)),
+    )
     processed_comments = len(empty_comments)
     if empty_comments and progress_callback:
         progress_callback(processed_comments)
@@ -377,14 +291,23 @@ async def batch_analyze_llm(
             progress_callback(processed_comments)
 
     async def _run_batch(batch: list[dict], batch_index: int) -> None:
-        async with semaphore:
-            log_event(dev_logger, "INFO", "llm.batch_started", "大模型情绪批次已开始", batch_index=batch_index, count=len(batch))
-            try:
-                await _analyze_batch_with_fallback(batch, config, contexts, complete_batch, video_title)
-            except Exception as exc:
-                log_event(dev_logger, "ERROR", "llm.batch_failed", "大模型情绪批次失败", batch_index=batch_index, count=len(batch), error_type=type(exc).__name__)
-                raise
-            log_event(dev_logger, "INFO", "llm.batch_completed", "大模型情绪批次已完成", batch_index=batch_index, count=len(batch))
+        log_event(dev_logger, "INFO", "llm.batch_started", "大模型情绪批次已开始", batch_index=batch_index)
+
+        async def request(request_batch: list[dict], model: str, repair_instruction: str | None):
+            request_config = dict(config)
+            request_config["model"] = model
+            request_config["fallback_model"] = ""
+            if repair_instruction:
+                request_config["_scheduler_repair_instruction"] = repair_instruction
+            if video_title:
+                request_config["_scheduler_video_title"] = video_title
+            return await _analyze_batch_with_retry(request_batch, request_config, contexts)
+
+        try:
+            await scheduler.run_batch(batch_index, batch, request, complete_batch)
+        except ProtocolBatchError as error:
+            raise LLMProtocolFailure(list(error.messages)) from error
+        log_event(dev_logger, "INFO", "llm.batch_completed", "大模型情绪批次已完成", batch_index=batch_index)
 
     batch_tasks = [asyncio.create_task(_run_batch(batch, index)) for index, batch in enumerate(batches, start=1)]
     protocol_errors: list[str] = []

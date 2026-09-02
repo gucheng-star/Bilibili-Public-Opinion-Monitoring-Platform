@@ -127,7 +127,7 @@ class SentimentContextTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertNotIn("model-invented-id", str(raised.exception))
 
-    async def test_logs_bounded_invalid_label_without_comment_or_api_key(self):
+    async def test_invalid_label_does_not_echo_comment_or_api_key(self):
         comment = {
             "rpid": 310116267393,
             "content": "不应进入协议诊断日志的评论正文",
@@ -143,17 +143,12 @@ class SentimentContextTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch("services.sentiment_llm._call_llm", new=AsyncMock(return_value=fake_response)),
-            self.assertLogs("services.sentiment_llm", level="WARNING") as captured,
-            self.assertRaisesRegex(ValueError, "包含非法情感或表达风格"),
+            self.assertRaisesRegex(ValueError, "包含非法情感或表达风格") as raised,
         ):
             await _analyze_comment_batch([comment], config, {})
 
-        diagnostic = "\n".join(captured.output)
-        self.assertIn('provider="deepseek"', diagnostic)
-        self.assertIn('model="deepseek-v4-flash"', diagnostic)
-        self.assertIn('emotion="neutral "', diagnostic)
-        self.assertNotIn(comment["content"], diagnostic)
-        self.assertNotIn(config["api_key"], diagnostic)
+        self.assertNotIn(comment["content"], str(raised.exception))
+        self.assertNotIn(config["api_key"], str(raised.exception))
 
     async def test_accepts_sarcasm_as_style_without_retry(self):
         response = {"items": [{"id": "item-1", "emotion": "anger", "style": "sarcasm"}]}
@@ -256,7 +251,7 @@ class SentimentContextTests(unittest.IsolatedAsyncioTestCase):
         with patch("services.sentiment_llm._analyze_batch_with_retry", side_effect=fake_analyze):
             analyzed = await batch_analyze_llm(comments, {}, concurrency=1)
 
-        self.assertEqual(call_sizes, [5, 2, 3])
+        self.assertEqual(call_sizes, [5, 5, 2, 3])
         self.assertTrue(all(comment["sentiment_llm_label"] == "neutral" for comment in analyzed))
 
     async def test_does_not_split_a_network_failure_into_more_paid_requests(self):

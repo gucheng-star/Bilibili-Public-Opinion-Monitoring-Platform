@@ -271,6 +271,27 @@ class LLMClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(connected.exception.provider_code)
         self.assertNotIn("raw connection secret", str(connected.exception))
 
+    async def test_chat_completion_performs_one_transport_attempt_only(self):
+        calls = []
+        response = httpx.Response(
+            503,
+            request=httpx.Request("POST", "https://api.example.com"),
+        )
+        config = {
+            "provider": "deepseek",
+            "base_url": "https://api.example.com/v1",
+            "model": "primary-model",
+            "fallback_model": "fallback-model",
+            "api_key": "secret-api-key",
+        }
+        with patch.object(llm_client.httpx, "AsyncClient", return_value=FakeClient(response, calls)):
+            with self.assertRaises(llm_client.LLMRequestError):
+                await llm_client.chat_completion(
+                    config, [{"role": "user", "content": "test"}], check_dns=False, retries=2,
+                )
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][1]["json"]["model"], "primary-model")
+
     async def test_list_models_uses_compatible_endpoint_and_deduplicates_ids(self):
         calls = []
         response = httpx.Response(
