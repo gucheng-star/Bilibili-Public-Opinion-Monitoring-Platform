@@ -12,7 +12,6 @@ from sqlalchemy.orm import Session
 
 from models.database import Analysis, AnalysisGroup, AnalysisGroupItem, Comment
 from services.ai_summary import (
-    LLM_LABELS,
     MAX_COMMENT_CHARACTERS,
     MAX_SAMPLE_CHARACTERS,
     MAX_SAMPLE_COMMENTS,
@@ -23,6 +22,7 @@ from services.comment_quality import annotate_exact_duplicates, apply_duplicate_
 from services.heat import analyze_heat
 from services.llm_client import chat_completion
 from services.region import analyze_region
+from services.sentiment_contract import LLM_SENTIMENT_SCHEMA_V2, V2_EMOTION_LABELS, V2_STYLE_LABELS
 from services.wordcloud_gen import get_top_keywords
 
 
@@ -173,6 +173,7 @@ def _comment_payload(comment: Comment, analysis: Analysis) -> dict[str, Any]:
         "sentiment_score": comment.sentiment_score,
         "sentiment_llm_label": comment.sentiment_llm_label or "",
         "sentiment_llm_style": comment.sentiment_llm_style or "plain",
+        "sentiment_llm_schema_version": comment.sentiment_llm_schema_version,
         "post_time": comment.post_time.isoformat() if comment.post_time else None,
         "source_analysis_id": analysis.id,
         "source_bv": analysis.bv,
@@ -194,18 +195,25 @@ def group_comments(db: Session, group_id: int) -> list[dict[str, Any]]:
 
 
 def llm_readiness(rows: list[tuple[AnalysisGroupItem, Analysis]], comments: list[dict[str, Any]]) -> dict[str, Any]:
-    labels_by_analysis: dict[int, list[str]] = defaultdict(list)
+    comments_by_analysis: dict[int, list[dict[str, Any]]] = defaultdict(list)
     for comment in comments:
-        labels_by_analysis[int(comment["source_analysis_id"])].append(comment.get("sentiment_llm_label", ""))
+        comments_by_analysis[int(comment["source_analysis_id"])].append(comment)
     missing = []
     for item, analysis in rows:
-        labels = labels_by_analysis.get(analysis.id, [])
+        source_comments = comments_by_analysis.get(analysis.id, [])
         reason = ""
         if analysis.status != "done":
             reason = "分析尚未完成"
         elif analysis.mode != "llm":
             reason = "尚未完成大模型情绪分析"
-        elif any(label not in LLM_LABELS for label in labels):
+        elif analysis.sentiment_llm_schema_version != LLM_SENTIMENT_SCHEMA_V2:
+            reason = "尚未完成 V2 大模型情绪分析"
+        elif any(
+            comment.get("sentiment_llm_schema_version") != LLM_SENTIMENT_SCHEMA_V2
+            or comment.get("sentiment_llm_label") not in V2_EMOTION_LABELS
+            or comment.get("sentiment_llm_style") not in V2_STYLE_LABELS
+            for comment in source_comments
+        ):
             reason = "存在未完成的大模型情绪标签"
         if reason:
             missing.append({**_member_payload(item, analysis), "reason": reason})
@@ -213,7 +221,7 @@ def llm_readiness(rows: list[tuple[AnalysisGroupItem, Analysis]], comments: list
 
 
 def _sentiment_counts(comments: list[dict[str, Any]], mode: str) -> dict[str, int]:
-    labels = LLM_LABELS if mode == "llm" else ("positive", "negative", "neutral")
+    labels = V2_EMOTION_LABELS if mode == "llm" else ("positive", "negative", "neutral")
     field = "sentiment_llm_label" if mode == "llm" else "sentiment_label"
     counts = Counter(str(comment.get(field, "") or "") for comment in comments)
     return {label: counts.get(label, 0) for label in labels}
@@ -244,7 +252,13 @@ def source_distribution(
         matched = matched_by_source.get(analysis.id, [])
         source_llm_ready = (
             analysis.status == "done" and analysis.mode == "llm"
-            and all(comment.get("sentiment_llm_label", "") in LLM_LABELS for comment in raw)
+            and analysis.sentiment_llm_schema_version == LLM_SENTIMENT_SCHEMA_V2
+            and all(
+                comment.get("sentiment_llm_schema_version") == LLM_SENTIMENT_SCHEMA_V2
+                and comment.get("sentiment_llm_label") in V2_EMOTION_LABELS
+                and comment.get("sentiment_llm_style") in V2_STYLE_LABELS
+                for comment in raw
+            )
         )
         values.append({
             **_member_payload(item, analysis),

@@ -12,7 +12,12 @@ from services.heat import analyze_heat
 from services.settings_store import get_task_config
 from services.runtime_state import activity
 from services.comment_quality import annotate_exact_duplicates, build_duplicate_statistics
-from services.ai_summary import LLM_LABELS, apply_filters, normalize_filters
+from services.ai_summary import apply_filters, normalize_filters
+from services.sentiment_contract import (
+    LLM_SENTIMENT_SCHEMA_V2,
+    V2_EMOTION_LABELS,
+    V2_STYLE_LABELS,
+)
 from services.logging_config import (
     get_logger,
     get_request_id,
@@ -219,9 +224,61 @@ def _stored_comment_data(comments: list[Comment]) -> list[dict]:
             'post_time': comment.post_time,
             'sentiment_llm_label': comment.sentiment_llm_label or '',
             'sentiment_llm_style': comment.sentiment_llm_style or 'plain',
+            'sentiment_llm_schema_version': comment.sentiment_llm_schema_version,
         }
         for comment in comments
     ]
+
+
+def _is_v2_llm_result(label: object, style: object) -> bool:
+    return label in V2_EMOTION_LABELS and style in V2_STYLE_LABELS
+
+
+def _safe_reanalysis_error(_error: Exception | None = None) -> str:
+    """Keep persisted status actionable without serializing model/provider input."""
+    return "大模型情绪分析未完成，请检查配置后仅补齐待处理评论"
+
+
+def _finalize_v2_reanalysis(db, analysis: Analysis) -> bool:
+    """Write the V2 analysis/result boundary only after full comment coverage."""
+    comments = db.query(Comment).filter_by(analysis_id=analysis.id).all()
+    if not comments or any(comment.sentiment_llm_schema_version != LLM_SENTIMENT_SCHEMA_V2 for comment in comments):
+        return False
+    counts = {label: 0 for label in V2_EMOTION_LABELS}
+    for comment in comments:
+        if not _is_v2_llm_result(comment.sentiment_llm_label, comment.sentiment_llm_style):
+            return False
+        counts[comment.sentiment_llm_label] += 1
+    values = {
+        "positive_count": 0,
+        "negative_count": 0,
+        "neutral_count": 0,
+        "llm_neutral": counts["neutral"],
+        "llm_joy": counts["joy"],
+        "llm_trust": counts["trust"],
+        "llm_anticipation": counts["anticipation"],
+        "llm_surprise": counts["surprise"],
+        "llm_anger": counts["anger"],
+        "llm_sadness": counts["sadness"],
+        "llm_fear": counts["fear"],
+        "llm_disgust": counts["disgust"],
+        "llm_support": 0,
+        "llm_concern": 0,
+        "llm_sarcasm": 0,
+        "sentiment_llm_schema_version": LLM_SENTIMENT_SCHEMA_V2,
+    }
+    result = db.query(SentimentResult).filter_by(analysis_id=analysis.id).first()
+    if result:
+        for field, value in values.items():
+            setattr(result, field, value)
+    else:
+        db.add(SentimentResult(analysis_id=analysis.id, **values))
+    analysis.sentiment_llm_schema_version = LLM_SENTIMENT_SCHEMA_V2
+    analysis.status = "done"
+    analysis.mode = "llm"
+    analysis.processed_comments = len(comments)
+    analysis.error_msg = None
+    return True
 
 
 @router.post('/reanalyze/{analysis_id}')
@@ -242,13 +299,11 @@ async def reanalyze(analysis_id: int, background_tasks: BackgroundTasks):
         all_comments = _stored_comment_data(db.query(Comment).filter_by(analysis_id=analysis_id).all())
         comments_data = [
             comment for comment in all_comments
-            if comment.get('sentiment_llm_label', '') not in LLM_LABELS
+            if comment.get('sentiment_llm_schema_version') != LLM_SENTIMENT_SCHEMA_V2
         ]
         if not comments_data:
-            if a.mode != 'llm':
-                a.mode = 'llm'
-                a.processed_comments = len(all_comments)
-                db.commit()
+            _finalize_v2_reanalysis(db, a)
+            db.commit()
             return {'analysis_id': analysis_id, 'status': 'done', 'mode': 'llm', 'skipped': True}
         llm_config = get_task_config("sentiment")
         if not llm_config.get("api_key"):
@@ -272,8 +327,8 @@ async def reanalyze(analysis_id: int, background_tasks: BackgroundTasks):
         log_event(logger, "ERROR", "reanalyze.task_create_failed", "创建大模型重分析任务失败", analysis_id=analysis_id, task_type="llm_reanalysis", exception=e)
         db.rollback()
         a2 = db.query(Analysis).filter_by(id=analysis_id).first()
-        if a2: a2.status = 'error'; a2.error_msg = str(e); db.commit()
-        raise HTTPException(500, str(e))
+        if a2: a2.status = 'error'; a2.error_msg = _safe_reanalysis_error(e); db.commit()
+        raise HTTPException(500, _safe_reanalysis_error(e))
     finally:
         db.close()
 
@@ -301,7 +356,13 @@ async def _run_reanalyze_inner(
 ):
     db = SessionLocal()
     try:
-        initial_processed = max(0, len(context_comments or comments_data) - len(comments_data))
+        analysis = db.query(Analysis).filter_by(id=analysis_id).first()
+        if not analysis:
+            return False
+        initial_processed = db.query(Comment).filter_by(
+            analysis_id=analysis_id,
+            sentiment_llm_schema_version=LLM_SENTIMENT_SCHEMA_V2,
+        ).count()
         persisted_rpids: set[str] = set()
 
         def report_progress(processed_comments: int):
@@ -311,56 +372,42 @@ async def _run_reanalyze_inner(
             # work or sends it to the paid model again on the next attempt.
             for comment in comments_data:
                 label = comment.get("sentiment_llm_label", "")
+                style = comment.get("sentiment_llm_style", "plain")
                 comment_id = str(comment.get("rpid"))
-                if label not in LLM_LABELS or comment_id in persisted_rpids:
+                if not _is_v2_llm_result(label, style) or comment_id in persisted_rpids:
                     continue
                 db.query(Comment).filter_by(analysis_id=analysis_id, rpid=comment.get("rpid")).update({
                     "sentiment_llm_label": label,
-                    "sentiment_llm_style": comment.get("sentiment_llm_style", "plain"),
+                    "sentiment_llm_style": style,
+                    "sentiment_llm_schema_version": LLM_SENTIMENT_SCHEMA_V2,
                 })
                 persisted_rpids.add(comment_id)
             db.query(Analysis).filter_by(id=analysis_id).update({
-                'processed_comments': initial_processed + processed_comments,
+                'processed_comments': min(
+                    analysis.total_comments or len(context_comments or comments_data),
+                    initial_processed + processed_comments,
+                ),
             })
             db.commit()
             log_event(logger, "INFO", "reanalyze.batch_completed", "大模型批次结果已持久化", analysis_id=analysis_id, task_type="llm_reanalysis", count=initial_processed + processed_comments)
 
         # Run LLM analysis
-        batch_kwargs = {'progress_callback': report_progress}
+        batch_kwargs = {
+            'progress_callback': report_progress,
+            'video_title': analysis.video_title,
+        }
         if context_comments is not None:
             batch_kwargs['context_comments'] = context_comments
         comments_analyzed = await batch_analyze_llm(comments_data, llm_config, **batch_kwargs)
-
-        # Remove old sentiment result
-        old_sr = db.query(SentimentResult).filter_by(analysis_id=analysis_id).first()
-        if old_sr: db.delete(old_sr)
-
-        # Update each comment's LLM label
-        label_map = {
-            c['rpid']: (c.get('sentiment_llm_label', ''), c.get('sentiment_llm_style', 'plain'))
-            for c in comments_analyzed
-        }
-        for comment in db.query(Comment).filter_by(analysis_id=analysis_id).all():
-            if comment.rpid in label_map:
-                comment.sentiment_llm_label, comment.sentiment_llm_style = label_map[comment.rpid]
-
-        # The source result must cover retained labels as well as just-finished
-        # targets, otherwise a partial reanalysis would erase prior counts.
-        all_comments = _stored_comment_data(db.query(Comment).filter_by(analysis_id=analysis_id).all())
-        s = summarize_sentiment_llm(all_comments)
-        db.add(SentimentResult(analysis_id=analysis_id, positive_count=0, negative_count=0, neutral_count=0,
-            llm_neutral=s['neutral'], llm_joy=s['joy'], llm_support=s['support'],
-            llm_anger=s['anger'], llm_sadness=s['sadness'], llm_surprise=s['surprise'],
-            llm_disgust=s['disgust'], llm_anticipation=s['anticipation'], llm_concern=s['concern'],
-            llm_sarcasm=s['sarcasm']))
-
-        db.query(Analysis).filter_by(id=analysis_id).update({
-            'status': 'done', 'mode': 'llm', 'error_msg': None,
-            'processed_comments': len(all_comments),
-        })
+        # Test doubles and future service changes cannot bypass the V2 boundary:
+        # persist a final validated sweep before the analysis-level upgrade.
+        report_progress(len(comments_analyzed))
+        db.refresh(analysis)
+        if not _finalize_v2_reanalysis(db, analysis):
+            raise RuntimeError("大模型情绪结果未完成 V2 覆盖")
         db.commit()
-        log_event(logger, "INFO", "reanalyze.database_commit_completed", "大模型重分析结果已写入数据库", analysis_id=analysis_id, task_type="llm_reanalysis", count=len(all_comments))
-        log_event(logger, "INFO", "reanalyze.task_completed", "大模型重分析任务已完成", analysis_id=analysis_id, task_type="llm_reanalysis", count=len(all_comments))
+        log_event(logger, "INFO", "reanalyze.database_commit_completed", "大模型重分析结果已写入数据库", analysis_id=analysis_id, task_type="llm_reanalysis", count=analysis.total_comments)
+        log_event(logger, "INFO", "reanalyze.task_completed", "大模型重分析任务已完成", analysis_id=analysis_id, task_type="llm_reanalysis", count=analysis.total_comments)
         return True
     except Exception as e:
         log_event(logger, "ERROR", "reanalyze.task_failed", "大模型重分析任务失败", analysis_id=analysis_id, task_type="llm_reanalysis", exception=e)
@@ -369,7 +416,7 @@ async def _run_reanalyze_inner(
         if a:
             a.status = 'done'
             a.mode = failure_mode
-            a.error_msg = str(e)
+            a.error_msg = _safe_reanalysis_error(e)
             db.commit()
         return False
     finally:
@@ -382,8 +429,18 @@ def get_status(analysis_id: int):
     try:
         a = db.query(Analysis).filter_by(id=analysis_id).first()
         if not a: raise HTTPException(404, 'Not found')
+        v2_target_count = db.query(Comment).filter_by(analysis_id=analysis_id).count()
+        v2_completed_count = db.query(Comment).filter_by(
+            analysis_id=analysis_id,
+            sentiment_llm_schema_version=LLM_SENTIMENT_SCHEMA_V2,
+        ).count()
+        error_summary = _safe_reanalysis_error() if a.error_msg else None
         return {'analysis_id':a.id,'status':a.status,'total_comments':a.total_comments,
-            'processed_comments':a.processed_comments,'error_msg':a.error_msg}
+            'processed_comments':a.processed_comments,'error_msg':error_summary,
+            'error_summary':error_summary,
+            'v2_target_count':v2_target_count,
+            'v2_completed_count':v2_completed_count,
+            'v2_pending_count':v2_target_count - v2_completed_count}
     finally: db.close()
 
 
@@ -413,12 +470,22 @@ def get_results(analysis_id: int):
             'keywords':get_top_keywords(cl, top_n=500),
             'duplicate_statistics':build_duplicate_statistics(cl),'comments':cl}
         if a.mode == 'llm' and s:
-            result['sentiment_llm'] = {
-                'neutral':s.llm_neutral,'joy':s.llm_joy,'support':s.llm_support or s.llm_trust,
-                'anticipation':s.llm_anticipation,'surprise':s.llm_surprise,'anger':s.llm_anger,
-                'sadness':s.llm_sadness,'concern':s.llm_concern or s.llm_fear,'disgust':s.llm_disgust,
-                'sarcasm':s.llm_sarcasm,
-            }
+            if (
+                a.sentiment_llm_schema_version == LLM_SENTIMENT_SCHEMA_V2
+                and s.sentiment_llm_schema_version == LLM_SENTIMENT_SCHEMA_V2
+            ):
+                result['sentiment_llm'] = {
+                    'neutral':s.llm_neutral,'joy':s.llm_joy,'trust':s.llm_trust,
+                    'anticipation':s.llm_anticipation,'surprise':s.llm_surprise,'anger':s.llm_anger,
+                    'sadness':s.llm_sadness,'fear':s.llm_fear,'disgust':s.llm_disgust,
+                }
+            else:
+                result['sentiment_llm'] = {
+                    'neutral':s.llm_neutral,'joy':s.llm_joy,'support':s.llm_support or s.llm_trust,
+                    'anticipation':s.llm_anticipation,'surprise':s.llm_surprise,'anger':s.llm_anger,
+                    'sadness':s.llm_sadness,'concern':s.llm_concern or s.llm_fear,'disgust':s.llm_disgust,
+                    'sarcasm':s.llm_sarcasm,
+                }
         return result
     finally: db.close()
 

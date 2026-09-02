@@ -26,9 +26,9 @@ from services.analysis_groups import (
     update_group,
 )
 from services.llm_client import LLMRequestError
-from services.ai_summary import LLM_LABELS
 from services.runtime_state import activity
 from services.settings_store import get_task_config
+from services.sentiment_contract import LLM_SENTIMENT_SCHEMA_V2
 from services.wordcloud_gen import get_top_keywords
 from services.logging_config import (
     get_logger,
@@ -86,7 +86,14 @@ def group_reanalysis_status(db, group: AnalysisGroup) -> dict:
         source_comments = comments_by_source.get(analysis.id, [])
         total = len(source_comments)
         total_comments += total
-        valid = sum(comment.get("sentiment_llm_label", "") in LLM_LABELS for comment in source_comments)
+        valid = sum(
+            comment.get("sentiment_llm_schema_version") == LLM_SENTIMENT_SCHEMA_V2
+            and analysis_routes._is_v2_llm_result(
+                comment.get("sentiment_llm_label", ""),
+                comment.get("sentiment_llm_style", "plain"),
+            )
+            for comment in source_comments
+        )
         # Successful validated sub-batches commit their labels and callback
         # progress together; use that durable count while a source is running.
         processed_comments += min(total, analysis.processed_comments or 0) if analysis.status == "analyzing" else valid
@@ -297,12 +304,16 @@ async def post_group_reanalyze(group_id: int, background_tasks: BackgroundTasks)
             )
             target_comments = [
                 comment for comment in context_comments
-                if comment.get("sentiment_llm_label", "") not in LLM_LABELS
+                if (
+                    comment.get("sentiment_llm_schema_version") != LLM_SENTIMENT_SCHEMA_V2
+                    or not analysis_routes._is_v2_llm_result(
+                        comment.get("sentiment_llm_label", ""),
+                        comment.get("sentiment_llm_style", "plain"),
+                    )
+                )
             ]
             if not target_comments:
-                if analysis.mode != "llm":
-                    analysis.mode = "llm"
-                    analysis.processed_comments = len(context_comments)
+                if analysis_routes._finalize_v2_reanalysis(db, analysis):
                     legacy_ready.append(analysis.id)
                 continue
             claimed = (

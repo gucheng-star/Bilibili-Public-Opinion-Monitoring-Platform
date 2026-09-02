@@ -13,6 +13,7 @@ from sqlalchemy.pool import StaticPool
 from api import group_routes, routes
 from models.database import Analysis, AnalysisGroupItem, AnalysisGroupSummary, Base, Comment
 from services.analysis_groups import select_group_representative_comments
+from services.sentiment_contract import LLM_SENTIMENT_SCHEMA_V2
 
 
 class AnalysisGroupRouteTests(unittest.IsolatedAsyncioTestCase):
@@ -113,10 +114,15 @@ class AnalysisGroupRouteTests(unittest.IsolatedAsyncioTestCase):
         db = self.sessions()
         first = db.get(Analysis, self.first_id)
         first.mode = "llm"
+        first.sentiment_llm_schema_version = LLM_SENTIMENT_SCHEMA_V2
         for comment in db.query(Comment).filter_by(analysis_id=self.first_id):
-            comment.sentiment_llm_label = "support"
+            comment.sentiment_llm_label = "trust"
+            comment.sentiment_llm_style = "plain"
+            comment.sentiment_llm_schema_version = LLM_SENTIMENT_SCHEMA_V2
         parent = db.query(Comment).filter_by(analysis_id=self.second_id, rpid=3).first()
         parent.sentiment_llm_label = "neutral"
+        parent.sentiment_llm_style = "plain"
+        parent.sentiment_llm_schema_version = LLM_SENTIMENT_SCHEMA_V2
         db.add(Comment(
             analysis_id=self.second_id, rpid=4, root_rpid=3, parent_rpid=3,
             content="这条回复需要补齐标签", post_time=datetime(2026, 8, 2, 10),
@@ -139,9 +145,10 @@ class AnalysisGroupRouteTests(unittest.IsolatedAsyncioTestCase):
             [3, 4],
         )
 
-        async def fake_batch(comments, _config, progress_callback=None, context_comments=None):
+        async def fake_batch(comments, _config, progress_callback=None, context_comments=None, video_title=None):
             self.assertEqual([comment["rpid"] for comment in comments], [4])
             self.assertEqual([comment["rpid"] for comment in context_comments], [3, 4])
+            self.assertEqual(video_title, "来源 B")
             progress_callback(1)
             comments[0]["sentiment_llm_label"] = "joy"
             comments[0]["sentiment_llm_style"] = "plain"
@@ -153,9 +160,9 @@ class AnalysisGroupRouteTests(unittest.IsolatedAsyncioTestCase):
         db = self.sessions()
         try:
             first_labels = [comment.sentiment_llm_label for comment in db.query(Comment).filter_by(analysis_id=self.first_id)]
-            self.assertEqual(first_labels, ["support", "support"])
+            self.assertEqual(first_labels, ["trust", "trust"])
             self.assertEqual(db.query(Comment).filter_by(analysis_id=self.second_id, rpid=4).one().sentiment_llm_label, "joy")
-            self.assertEqual(db.get(Analysis, self.second_id).mode, "llm")
+            self.assertEqual(db.get(Analysis, self.second_id).sentiment_llm_schema_version, LLM_SENTIMENT_SCHEMA_V2)
         finally:
             db.close()
         self.assertTrue(group_routes.get_group_reanalyze_status(group["id"])["ready"])
@@ -166,7 +173,7 @@ class AnalysisGroupRouteTests(unittest.IsolatedAsyncioTestCase):
         started = asyncio.Event()
         release = asyncio.Event()
 
-        async def fake_batch(comments, _config, progress_callback=None, context_comments=None):
+        async def fake_batch(comments, _config, progress_callback=None, context_comments=None, video_title=None):
             started.set()
             await release.wait()
             for comment in comments:
@@ -195,6 +202,43 @@ class AnalysisGroupRouteTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.wait_for(worker, timeout=1)
 
         self.assertTrue(group_routes.get_group_reanalyze_status(group["id"])["ready"])
+
+    async def test_group_reanalysis_finalizes_completed_v2_sources_without_model(self):
+        group = self._create_group()
+        db = self.sessions()
+        try:
+            for analysis_id, label in ((self.first_id, "trust"), (self.second_id, "fear")):
+                analysis = db.get(Analysis, analysis_id)
+                for comment in db.query(Comment).filter_by(analysis_id=analysis_id):
+                    comment.sentiment_llm_label = label
+                    comment.sentiment_llm_style = "plain"
+                    comment.sentiment_llm_schema_version = LLM_SENTIMENT_SCHEMA_V2
+                # Deliberately leave the higher-level analysis unfinalized.
+                analysis.mode = "nlp"
+                analysis.sentiment_llm_schema_version = 0
+            db.commit()
+        finally:
+            db.close()
+
+        config = AsyncMock()
+        with patch.object(group_routes, "get_task_config", config):
+            response = await group_routes.post_group_reanalyze(group["id"], BackgroundTasks())
+
+        config.assert_not_called()
+        self.assertTrue(response["ready"])
+        self.assertEqual(response["started_analysis_ids"], [])
+        self.assertEqual(response["already_ready_analysis_ids"], [self.first_id, self.second_id])
+        result = group_routes.get_group_results(group["id"], mode="llm")
+        self.assertEqual((result["sentiment_llm"]["trust"], result["sentiment_llm"]["fear"]), (2, 1))
+        self.assertNotIn("support", result["sentiment_llm"])
+        db = self.sessions()
+        try:
+            for analysis_id in (self.first_id, self.second_id):
+                analysis = db.get(Analysis, analysis_id)
+                self.assertEqual(analysis.mode, "llm")
+                self.assertEqual(analysis.sentiment_llm_schema_version, LLM_SENTIMENT_SCHEMA_V2)
+        finally:
+            db.close()
 
     async def test_shared_source_is_claimed_once_across_events(self):
         first_group = self._create_group()

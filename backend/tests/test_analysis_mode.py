@@ -89,7 +89,8 @@ class InitialAnalysisModeTests(unittest.IsolatedAsyncioTestCase):
             preserved = session.get(Analysis, analysis_id)
             self.assertEqual(preserved.status, "done")
             self.assertEqual(preserved.mode, "nlp")
-            self.assertIn("empty content", preserved.error_msg)
+            self.assertNotIn("empty content", preserved.error_msg)
+            self.assertIn("未完成", preserved.error_msg)
         finally:
             session.close()
 
@@ -110,12 +111,12 @@ class InitialAnalysisModeTests(unittest.IsolatedAsyncioTestCase):
         session.close()
 
         background_tasks = BackgroundTasks()
-        async def fake_batch(comments, _config, progress_callback=None):
+        async def fake_batch(comments, _config, progress_callback=None, **_kwargs):
+            for comment in comments:
+                comment["sentiment_llm_label"] = "trust" if comment["rpid"] == 1 else "neutral"
+                comment["sentiment_llm_style"] = "plain"
             progress_callback(1)
             progress_callback(2)
-            for comment in comments:
-                comment["sentiment_llm_label"] = "sarcasm" if comment["rpid"] == 1 else "neutral"
-                comment["sentiment_llm_style"] = "plain"
             return comments
 
         with (
@@ -145,10 +146,10 @@ class InitialAnalysisModeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(completed.status, "done")
             self.assertEqual(completed.mode, "llm")
             sentiment = session.query(SentimentResult).filter_by(analysis_id=analysis_id).one()
-            self.assertEqual(sentiment.llm_sarcasm, 1)
+            self.assertEqual(sentiment.llm_trust, 1)
             with patch.object(routes, "SessionLocal", self.sessions):
                 self.assertEqual(routes.get_status(analysis_id)["processed_comments"], 2)
-                self.assertEqual(routes.get_results(analysis_id)["sentiment_llm"]["sarcasm"], 1)
+                self.assertEqual(routes.get_results(analysis_id)["sentiment_llm"]["trust"], 1)
         finally:
             session.close()
 
@@ -200,7 +201,8 @@ class InitialAnalysisModeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(failed.status, "done")
             self.assertEqual(failed.mode, "nlp")
             self.assertEqual(failed.processed_comments, 4)
-            self.assertIn("rpid=3", failed.error_msg)
+            self.assertNotIn("rpid=3", failed.error_msg)
+            self.assertIn("未完成", failed.error_msg)
             labels = {
                 comment.rpid: comment.sentiment_llm_label
                 for comment in session.query(Comment).filter_by(analysis_id=analysis_id)
@@ -267,7 +269,8 @@ class InitialAnalysisModeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(failed.status, "done")
             self.assertEqual(failed.mode, "nlp")
             self.assertEqual(failed.processed_comments, 9)
-            self.assertIn("rpid=3", failed.error_msg)
+            self.assertNotIn("rpid=3", failed.error_msg)
+            self.assertIn("未完成", failed.error_msg)
             labels = {
                 comment.rpid: comment.sentiment_llm_label
                 for comment in session.query(Comment).filter_by(analysis_id=analysis_id)
@@ -288,7 +291,7 @@ class InitialAnalysisModeTests(unittest.IsolatedAsyncioTestCase):
         queued_comments = background_tasks.tasks[0].args[1]
         self.assertEqual([comment["rpid"] for comment in queued_comments], [3])
 
-    async def test_reanalysis_marks_legacy_valid_labels_ready_without_api_key(self):
+    async def test_reanalysis_does_not_treat_legacy_labels_as_v2_ready(self):
         session = self.sessions()
         analysis = Analysis(bv="BV1TEST00000", avid=123, video_title="test video", status="done", mode="nlp")
         session.add(analysis)
@@ -301,16 +304,17 @@ class InitialAnalysisModeTests(unittest.IsolatedAsyncioTestCase):
         analysis_id = analysis.id
         session.close()
 
-        config = Mock()
+        background_tasks = BackgroundTasks()
+        config = Mock(return_value={"api_key": "test-key"})
         with patch.object(routes, "SessionLocal", self.sessions), patch.object(routes, "get_task_config", config):
-            response = await routes.reanalyze(analysis_id, BackgroundTasks())
+            response = await routes.reanalyze(analysis_id, background_tasks)
 
-        self.assertEqual(response["status"], "done")
-        self.assertTrue(response["skipped"])
-        config.assert_not_called()
+        self.assertEqual(response["status"], "analyzing")
+        config.assert_called_once_with("sentiment")
+        self.assertEqual([comment["rpid"] for comment in background_tasks.tasks[0].args[1]], [1])
         session = self.sessions()
         try:
-            self.assertEqual(session.get(Analysis, analysis_id).mode, "llm")
+            self.assertEqual(session.get(Analysis, analysis_id).mode, "nlp")
         finally:
             session.close()
 
