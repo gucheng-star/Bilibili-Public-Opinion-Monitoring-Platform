@@ -27,6 +27,10 @@ PROVIDER_DEFAULTS: dict[str, dict[str, str]] = {
         "base_url": "https://api.deepseek.com",
         "model": "deepseek-v4-flash",
     },
+    "zhipu": {
+        "base_url": "https://open.bigmodel.cn/api/paas/v4",
+        "model": "glm-4.7-flash",
+    },
     "custom": {
         "base_url": "",
         "model": "",

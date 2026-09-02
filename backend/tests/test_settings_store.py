@@ -81,6 +81,25 @@ class SettingsStoreTests(unittest.TestCase):
         settings_store.update_settings({"llm": {"summary": {"clear_api_key": True}}})
         self.assertEqual(settings_store.load_settings()["llm"]["summary"]["api_key"], "")
 
+    def test_zhipu_defaults_keep_task_credentials_independent(self):
+        settings_store.update_settings({
+            "llm": {
+                "sentiment": {"api_key": "sentiment-key"},
+                "summary": {"provider": "zhipu", "api_key": "zhipu-summary-key"},
+            },
+        })
+
+        settings = settings_store.load_settings()["llm"]
+        self.assertEqual(settings["summary"]["provider"], "zhipu")
+        self.assertEqual(settings["summary"]["base_url"], "https://open.bigmodel.cn/api/paas/v4")
+        self.assertEqual(settings["summary"]["api_key"], "zhipu-summary-key")
+        self.assertEqual(settings["sentiment"]["api_key"], "sentiment-key")
+
+        settings_store.update_settings({"llm": {"summary": {"clear_api_key": True}}})
+        cleared = settings_store.load_settings()["llm"]
+        self.assertEqual(cleared["summary"]["api_key"], "")
+        self.assertEqual(cleared["sentiment"]["api_key"], "sentiment-key")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 
@@ -62,7 +62,8 @@ class LLMClientTests(unittest.IsolatedAsyncioTestCase):
         }
         with patch.object(llm_client.httpx, "AsyncClient", return_value=FakeClient(response, calls)):
             content, model = await llm_client.chat_completion(
-                config, [{"role": "user", "content": "test"}], check_dns=False, retries=0
+                config, [{"role": "user", "content": "test"}], check_dns=False, retries=0,
+                task="sentiment",
             )
         self.assertEqual((content, model), ("完成", "deepseek-v4-flash"))
         self.assertNotIn("enable_thinking", calls[0][1]["json"])
@@ -72,7 +73,8 @@ class LLMClientTests(unittest.IsolatedAsyncioTestCase):
         config["provider"] = "bailian"
         with patch.object(llm_client.httpx, "AsyncClient", return_value=FakeClient(response, calls)):
             await llm_client.chat_completion(
-                config, [{"role": "user", "content": "test"}], check_dns=False, retries=0
+                config, [{"role": "user", "content": "test"}], check_dns=False, retries=0,
+                task="sentiment",
             )
         self.assertFalse(calls[0][1]["json"]["enable_thinking"])
         self.assertNotIn("thinking", calls[0][1]["json"])
@@ -119,6 +121,73 @@ class LLMClientTests(unittest.IsolatedAsyncioTestCase):
             )
         self.assertNotIn("response_format", calls[0][1]["json"])
 
+    async def test_all_provider_sentiment_payloads_are_isolated(self):
+        response = httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": '{"ok": true}'}}]},
+            request=httpx.Request("POST", "https://api.example.com"),
+        )
+        expectations = {
+            "deepseek": {"thinking": {"type": "disabled"}, "response_format": {"type": "json_object"}},
+            "bailian": {"enable_thinking": False, "response_format": {"type": "json_object"}},
+            "zhipu": {"thinking": {"type": "disabled"}, "response_format": {"type": "json_object"}},
+            "custom": {},
+        }
+        for provider, expected_fields in expectations.items():
+            with self.subTest(provider=provider):
+                calls = []
+                config = {
+                    "provider": provider,
+                    "base_url": "https://api.example.com/v1",
+                    "model": "model",
+                    "fallback_model": "",
+                    "api_key": "secret",
+                }
+                with patch.object(llm_client.httpx, "AsyncClient", return_value=FakeClient(response, calls)):
+                    await llm_client.chat_completion_json(
+                        config, [{"role": "user", "content": "test"}], check_dns=False,
+                    )
+                payload = calls[0][1]["json"]
+                self.assertEqual(
+                    {key: payload[key] for key in ("thinking", "enable_thinking", "response_format") if key in payload},
+                    expected_fields,
+                )
+
+    async def test_summary_and_sentiment_thinking_policies_are_independent(self):
+        response = httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "完成"}}]},
+            request=httpx.Request("POST", "https://api.example.com"),
+        )
+        for provider in ("deepseek", "bailian", "zhipu"):
+            with self.subTest(provider=provider):
+                config = {
+                    "provider": provider,
+                    "base_url": "https://api.example.com/v1",
+                    "model": "model",
+                    "fallback_model": "",
+                    "api_key": "secret",
+                }
+                summary_calls = []
+                with patch.object(llm_client.httpx, "AsyncClient", return_value=FakeClient(response, summary_calls)):
+                    await llm_client.chat_completion(
+                        config, [{"role": "user", "content": "summary"}],
+                        check_dns=False, retries=0, task="summary",
+                    )
+                self.assertNotIn("thinking", summary_calls[0][1]["json"])
+                self.assertNotIn("enable_thinking", summary_calls[0][1]["json"])
+
+                sentiment_calls = []
+                with patch.object(llm_client.httpx, "AsyncClient", return_value=FakeClient(response, sentiment_calls)):
+                    await llm_client.chat_completion(
+                        config, [{"role": "user", "content": "sentiment"}],
+                        check_dns=False, retries=0, task="sentiment",
+                    )
+                if provider == "bailian":
+                    self.assertFalse(sentiment_calls[0][1]["json"]["enable_thinking"])
+                else:
+                    self.assertEqual(sentiment_calls[0][1]["json"]["thinking"], {"type": "disabled"})
+
     async def test_authentication_error_is_sanitized(self):
         response = httpx.Response(
             401,
@@ -137,6 +206,70 @@ class LLMClientTests(unittest.IsolatedAsyncioTestCase):
                 await llm_client.chat_completion(
                     config, [{"role": "user", "content": "test"}], check_dns=False, retries=0
                 )
+
+    async def test_http_error_metadata_is_sanitized_and_retry_after_is_bounded(self):
+        response = httpx.Response(
+            429,
+            headers={"Retry-After": "12"},
+            json={"error": {"code": "rate_limit_exceeded", "message": "secret provider detail"}},
+            request=httpx.Request("POST", "https://api.example.com"),
+        )
+        config = {
+            "provider": "zhipu",
+            "base_url": "https://api.example.com/v1",
+            "model": "model",
+            "fallback_model": "",
+            "api_key": "secret-api-key",
+        }
+        with patch.object(llm_client.httpx, "AsyncClient", return_value=FakeClient(response, [])):
+            with self.assertRaises(llm_client.LLMRequestError) as raised:
+                await llm_client.chat_completion(
+                    config, [{"role": "user", "content": "test"}], check_dns=False, retries=0,
+                )
+        error = raised.exception
+        self.assertEqual(error.category, "rate_limited")
+        self.assertEqual(error.status_code, 429)
+        self.assertEqual(error.retry_after, 12)
+        self.assertEqual(error.provider_code, "rate_limit_exceeded")
+        self.assertNotIn("secret provider detail", str(error))
+        self.assertNotIn(config["api_key"], str(error))
+
+    async def test_list_models_and_connection_errors_keep_safe_metadata(self):
+        list_response = httpx.Response(
+            429,
+            headers={"Retry-After": "-1"},
+            json={"error": {"code": "not safe code with spaces", "message": "secret detail"}},
+            request=httpx.Request("GET", "https://api.example.com/models"),
+        )
+        config = {
+            "provider": "custom",
+            "base_url": "https://api.example.com/v1",
+            "model": "model",
+            "fallback_model": "",
+            "api_key": "secret-api-key",
+        }
+        with patch.object(llm_client.httpx, "AsyncClient", return_value=FakeClient(list_response, [])):
+            with self.assertRaises(llm_client.LLMRequestError) as listed:
+                await llm_client.list_models(config, check_dns=False)
+        self.assertEqual(listed.exception.category, "rate_limited")
+        self.assertEqual(listed.exception.status_code, 429)
+        self.assertIsNone(listed.exception.retry_after)
+        self.assertIsNone(listed.exception.provider_code)
+
+        client = FakeClient(None, [])
+        client.post = AsyncMock(side_effect=httpx.ConnectError(
+            "raw connection secret", request=httpx.Request("POST", "https://api.example.com"),
+        ))
+        with patch.object(llm_client.httpx, "AsyncClient", return_value=client):
+            with self.assertRaises(llm_client.LLMRequestError) as connected:
+                await llm_client.chat_completion(
+                    config, [{"role": "user", "content": "test"}], check_dns=False, retries=0,
+                )
+        self.assertEqual(connected.exception.category, "connection")
+        self.assertIsNone(connected.exception.status_code)
+        self.assertIsNone(connected.exception.retry_after)
+        self.assertIsNone(connected.exception.provider_code)
+        self.assertNotIn("raw connection secret", str(connected.exception))
 
     async def test_list_models_uses_compatible_endpoint_and_deduplicates_ids(self):
         calls = []

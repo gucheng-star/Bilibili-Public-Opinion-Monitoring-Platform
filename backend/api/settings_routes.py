@@ -49,6 +49,7 @@ async def test_llm(req: dict):
                 temperature=0,
                 max_tokens=16,
                 retries=0,
+                task=task,
             )
         return {
             "ok": True,
