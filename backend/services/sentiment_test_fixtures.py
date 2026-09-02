@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 
 FIXTURE_VIDEO_TITLE = "情感分析模拟评论测试集（不抓取）"
 
-FIXTURE_CASES = (
+_FIXTURE_CASES = (
     {"id": "TC-01", "rpid": 910001, "root_rpid": 910001, "parent_rpid": None, "username": "数据观察员", "content": "心脏每分钟七十次，换算下来大概就是这个量级。", "expected_emotion": "neutral"},
     {"id": "TC-02", "rpid": 910002, "root_rpid": 910001, "parent_rpid": 910001, "username": "提问的人", "content": "那冬眠动物也适用吗？", "expected_emotion": "neutral"},
     {"id": "TC-03", "rpid": 910003, "root_rpid": 910001, "parent_rpid": 910002, "username": "补充说明", "content": "视频第三分钟提到过，代谢率不同。", "expected_emotion": "neutral"},
@@ -30,6 +30,31 @@ FIXTURE_CASES = (
     {"id": "TC-22", "rpid": 910061, "root_rpid": 910060, "parent_rpid": 910060, "username": "冷知识", "content": "长颈鹿的心脏压力是不是更大？", "expected_emotion": "neutral"},
     {"id": "TC-23", "rpid": 910070, "root_rpid": 910070, "parent_rpid": None, "username": "短评用户", "content": "6。", "expected_emotion": "surprise"},
     {"id": "TC-24", "rpid": 910071, "root_rpid": 910070, "parent_rpid": 910070, "username": "看懂了", "content": "这下彻底明白了。", "expected_emotion": "support"},
+)
+
+
+_V2_EXPECTATIONS = {
+    "TC-01": ("neutral", "plain"), "TC-02": ("neutral", "plain"),
+    "TC-03": ("neutral", "plain"), "TC-04": ("trust", "plain"),
+    "TC-05": ("joy", "plain"), "TC-06": ("joy", "meme"),
+    "TC-07": ("neutral", "meme"), "TC-08": ("anticipation", "plain"),
+    "TC-09": ("surprise", "plain"), "TC-10": ("surprise", "plain"),
+    "TC-11": ("fear", "rhetorical"), "TC-12": ("anger", "plain"),
+    "TC-13": ("anger", "sarcasm"), "TC-14": ("anger", "plain"),
+    "TC-15": ("disgust", "plain"), "TC-16": ("sadness", "plain"),
+    "TC-17": ("trust", "plain"), "TC-18": ("disgust", "sarcasm"),
+    "TC-19": ("fear", "rhetorical"), "TC-20": ("joy", "hyperbole"),
+    "TC-21": ("trust", "plain"), "TC-22": ("neutral", "plain"),
+    "TC-23": ("surprise", "meme"), "TC-24": ("trust", "plain"),
+}
+
+FIXTURE_CASES = tuple(
+    {
+        **case,
+        "expected_emotion": _V2_EXPECTATIONS[case["id"]][0],
+        "expected_style": _V2_EXPECTATIONS[case["id"]][1],
+    }
+    for case in _FIXTURE_CASES
 )
 
 
@@ -59,6 +84,7 @@ def fixture_case_catalog() -> list[dict]:
             "id": case["id"],
             "rpid": case["rpid"],
             "expected_emotion": case["expected_emotion"],
+            "expected_style": case["expected_style"],
             "content": case["content"],
         }
         for case in FIXTURE_CASES

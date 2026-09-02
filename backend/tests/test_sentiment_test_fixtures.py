@@ -8,6 +8,7 @@ from sqlalchemy.pool import StaticPool
 
 from api import routes
 from models.database import Analysis, Base, Comment, SentimentResult
+from services.sentiment_contract import V2_EMOTION_LABELS, V2_STYLE_LABELS
 from services.sentiment_test_fixtures import FIXTURE_CASES
 
 
@@ -50,19 +51,17 @@ class SentimentTestFixtureRouteTests(unittest.TestCase):
         finally:
             session.close()
 
-    def test_catalog_exposes_ten_class_labels_without_expression_style(self):
+    def test_catalog_exposes_v2_emotions_and_styles(self):
         response = routes.get_sentiment_test_fixture_catalog()
-        expected = {case["expected_emotion"] for case in response["cases"]}
+        expected_emotions = {case["expected_emotion"] for case in response["cases"]}
+        expected_styles = {case["expected_style"] for case in response["cases"]}
 
         self.assertEqual(len(FIXTURE_CASES), 24)
         self.assertEqual(
-            expected,
-            {
-                "neutral", "joy", "support", "anticipation", "surprise",
-                "anger", "sadness", "concern", "disgust", "sarcasm",
-            },
+            expected_emotions,
+            V2_EMOTION_LABELS,
         )
-        self.assertTrue(all("expected_style" not in case for case in response["cases"]))
+        self.assertEqual(expected_styles, V2_STYLE_LABELS)
 
     def test_fixture_routes_are_hidden_when_disabled(self):
         with patch.object(routes, "TEST_FIXTURES_ENABLED", False):
