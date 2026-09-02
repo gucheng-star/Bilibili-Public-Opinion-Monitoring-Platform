@@ -42,7 +42,7 @@ export default function SettingsPage({
 
   return (
     <main className="settings-page">
-      <Link className="settings-page__exit" to="/" aria-label="退出设置并返回分析工作台">
+      <Link className="ui-secondary-action settings-page__exit" to="/" aria-label="退出设置并返回分析工作台">
         <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
           <path d="m14.5 5-7 7 7 7M8 12h9" />
         </svg>

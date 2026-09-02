@@ -126,7 +126,7 @@ export default function AISummaryCard({ scope, filters, matchedCount, mode }: Pr
             <h3 id="ai-summary-title">AI 舆情简报</h3>
           </div>
         </div>
-        <button type="button" className={`${current ? 'btn btn-ghost' : 'btn btn-primary'} ai-summary-card__action`}
+        <button type="button" className="btn btn-ghost ai-summary-card__action"
           onClick={run} disabled={generating || loadingList || matchedCount === 0}>
           {generating ? '归纳中…' : current ? '重新生成' : exact?.stale ? '更新总结' : '生成总结'}
         </button>

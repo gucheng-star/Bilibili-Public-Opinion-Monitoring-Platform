@@ -123,7 +123,7 @@ function CommentDetailShell({
   return (
     <main ref={mainRef} tabIndex={-1} className="app-main comment-detail max-w-7xl mx-auto px-4 py-6">
       <div className="comment-detail__topbar">
-        <Link className="comment-detail__back" to={{ pathname: '/', search: overviewSearch }}>← 返回概览</Link>
+        <Link className="ui-secondary-action comment-detail__back" to={{ pathname: '/', search: overviewSearch }}>← 返回概览</Link>
       </div>
       <header className="comment-detail__header">
         <h1 className="comment-detail__title">评论明细</h1>

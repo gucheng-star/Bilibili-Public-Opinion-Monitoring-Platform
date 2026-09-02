@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { getLLMModels, getSettings, testLLM, updateSettings } from '../services/api';
 import type { LLMProvider, LLMTask, LLMTaskSettings, LLMTaskUpdate, SettingsResponse } from '../types';
+import FilterSelect, { type FilterSelectOption } from './FilterSelect';
 
 interface Props {
   maxComments: number;
@@ -32,6 +33,10 @@ const PROVIDER_NAMES: Record<LLMProvider, string> = {
   custom: '自定义兼容接口',
 };
 
+const PROVIDER_OPTIONS: readonly FilterSelectOption<LLMProvider>[] = (
+  Object.keys(PROVIDER_NAMES) as LLMProvider[]
+).map(provider => ({ value: provider, label: PROVIDER_NAMES[provider] }));
+
 const clamp = (value: number, low: number, high: number) => Math.min(Math.max(value, low), high);
 const toEditor = (settings: LLMTaskSettings): EditorState => ({
   provider: settings.provider,
@@ -58,6 +63,13 @@ function LLMTaskEditor({ task, title, description, saved, onSaved }: {
   const storedKeyMatches = saved.provider === editor.provider && saved.has_api_key;
   const keyReady = storedKeyMatches || Boolean(editor.api_key.trim());
   const keyStatus = editor.api_key.trim() ? '已输入新密钥' : storedKeyMatches ? '密钥就绪' : '未配置密钥';
+  const modelOptions: readonly FilterSelectOption<string>[] = models.length
+    ? models.map(model => ({ value: model, label: model }))
+    : [{ value: '', label: '请先获取模型列表' }];
+  const fallbackOptions: readonly FilterSelectOption<string>[] = [
+    { value: '', label: '不使用回退模型' },
+    ...models.filter(model => model !== editor.model).map(model => ({ value: model, label: model })),
+  ];
 
   useEffect(() => {
     setEditor(toEditor(saved));
@@ -141,31 +153,18 @@ function LLMTaskEditor({ task, title, description, saved, onSaved }: {
       </div>
       <div className="llm-config-grid">
         <label><span>供应商</span>
-          <select value={editor.provider} onChange={event => setProvider(event.target.value as LLMProvider)} className="select-sm" disabled={busy !== null}>
-            {(Object.keys(PROVIDER_NAMES) as LLMProvider[]).map(provider => (
-              <option key={provider} value={provider}>{PROVIDER_NAMES[provider]}</option>
-            ))}
-          </select>
+          <FilterSelect ariaLabel={`${title}供应商`} value={editor.provider} options={PROVIDER_OPTIONS} onChange={setProvider} disabled={busy !== null} />
         </label>
         <label><span>模型</span>
-          <select value={editor.model} onChange={event => {
-            const model = event.target.value;
+          <FilterSelect ariaLabel={`${title}模型`} value={editor.model} options={modelOptions} onChange={model => {
             setEditor(current => ({ ...current, model, fallback_model: current.fallback_model === model ? '' : current.fallback_model }));
-          }} disabled={busy !== null || !models.length}>
-            {!models.length && <option value="">请先获取模型列表</option>}
-            {models.map(model => <option key={model} value={model}>{model}</option>)}
-          </select>
+          }} disabled={busy !== null || !models.length} />
         </label>
         <label className="llm-base-url"><span>Base URL</span>
           <input value={editor.base_url} onChange={event => setBaseUrl(event.target.value)} placeholder="https://example.com/v1" disabled={busy !== null} />
         </label>
         <label><span>回退模型 <small>可选</small></span>
-          <select value={editor.fallback_model} onChange={event => setEditor({ ...editor, fallback_model: event.target.value })} disabled={busy !== null || !models.length}>
-            <option value="">不使用回退模型</option>
-            {models.filter(model => model !== editor.model).map(model => (
-              <option key={model} value={model}>{model}</option>
-            ))}
-          </select>
+          <FilterSelect ariaLabel={`${title}回退模型`} value={editor.fallback_model} options={fallbackOptions} onChange={fallback_model => setEditor(current => ({ ...current, fallback_model }))} disabled={busy !== null || !models.length} />
         </label>
         <label className="llm-api-key"><span>API Key</span>
           <input type="password" value={editor.api_key} autoComplete="off"
@@ -178,7 +177,7 @@ function LLMTaskEditor({ task, title, description, saved, onSaved }: {
         <button type="button" className="btn btn-ghost llm-fetch-models" onClick={fetchModels} disabled={busy !== null}>{busy === 'models' ? '获取中…' : '获取模型列表'}</button>
         <button type="button" className="btn btn-primary" onClick={save} disabled={busy !== null || !editor.model}>{busy === 'save' ? '保存中…' : '保存配置'}</button>
         <button type="button" className="btn btn-ghost" onClick={test} disabled={busy !== null || !editor.model}>{busy === 'test' ? '测试中…' : '测试连接'}</button>
-        {storedKeyMatches && <button type="button" className="btn btn-ghost llm-clear-key" onClick={clearKey} disabled={busy !== null}>{busy === 'clear' ? '清除中…' : '清除密钥'}</button>}
+        {storedKeyMatches && <button type="button" className="btn btn-danger llm-clear-key" onClick={clearKey} disabled={busy !== null}>{busy === 'clear' ? '清除中…' : '清除密钥'}</button>}
         {message && <span role="status" className={`llm-config-message ${message.kind}`}>{message.text}</span>}
       </div>
     </section>

@@ -288,7 +288,7 @@ function WordCloudCard({ keywords, className, status = 'ready', scopeKey = 'defa
           <button
             ref={styleTriggerRef}
             type="button"
-            className="wordcloud-card__style-trigger"
+            className="ui-secondary-action wordcloud-card__style-trigger"
             aria-expanded={styleDrawerOpen}
             aria-controls="wordcloud-style-drawer"
             onClick={() => styleDrawerOpen ? closeStyleDrawer() : setStyleDrawerOpen(true)}
@@ -350,18 +350,11 @@ function WordCloudCard({ keywords, className, status = 'ready', scopeKey = 'defa
               return (
                 <button
                   key={k.word + "-" + i}
+                  className={`ui-secondary-action wordcloud-card__keyword${isExcluded ? ' is-excluded' : ''}`}
                   onClick={() => toggleWord(k.word)}
                   title={isExcluded ? "\u70b9\u51fb\u52a0\u5165\u8bcd\u4e91" : "\u70b9\u51fb\u6392\u9664"}
                   style={{
-                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                    padding: '.2rem .375rem', fontSize: '.6875rem',
-                    borderRadius: '.25rem', cursor: 'pointer',
-                    background: isExcluded ? 'var(--border)' : 'var(--accent-soft)',
-                    color: isExcluded ? 'var(--text-muted)' : 'var(--text-primary)',
-                    border: isExcluded ? '1px solid var(--border)' : '1px solid var(--border-accent)',
-                    transition: 'all .12s ease',
-                    textAlign: 'left',
-                    width: '100%',
+                    display: 'flex', alignItems: 'center',
                     textDecoration: isExcluded ? 'line-through' : 'none',
                   }}
                 >
@@ -370,7 +363,7 @@ function WordCloudCard({ keywords, className, status = 'ready', scopeKey = 'defa
                   }}>{k.word}</span>
                   <span style={{
                     marginLeft: '.5rem', fontSize: '.625rem',
-                    color: isExcluded ? 'var(--text-muted)' : 'var(--text-secondary)',
+                    color: 'var(--text-secondary)',
                     flexShrink: 0,
                   }}>{k.count}</span>
                 </button>

@@ -113,24 +113,14 @@ export default function FilterBar({
         onChange={sentiment => update({ sentiment })}
       />
 
-      <button onClick={() => onApply(draft)}
-        disabled={!changed && !sourceChanged}
-        style={{
-          padding: '.25rem .75rem', fontSize: '.6875rem', fontWeight: 600,
-          background: (changed || sourceChanged) ? 'var(--accent)' : 'var(--border)',
-          color: (changed || sourceChanged) ? '#fff' : 'var(--text-muted)',
-          border: 'none', borderRadius: '.375rem', cursor: (changed || sourceChanged) ? 'pointer' : 'default',
-          transition: 'all .15s ease',
-        }}>
+      <button onClick={() => onApply(draft)} disabled={!changed && !sourceChanged}
+        className={`filter-bar__apply${changed || sourceChanged ? ' is-ready' : ''}`}>
         应用筛选
       </button>
 
       {(changed || hasActiveFilter) && (
         <button onClick={() => onApply({ gender: 'all', dateFrom: '', dateTo: '', region: '', sentiment: 'all', duplicateMode: 'include', sourceAnalysisId: 'all' })}
-          style={{
-            padding: '.25rem .5rem', fontSize: '.6875rem', color: 'var(--text-muted)',
-            background: 'transparent', border: '1px solid var(--border)', borderRadius: '.375rem', cursor: 'pointer',
-          }}>
+          className="filter-bar__reset">
           重置
         </button>
       )}

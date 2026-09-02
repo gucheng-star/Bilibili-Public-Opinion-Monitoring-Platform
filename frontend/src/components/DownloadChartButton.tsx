@@ -70,32 +70,19 @@ export default function DownloadChartButton({ echartRefs, label = '下载' }: Pr
   return (
     <button
       type="button"
+      className="ui-secondary-action chart-download-button"
       onClick={handleDownload}
       title={label}
       style={{
         padding: '.25rem .5rem',
         fontSize: '.6875rem',
         fontWeight: 500,
-        background: 'transparent',
-        color: 'var(--text-secondary)',
-        border: '1px solid var(--border)',
         borderRadius: '.375rem',
         cursor: 'pointer',
         lineHeight: 1.5,
-        transition: 'all .15s ease',
         display: 'inline-flex',
         alignItems: 'center',
         gap: '.25rem',
-      }}
-      onMouseEnter={e => {
-        e.currentTarget.style.background = 'var(--accent-soft)';
-        e.currentTarget.style.color = 'var(--accent)';
-        e.currentTarget.style.borderColor = 'var(--accent)';
-      }}
-      onMouseLeave={e => {
-        e.currentTarget.style.background = 'transparent';
-        e.currentTarget.style.color = 'var(--text-secondary)';
-        e.currentTarget.style.borderColor = 'var(--border)';
       }}
     >
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

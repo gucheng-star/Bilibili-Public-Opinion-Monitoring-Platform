@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import type { AnalysisMode, CommentData, SentimentLabel, SentimentLLM } from '../types';
 import { COMMENT_PAGE_SIZE, buildCommentTree, getCommentPreview, isLongComment, type CommentNode } from '../utils/commentTree';
+import FilterSelect, { type FilterSelectOption } from './FilterSelect';
 
 interface Props {
   comments: CommentData[];
@@ -35,6 +36,10 @@ const LLM_TAG: Record<LlmSentimentLabel, { label: string; bg: string; color: str
 };
 
 const UNCLASSIFIED_TAG = { label: '未分类', bg: 'rgba(148,163,184,.06)', color: 'var(--text-muted)' };
+const SORT_OPTIONS: readonly FilterSelectOption<'time' | 'likes'>[] = [
+  { value: 'time', label: '按时间' },
+  { value: 'likes', label: '按点赞' },
+];
 
 export default function CommentTable({ comments, mode, allCommentRpids, showSource = false, sortBy, onSortChange, page, onPageChange }: Props) {
   const [expandedIds, setExpandedIds] = useState<ReadonlySet<number>>(new Set());
@@ -192,9 +197,7 @@ export default function CommentTable({ comments, mode, allCommentRpids, showSour
       <h3 className="text-xs font-semibold text-secondary" style={{ letterSpacing: '.05em' }}>评论列表 ({sorted.length})</h3>
       <div className="flex items-center gap-2">
         <span className="comment-tree__legend">{treeRoots.length} 个根评论 · {replyCount} 条回复</span>
-        <select value={sortBy} onChange={e => onSortChange(e.target.value as 'time' | 'likes')} className="select-sm">
-          <option value="time">按时间</option><option value="likes">按点赞</option>
-        </select>
+        <FilterSelect ariaLabel="评论排序" value={sortBy} options={SORT_OPTIONS} onChange={onSortChange} />
       </div>
     </div>
     <div className="overflow-x-auto">

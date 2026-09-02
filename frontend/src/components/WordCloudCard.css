@@ -1,6 +1,8 @@
 .wordcloud-card__header { align-items:center; gap:.5rem; }
 .wordcloud-card__actions { display:flex; align-items:center; gap:.45rem; }
-.wordcloud-card__style-trigger { padding:.32rem .55rem; color:var(--accent); background:var(--accent-soft); border:1px solid var(--border-accent); border-radius:var(--radius-sm); cursor:pointer; font-size:.6875rem; }
+.wordcloud-card__style-trigger { padding:.32rem .55rem; border-radius:var(--radius-sm); font-size:.6875rem; }
+.wordcloud-card__keyword { justify-content:space-between; width:100%; padding:.2rem .375rem; border-radius:.25rem; font-size:.6875rem; text-align:left; }
+.wordcloud-card__keyword.is-excluded { color:var(--text-muted); background:var(--bg-subtle); text-decoration:line-through; }
 .wordcloud-card { position:relative; }
 .wordcloud-card__layout { display:flex; gap:.75rem; min-height:300px; }
 .wordcloud-card__chart { flex:1 1 60%; min-width:0; height:300px; }

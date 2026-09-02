@@ -10,6 +10,7 @@ interface Props<T extends string> {
   value: T;
   options: readonly FilterSelectOption<T>[];
   onChange: (value: T) => void;
+  disabled?: boolean;
 }
 
 export default function FilterSelect<T extends string>({
@@ -17,6 +18,7 @@ export default function FilterSelect<T extends string>({
   value,
   options,
   onChange,
+  disabled = false,
 }: Props<T>) {
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -50,6 +52,10 @@ export default function FilterSelect<T extends string>({
   useEffect(() => {
     if (open) optionRefs.current[activeIndex]?.focus();
   }, [activeIndex, open]);
+
+  useEffect(() => {
+    if (disabled) setOpen(false);
+  }, [disabled]);
 
   const openAt = (index: number) => {
     setActiveIndex(index);
@@ -109,7 +115,7 @@ export default function FilterSelect<T extends string>({
   return (
     <div
       ref={rootRef}
-      className={`filter-select${open ? ' is-open' : ''}`}
+      className={`filter-select${open ? ' is-open' : ''}${disabled ? ' is-disabled' : ''}`}
       onBlur={event => {
         if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
       }}
@@ -122,6 +128,7 @@ export default function FilterSelect<T extends string>({
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={listboxId}
+        disabled={disabled}
         onClick={() => {
           if (open) setOpen(false);
           else openAt(selectedIndex);
@@ -150,7 +157,6 @@ export default function FilterSelect<T extends string>({
               onKeyDown={event => handleOptionKeyDown(event, index)}
             >
               <span>{option.label}</span>
-              {option.value === value && <span className="filter-select__check" aria-hidden="true">✓</span>}
             </button>
           ))}
         </div>
