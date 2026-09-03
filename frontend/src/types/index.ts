@@ -131,8 +131,12 @@ export interface SourceDistributionItem {
   matched_comments?: number;
   percentage?: number;
   sentiment?: { positive: number; negative: number; neutral: number };
-  sentiment_llm?: SentimentLLM;
+  sentiment_llm?: SentimentLLMV2;
+  sentiment_llm_style?: StyleDistributionV2;
   llm_ready?: boolean;
+  v2_total_comments?: number;
+  v2_completed_comments?: number;
+  v2_pending_comments?: number;
 }
 
 /** Result payload for an event. Comments remain the source of all client-side filtered views. */
@@ -147,9 +151,15 @@ export interface GroupAnalysisResult {
   time_range?: { earliest: string | null; latest: string | null };
   members: AnalysisGroupMember[];
   source_distribution: SourceDistributionItem[];
-  llm_readiness?: { ready: boolean; missing_members: Array<AnalysisGroupMember & { reason?: string }> };
+  llm_readiness?: {
+    ready: boolean;
+    missing_members: Array<AnalysisGroupMember & { reason?: string; v2_total_comments?: number; v2_completed_comments?: number; v2_pending_comments?: number }>;
+    source_coverage?: Array<AnalysisGroupMember & { v2_total_comments: number; v2_completed_comments: number; v2_pending_comments: number; v2_coverage: number; reason?: string }>;
+  };
   sentiment: { positive: number; negative: number; neutral: number };
-  sentiment_llm?: SentimentLLM;
+  sentiment_llm?: SentimentLLMV2;
+  emotion_distribution?: SentimentLLMV2;
+  style_distribution?: StyleDistributionV2;
   gender: { male: number; female: number; unknown: number };
   region: RegionItem[];
   heat: AnalysisResult['heat'];

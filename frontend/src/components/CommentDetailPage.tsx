@@ -309,6 +309,7 @@ export function GroupCommentDetailPage({ groupFilters, onGroupFiltersChange }: G
       showSource
       workspaceGroupId={groupId}
       sources={result.members}
+      llmSchemaVersion={result.mode === 'llm' ? 2 : undefined}
     />
   );
 }
