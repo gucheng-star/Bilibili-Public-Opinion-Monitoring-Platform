@@ -19,6 +19,7 @@ interface Props {
   originalCount: number;
   duplicateRetainedCount: number;
   sources?: Array<{ analysis_id: number; video_title: string; bv: string }>;
+  llmSchemaVersion?: number;
 }
 
 const NLP_SENTIMENTS = [
@@ -27,6 +28,10 @@ const NLP_SENTIMENTS = [
 const LLM_SENTIMENTS = [
   ['neutral', '中性'], ['joy', '喜悦'], ['support', '支持'], ['anticipation', '期待'],
   ['surprise', '惊讶'], ['anger', '愤怒'], ['sadness', '悲伤'], ['concern', '担忧'], ['disgust', '厌恶'], ['sarcasm', '反讽'],
+] as const;
+const V2_LLM_SENTIMENTS = [
+  ['neutral', '中性'], ['joy', '喜悦'], ['trust', '信任'], ['anticipation', '期待'], ['surprise', '惊讶'],
+  ['anger', '愤怒'], ['sadness', '悲伤'], ['fear', '恐惧'], ['disgust', '厌恶'],
 ] as const;
 
 const DUPLICATE_OPTIONS: FilterSelectOption<FilterState['duplicateMode']>[] = [
@@ -41,7 +46,7 @@ function formatTime(value: string | null): string {
 
 export default function FilterBar({
   filters, onApply, availableRegions, mode, duplicateStatistics, duplicateGroups,
-  originalCount, duplicateRetainedCount, sources,
+  originalCount, duplicateRetainedCount, sources, llmSchemaVersion,
 }: Props) {
   const [draft, setDraft] = useState<FilterState>(filters);
   useEffect(() => { setDraft(filters); }, [filters]);
@@ -53,7 +58,7 @@ export default function FilterBar({
   const sourceChanged = draft.sourceAnalysisId !== filters.sourceAnalysisId;
   const hasActiveFilter = filters.gender !== 'all' || Boolean(filters.dateFrom || filters.dateTo || filters.region)
     || filters.sentiment !== 'all' || filters.duplicateMode !== 'include' || filters.sourceAnalysisId !== 'all';
-  const sentimentOptions = mode === 'llm' ? LLM_SENTIMENTS : NLP_SENTIMENTS;
+  const sentimentOptions = mode === 'llm' ? (llmSchemaVersion === 2 ? V2_LLM_SENTIMENTS : LLM_SENTIMENTS) : NLP_SENTIMENTS;
   const regionOptions: FilterSelectOption<string>[] = [
     { value: '', label: '全部地域' },
     ...availableRegions.map(region => ({ value: region, label: region })),

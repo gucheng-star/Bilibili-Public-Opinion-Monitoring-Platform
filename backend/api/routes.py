@@ -459,11 +459,13 @@ def get_results(analysis_id: int):
             'sentiment_label':c.sentiment_label,'sentiment_score':c.sentiment_score,
             'sentiment_llm_label':c.sentiment_llm_label if c.sentiment_llm_label else '',
             'sentiment_llm_style':c.sentiment_llm_style or 'plain',
+            'sentiment_llm_schema_version':c.sentiment_llm_schema_version,
             'post_time':c.post_time.isoformat() if c.post_time else None} for c in comments]
         cl = annotate_exact_duplicates(cl)
         result = {'analysis_id':a.id,'bv':a.bv,'video_title':a.video_title,
             'video_cover':a.video_cover,'video_play':a.video_play,
             'mode':a.mode,
+            'sentiment_llm_schema_version':a.sentiment_llm_schema_version,
             'total_comments':a.total_comments,'created_at':a.created_at.isoformat() if a.created_at else None,
             'sentiment':{'positive':s.positive_count if s else 0,'negative':s.negative_count if s else 0,'neutral':s.neutral_count if s else 0},
             'gender':_calc_gender(cl),'region':analyze_region(cl),'heat':analyze_heat(cl),

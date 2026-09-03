@@ -24,11 +24,12 @@ interface ShellProps {
   showSource?: boolean;
   workspaceGroupId?: number;
   sources?: Array<{ analysis_id: number; video_title: string; bv: string }>;
+  llmSchemaVersion?: number;
 }
 
 function CommentDetailShell({
   title, scopeLabel, mode, totalComments, comments, filters, onFiltersChange,
-  duplicateStatistics, showSource = false, workspaceGroupId, sources,
+  duplicateStatistics, showSource = false, workspaceGroupId, sources, llmSchemaVersion,
 }: ShellProps) {
   const location = useLocation();
   const navigate = useNavigate();
@@ -90,7 +91,7 @@ function CommentDetailShell({
     return () => window.clearTimeout(timer);
   }, [searchDraft]);
 
-  const filtered = useMemo(() => applyCommentFilters(comments, filters, mode), [comments, filters, mode]);
+  const filtered = useMemo(() => applyCommentFilters(comments, filters, mode, llmSchemaVersion), [comments, filters, mode, llmSchemaVersion]);
   const duplicateRetainedCount = useMemo(() => applyDuplicateMode(comments, filters.duplicateMode).length, [comments, filters.duplicateMode]);
   const searched = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -141,6 +142,7 @@ function CommentDetailShell({
         originalCount={comments.length}
         duplicateRetainedCount={duplicateRetainedCount}
         sources={sources}
+        llmSchemaVersion={llmSchemaVersion}
       />
       <div className="comment-detail__toolbar">
         <label className="comment-detail__search">
@@ -175,6 +177,7 @@ function CommentDetailShell({
           mode={mode}
           allCommentRpids={allCommentRpids}
           showSource={showSource}
+          llmSchemaVersion={llmSchemaVersion}
           sortBy={sort}
           onSortChange={changeSort}
           page={safePage}
@@ -253,6 +256,7 @@ export function AnalysisCommentDetailPage({ results, filters, onFiltersChange, o
       filters={filters}
       onFiltersChange={onFiltersChange}
       duplicateStatistics={results.duplicate_statistics}
+      llmSchemaVersion={results.sentiment_llm_schema_version}
     />
   );
 }

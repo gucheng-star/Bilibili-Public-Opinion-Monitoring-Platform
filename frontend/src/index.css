@@ -520,6 +520,11 @@ a:focus-visible {
 .distribution-chart-header__controls .segmented button { min-width:2rem; padding-inline:.375rem; white-space:nowrap; }
 .distribution-chart-header > button { flex:0 0 auto; margin-left:auto; }
 .distribution-chart-card .echarts-for-react { min-width: 0; flex: 1 1 auto; }
+.sentiment-v2-retry { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:.5rem; margin:0 0 .6rem; padding:.5rem .65rem; color:var(--text-secondary); background:var(--yellow-soft); border:1px solid color-mix(in srgb,var(--yellow) 20%,transparent); border-radius:var(--radius-sm); font-size:.75rem; }
+.sentiment-v2-layout { display:grid; grid-template-columns:minmax(0,3fr) minmax(0,2fr); gap:.75rem; min-width:0; }
+.sentiment-v2-layout > div { min-width:0; }
+.sentiment-v2-layout h4 { margin:0; color:var(--text-secondary); font-size:.6875rem; font-weight:600; }
+.sentiment-v2-subheader { display:flex; align-items:center; justify-content:space-between; gap:.5rem; min-height:1.8rem; }
 
 @media (max-width: 900px) {
   .distribution-chart-stack { grid-template-columns:1fr; }
@@ -528,6 +533,7 @@ a:focus-visible {
 @media (max-width: 640px) {
   .distribution-chart-header { align-items:flex-start; flex-wrap:wrap; }
   .distribution-chart-header__controls { order:3; flex-basis:100%; flex-wrap:wrap; gap:.375rem; }
+  .sentiment-v2-layout { grid-template-columns:1fr; }
 }
 
 /* Region distribution mirrors a creator-dashboard split: map context + ranked detail. */

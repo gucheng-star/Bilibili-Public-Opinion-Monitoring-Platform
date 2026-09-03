@@ -23,13 +23,14 @@ import { getAuthStatus, getFilteredKeywords, getResults, getRuntimeActivity, get
 import { checkForUpdates, downloadUpdate, installDownloadedUpdate, isDesktopRuntime, onCloseRequested, respondToCloseRequest } from './services/desktop';
 import { activeFilterFields, recordBreadcrumb, setDiagnosticState, type DiagnosticState } from './services/devDiagnostics';
 import { LatestRequestGuard, runConfirmedWorkflowTransition } from './services/latestRequestGuard';
-import type { AnalysisResult, FilterState, AnalysisMode, KeywordItem, SentimentLLM } from './types';
+import type { AnalysisResult, FilterState, AnalysisMode, KeywordItem, SentimentLLMV2, StyleDistributionV2, V2Emotion, V2Style, StatusResponse } from './types';
 import { EMPTY_FILTERS, applyCommentFilters, applyDuplicateMode, buildDuplicateGroups, listRegions, normalizeProvince } from './utils/commentFilters';
 import { filtersEqual, filtersSearchString, searchParamsToFilters } from './utils/commentQuery';
 import { buildCommentTree, commentKey } from './utils/commentTree';
 import './AppShell.css';
 
-const LLM_EMOTIONS: (keyof SentimentLLM)[] = ['neutral', 'joy', 'support', 'anticipation', 'surprise', 'anger', 'sadness', 'concern', 'disgust', 'sarcasm'];
+const V2_EMOTIONS: V2Emotion[] = ['neutral', 'joy', 'trust', 'anticipation', 'surprise', 'anger', 'sadness', 'fear', 'disgust'];
+const V2_STYLES: V2Style[] = ['plain', 'sarcasm', 'meme', 'rhetorical', 'hyperbole'];
 const EMPTY_SEARCH_DRAFT: SearchDraft = { rawInput: '', bv: '', videoInfo: null };
 
 function getLlmProgressText(processed: number, total: number): string {
@@ -74,6 +75,7 @@ function App() {
   const resultModeRef = useRef<AnalysisMode | null>(null);
   const [hasApiKey, setHasApiKey] = useState(false);
   const [reanalyzing, setReanalyzing] = useState(false);
+  const [reanalysisStatus, setReanalysisStatus] = useState<StatusResponse | null>(null);
   const [reanalyzeModal, setReanalyzeModal] = useState(false);
   const [updateInfo, setUpdateInfo] = useState<{ version?: string; notes?: string; notesUrl?: string } | null>(null);
   const [updateBusy, setUpdateBusy] = useState(false);
@@ -277,7 +279,7 @@ function App() {
   const handleModeChange = (mode: AnalysisMode) => {
     if (mode === 'llm' && !hasApiKey) { showToast('请先在设置页面配置情绪分析模型的 API Key'); return; }
     // NLP → LLM：弹出确认弹窗
-    if (mode === 'llm' && results && results.mode !== 'llm') { setReanalyzeModal(true); return; }
+    if (mode === 'llm' && results && results.mode !== 'llm' && (reanalysisStatus?.v2_completed_count ?? 0) === 0) { setReanalyzeModal(true); return; }
     setAnalysisMode(mode);
   };
 
@@ -290,6 +292,7 @@ function App() {
     pollStatusRef.current = null;
     setReanalyzeModal(false);
     setReanalyzing(true);
+    setReanalysisStatus(null);
     setLoading(true); setError(null); cancelRef.current = false;
     setProgress(0); setProgressMax(totalComments);
     setStatusText(getLlmProgressText(0, totalComments));
@@ -308,13 +311,19 @@ function App() {
             recordPollStatus(status.status);
             const processed = status.processed_comments ?? 0;
             setProgress(processed);
+            setReanalysisStatus(status);
             if (status.status === 'done') {
               if (status.error_msg) {
-                setError(status.error_msg);
-                setAnalysisMode(results?.mode || 'nlp');
+                const data = await getResults(activeAnalysisId);
+                if (!isCurrent()) return;
+                setResults(data);
+                // A failed run can still have persisted V2 sub-batches.  Keep
+                // their view available rather than dropping back to the legacy
+                // mode solely because the analysis-level boundary is unfinished.
+                setAnalysisMode((status.v2_completed_count ?? 0) > 0 ? 'llm' : data.mode);
                 setReanalyzing(false);
                 setLoading(false);
-                showToast('大模型分析失败，已保留 NLP 结果');
+                showToast('大模型分析未完成，可继续补齐剩余评论');
                 return;
               }
               setStatusText(''); const data = await getResults(activeAnalysisId);
@@ -322,7 +331,7 @@ function App() {
               setResults(data); setAnalysisMode(data.mode); setReanalyzing(false); setLoading(false); setHistoryRefreshKey(k=>k+1); showToast('大模型分析完成');
               return;
             }
-            if (status.status === 'error') { setError(status.error_msg || '分析失败'); setReanalyzing(false); setLoading(false); showToast('分析失败'); return; }
+            if (status.status === 'error') { setReanalyzing(false); setLoading(false); showToast('分析未完成，可继续补齐剩余评论'); return; }
             if (status.status === 'analyzing') setStatusText(getLlmProgressText(processed, status.total_comments || totalComments));
           } catch {
             if (!isCurrent()) return;
@@ -344,6 +353,7 @@ function App() {
     const isCurrent = () => workflowGuardRef.current.isCurrent(request);
     pollStatusRef.current = null;
     setReanalyzing(false);
+    setReanalysisStatus(null);
     setLoading(true); setError(null); setResults(null); setSelectedGroupId(null); cancelRef.current = false;
     setAnalysisMode('nlp');
     setProgress(0); setProgressMax(_maxComments); setStatusText('正在获取视频信息...');
@@ -400,6 +410,7 @@ function App() {
       return;
     }
     setReanalyzing(false);
+    setReanalysisStatus(null);
     setSelectedGroupId(null);
     setLoading(true); setError(null); setStatusText('加载中...');
     try {
@@ -481,9 +492,13 @@ function App() {
     [results, filters.duplicateMode],
   );
 
+  const hasPartialV2 = (reanalysisStatus?.v2_completed_count ?? 0) > 0;
+  const v2DisplayActive = results?.sentiment_llm_schema_version === 2 || hasPartialV2;
+  const v2SchemaVersion = v2DisplayActive ? 2 : results?.sentiment_llm_schema_version;
+
   const filteredComments = useMemo(
-    () => (results ? applyCommentFilters(results.comments, filters, results.mode) : []),
-    [results, filters],
+    () => (results ? applyCommentFilters(results.comments, filters, analysisMode, v2SchemaVersion) : []),
+    [results, filters, analysisMode, v2SchemaVersion],
   );
 
   const duplicateGroups = useMemo(() => buildDuplicateGroups(results?.comments || []), [results]);
@@ -504,13 +519,17 @@ function App() {
     neutral: filteredComments.filter(c => c.sentiment_label === 'neutral').length,
   }), [filteredComments]);
 
-  const filteredLlmSentiment = useMemo<SentimentLLM>(() => {
-    const counts: SentimentLLM = { neutral:0, joy:0, support:0, anticipation:0, surprise:0, anger:0, sadness:0, concern:0, disgust:0, sarcasm:0 };
+  const filteredLlmV2 = useMemo<{ emotion: SentimentLLMV2; style: StyleDistributionV2 }>(() => {
+    const emotion = Object.fromEntries(V2_EMOTIONS.map(label => [label, 0])) as SentimentLLMV2;
+    const style = Object.fromEntries(V2_STYLES.map(label => [label, 0])) as StyleDistributionV2;
     filteredComments.forEach(comment => {
-      const label = comment.sentiment_llm_label as keyof SentimentLLM;
-      if (LLM_EMOTIONS.includes(label)) counts[label]++;
+      if (comment.sentiment_llm_schema_version !== 2) return;
+      const label = comment.sentiment_llm_label as V2Emotion;
+      const expression = comment.sentiment_llm_style as V2Style;
+      if (V2_EMOTIONS.includes(label)) emotion[label]++;
+      if (V2_STYLES.includes(expression)) style[expression]++;
     });
-    return counts;
+    return { emotion, style };
   }, [filteredComments]);
 
   const filteredGender = useMemo(() => ({
@@ -682,11 +701,12 @@ function App() {
             filters={filters}
             onApply={handleApplyFilters}
             availableRegions={availableRegions}
-            mode={results.mode}
+            mode={analysisMode}
             duplicateStatistics={results.duplicate_statistics}
             duplicateGroups={duplicateGroups}
             originalCount={results.comments.length}
             duplicateRetainedCount={duplicateFilteredComments.length}
+            llmSchemaVersion={v2SchemaVersion}
           />
           {analysisId && <div className="card-enter mt-4">
             <AISummaryCard scope={{ kind: 'analysis', id: analysisId }} filters={filters} matchedCount={filteredComments.length} mode={results.mode}/>
@@ -697,9 +717,9 @@ function App() {
               negative={filteredSentiment.negative}
               neutral={filteredSentiment.neutral}
               mode={analysisMode}
-              llm={results.mode === 'llm' ? filteredLlmSentiment : null}
+              llmV2={v2DisplayActive ? filteredLlmV2 : null}
               onModeChange={handleModeChange}
-              reanalysis={reanalyzing ? { state: 'running', current: progress, total: progressMax, statusText } : undefined}
+              reanalysis={reanalyzing ? { state: 'running', current: reanalysisStatus?.v2_completed_count ?? progress, total: reanalysisStatus?.v2_target_count ?? progressMax, statusText } : reanalysisStatus?.error_msg ? { state: 'error', current: reanalysisStatus.v2_completed_count ?? 0, total: reanalysisStatus.v2_target_count ?? results.total_comments, statusText: '已保留完成的 V2 标签', errorText: reanalysisStatus.error_summary || '可继续补齐剩余评论', onRetry: handleReanalyzeConfirm } : undefined}
             />
           </div>
           <div className="card-enter mt-4">
@@ -728,9 +748,9 @@ function App() {
         {reanalyzeModal && (
           <div className="reanalyze-dialog" onClick={()=>setReanalyzeModal(false)}>
             <div className="reanalyze-dialog__panel" role="dialog" aria-modal="true" aria-labelledby="reanalyze-title" onClick={e=>e.stopPropagation()}>
-              <h3 id="reanalyze-title">切换到大模型情感分析</h3>
+              <h3 id="reanalyze-title">切换到大模型情绪与表达风格分析</h3>
               <p className="reanalyze-dialog__copy">
-                当前分析结果使用 NLP 三分类模式生成。是否使用已保存的 {results?.total_comments} 条评论数据，重新进行大模型十分类分析？
+                当前分析结果使用 NLP 三分类模式生成。是否使用已保存的 {results?.total_comments} 条评论数据，重新进行大模型情绪与表达风格分析？
               </p>
               <p className="reanalyze-dialog__notice">
                 ⚠ 大模型分析将调用设置中选择的情绪分析供应商，可能产生少量费用。

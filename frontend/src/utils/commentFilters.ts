@@ -31,7 +31,7 @@ export function applyDuplicateMode(comments: CommentData[], duplicateMode: Filte
   return comments;
 }
 
-export function applyCommentFilters(comments: CommentData[], filters: FilterState, mode: AnalysisMode): CommentData[] {
+export function applyCommentFilters(comments: CommentData[], filters: FilterState, mode: AnalysisMode, llmSchemaVersion?: number): CommentData[] {
   let list = applyDuplicateMode(comments, filters.duplicateMode);
   if (filters.sourceAnalysisId !== 'all') list = list.filter(comment => String(comment.source_analysis_id) === filters.sourceAnalysisId);
   if (filters.gender === 'male') list = list.filter(comment => comment.gender === '男');
@@ -41,7 +41,8 @@ export function applyCommentFilters(comments: CommentData[], filters: FilterStat
   if (filters.region) list = list.filter(comment => normalizeProvince(comment.ip_location) === filters.region);
   if (filters.sentiment !== 'all') {
     list = mode === 'llm'
-      ? list.filter(comment => comment.sentiment_llm_label === filters.sentiment)
+      ? list.filter(comment => comment.sentiment_llm_label === filters.sentiment
+        && (llmSchemaVersion !== 2 || comment.sentiment_llm_schema_version === 2))
       : list.filter(comment => comment.sentiment_label === filters.sentiment);
   }
   return list;

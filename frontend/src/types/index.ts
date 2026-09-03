@@ -24,6 +24,8 @@ export interface CommentData {
   sentiment_label: SentimentLabel;
   sentiment_score: number;
   sentiment_llm_label: string;
+  sentiment_llm_style: string;
+  sentiment_llm_schema_version: number;
   post_time: string | null;
   is_exact_duplicate: boolean;
   duplicate_group_size: number;
@@ -47,6 +49,11 @@ export interface SentimentLLM {
   neutral: number; joy: number; support: number; anticipation: number; surprise: number;
   anger: number; sadness: number; concern: number; disgust: number; sarcasm: number;
 }
+
+export type V2Emotion = 'neutral' | 'joy' | 'trust' | 'anticipation' | 'surprise' | 'anger' | 'sadness' | 'fear' | 'disgust';
+export type V2Style = 'plain' | 'sarcasm' | 'meme' | 'rhetorical' | 'hyperbole';
+export type SentimentLLMV2 = Record<V2Emotion, number>;
+export type StyleDistributionV2 = Record<V2Style, number>;
 
 /** Region distribution item */
 export interface RegionItem {
@@ -79,6 +86,7 @@ export interface AnalysisResult {
   mode: AnalysisMode;
   sentiment: { positive: number; negative: number; neutral: number };
   sentiment_llm?: SentimentLLM;
+  sentiment_llm_schema_version?: number;
   gender: { male: number; female: number; unknown: number };
   region: RegionItem[];
   heat: {
@@ -185,6 +193,10 @@ export interface StatusResponse {
   total_comments: number;
   processed_comments: number;
   error_msg: string | null;
+  error_summary?: string | null;
+  v2_target_count?: number;
+  v2_completed_count?: number;
+  v2_pending_count?: number;
 }
 
 /** Video info response */
@@ -227,7 +239,7 @@ export interface FilterState {
   dateFrom: string;
   dateTo: string;
   region: string;
-  sentiment: "all" | SentimentLabel | keyof SentimentLLM;
+  sentiment: "all" | SentimentLabel | keyof SentimentLLM | V2Emotion;
   duplicateMode: DuplicateMode;
   /** `all` for the complete comment pool; used by event workspaces only. */
   sourceAnalysisId: string;
