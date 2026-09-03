@@ -24,12 +24,14 @@ interface EditorState {
 const PROVIDER_DEFAULTS: Record<LLMProvider, Pick<EditorState, 'base_url' | 'model' | 'fallback_model'>> = {
   bailian: { base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen3.6-plus', fallback_model: '' },
   deepseek: { base_url: 'https://api.deepseek.com', model: 'deepseek-v4-flash', fallback_model: '' },
+  zhipu: { base_url: 'https://open.bigmodel.cn/api/paas/v4/', model: 'glm-4.7-flash', fallback_model: '' },
   custom: { base_url: '', model: '', fallback_model: '' },
 };
 
 const PROVIDER_NAMES: Record<LLMProvider, string> = {
   bailian: '阿里百炼',
   deepseek: 'DeepSeek',
+  zhipu: '智谱 GLM',
   custom: '自定义兼容接口',
 };
 
@@ -70,6 +72,7 @@ function LLMTaskEditor({ task, title, description, saved, onSaved }: {
     { value: '', label: '不使用回退模型' },
     ...models.filter(model => model !== editor.model).map(model => ({ value: model, label: model })),
   ];
+  const useManualModelInput = editor.provider === 'custom' && !models.length;
 
   useEffect(() => {
     setEditor(toEditor(saved));
@@ -156,9 +159,16 @@ function LLMTaskEditor({ task, title, description, saved, onSaved }: {
           <FilterSelect ariaLabel={`${title}供应商`} value={editor.provider} options={PROVIDER_OPTIONS} onChange={setProvider} disabled={busy !== null} />
         </label>
         <label><span>模型</span>
-          <FilterSelect ariaLabel={`${title}模型`} value={editor.model} options={modelOptions} onChange={model => {
-            setEditor(current => ({ ...current, model, fallback_model: current.fallback_model === model ? '' : current.fallback_model }));
-          }} disabled={busy !== null || !models.length} />
+          {useManualModelInput ? (
+            <input aria-label={`${title}模型名称`} value={editor.model} onChange={event => {
+              const model = event.target.value;
+              setEditor(current => ({ ...current, model, fallback_model: current.fallback_model === model ? '' : current.fallback_model }));
+            }} placeholder="输入兼容接口的模型名称" disabled={busy !== null} />
+          ) : (
+            <FilterSelect ariaLabel={`${title}模型`} value={editor.model} options={modelOptions} onChange={model => {
+              setEditor(current => ({ ...current, model, fallback_model: current.fallback_model === model ? '' : current.fallback_model }));
+            }} disabled={busy !== null || !models.length} />
+          )}
         </label>
         <label className="llm-base-url"><span>Base URL</span>
           <input value={editor.base_url} onChange={event => setBaseUrl(event.target.value)} placeholder="https://example.com/v1" disabled={busy !== null} />

@@ -3,7 +3,7 @@ export type AnalysisStatus = "pending" | "fetching" | "analyzing" | "done" | "er
 
 /** Analysis mode */
 export type AnalysisMode = "nlp" | "llm";
-export type LLMProvider = "bailian" | "deepseek" | "custom";
+export type LLMProvider = "bailian" | "deepseek" | "zhipu" | "custom";
 export type LLMTask = "sentiment" | "summary";
 
 /** Sentiment label (traditional 3-class) */

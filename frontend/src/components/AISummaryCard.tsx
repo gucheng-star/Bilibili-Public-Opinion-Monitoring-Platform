@@ -13,6 +13,7 @@ interface Props {
 const PROVIDER_NAMES: Record<LLMProvider, string> = {
   bailian: '阿里百炼',
   deepseek: 'DeepSeek',
+  zhipu: '智谱 GLM',
   custom: '自定义接口',
 };
 
