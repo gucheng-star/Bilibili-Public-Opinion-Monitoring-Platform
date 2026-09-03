@@ -65,7 +65,8 @@ def create_fixture(database_path: Path) -> None:
                 mode TEXT,
                 total_comments INTEGER,
                 created_at TEXT,
-                error_msg TEXT
+                error_msg TEXT,
+                sentiment_llm_schema_version INTEGER NOT NULL DEFAULT 0
             );
             CREATE TABLE comments (
                 id INTEGER PRIMARY KEY,
@@ -80,16 +81,18 @@ def create_fixture(database_path: Path) -> None:
                 likes INTEGER,
                 sentiment_label TEXT,
                 sentiment_llm_label TEXT,
+                sentiment_llm_style TEXT,
+                sentiment_llm_schema_version INTEGER NOT NULL DEFAULT 0,
                 post_time TEXT
             );
             """
         )
         connection.execute(
-            "INSERT INTO analyses VALUES (?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO analyses (id,bv,video_title,video_cover,status,mode,total_comments,created_at,error_msg) VALUES (?,?,?,?,?,?,?,?,?)",
             (1, "BV1SMOKE", "fixture", "", "done", "nlp", 2, "2026-08-30T00:00:00", ""),
         )
         connection.executemany(
-            "INSERT INTO comments VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO comments (id,analysis_id,rpid,root_rpid,parent_rpid,username,gender,ip_location,content,likes,sentiment_label,sentiment_llm_label,post_time) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             [
                 (1, 1, 1, None, None, "", "", "", "fixture-keyword", 1, "positive", "", "2026-08-30T00:00:01"),
                 (2, 1, 2, None, None, "", "", "", "fixture-keyword", 0, "neutral", "", "2026-08-30T00:00:02"),
