@@ -69,8 +69,15 @@ class AgentMCPFixtureMixin:
             );
             """
         )
+        connection.executescript(
+            """
+            ALTER TABLE analyses ADD COLUMN sentiment_llm_schema_version INTEGER NOT NULL DEFAULT 0;
+            ALTER TABLE comments ADD COLUMN sentiment_llm_style TEXT;
+            ALTER TABLE comments ADD COLUMN sentiment_llm_schema_version INTEGER NOT NULL DEFAULT 0;
+            """
+        )
         connection.executemany(
-            "INSERT INTO analyses VALUES (?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO analyses (id,bv,video_title,video_cover,status,mode,total_comments,created_at,error_msg) VALUES (?,?,?,?,?,?,?,?,?)",
             [
                 (1, "BV1NLP", "中文 NLP 样本", SENSITIVE_SENTINELS[2], "done", "nlp", 4, "2026-08-01T08:00:00", SENSITIVE_SENTINELS[1]),
                 (2, "BV1LLM", "十分类样本", "", "done", "llm", 2, "2026-08-02T08:00:00", ""),
@@ -87,7 +94,10 @@ class AgentMCPFixtureMixin:
             (6, 2, 202, None, None, "用户乙", "女", "上海", "仍然有些担忧", 4, "negative", "concern", "2026-08-02T10:00:00"),
             (7, 3, 301, None, None, "用户甲", "", "", "没有大模型标签", 0, "neutral", "", "2026-08-03T09:00:00"),
         ]
-        connection.executemany("INSERT INTO comments VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", comments)
+        connection.executemany("INSERT INTO comments (id,analysis_id,rpid,root_rpid,parent_rpid,username,gender,ip_location,content,likes,sentiment_label,sentiment_llm_label,post_time) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", comments)
+        connection.execute("UPDATE analyses SET sentiment_llm_schema_version=2 WHERE id=2")
+        connection.execute("UPDATE comments SET sentiment_llm_label='trust', sentiment_llm_style='plain', sentiment_llm_schema_version=2 WHERE id=5")
+        connection.execute("UPDATE comments SET sentiment_llm_label='fear', sentiment_llm_style='rhetorical', sentiment_llm_schema_version=2 WHERE id=6")
         connection.commit()
         connection.close()
 
@@ -108,7 +118,9 @@ class ReadOnlyServiceTests(AgentMCPFixtureMixin, unittest.TestCase):
         self.assertEqual([item["analysis_id"] for item in second["items"]], [1])
         self.assertTrue(first["has_more"])
         self.assertFalse(second["has_more"])
-        self.assertTrue(next(item for item in first["items"] if item["analysis_id"] == 2)["has_llm_labels"])
+        llm = next(item for item in first["items"] if item["analysis_id"] == 2)
+        self.assertEqual(llm["llm_schema_version"], 2)
+        self.assertTrue(llm["has_v2_llm_labels"])
 
     def test_overview_matches_product_semantics_and_reports_limits(self):
         overview = self.service().get_analysis_overview(1, "nlp")
@@ -124,8 +136,9 @@ class ReadOnlyServiceTests(AgentMCPFixtureMixin, unittest.TestCase):
 
     def test_llm_mode_requires_all_labels_and_never_triggers_analysis(self):
         complete = self.service().get_analysis_overview(2, "llm")
-        self.assertEqual(complete["sentiment_distribution"]["support"], 1)
-        self.assertEqual(complete["sentiment_distribution"]["concern"], 1)
+        self.assertEqual(complete["sentiment_distribution"]["trust"], 1)
+        self.assertEqual(complete["sentiment_distribution"]["fear"], 1)
+        self.assertEqual(complete["style_distribution"]["rhetorical"], 1)
 
         with self.assertRaisesRegex(AgentReadOnlyError, "尚未完成大模型情绪分析"):
             self.service().get_analysis_overview(3, "llm")
@@ -147,11 +160,11 @@ class ReadOnlyServiceTests(AgentMCPFixtureMixin, unittest.TestCase):
     def test_fifty_item_page_never_skips_records_at_character_budget(self):
         connection = sqlite3.connect(self.database_path)
         connection.execute(
-            "INSERT INTO analyses VALUES (?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO analyses (id,bv,video_title,video_cover,status,mode,total_comments,created_at,error_msg) VALUES (?,?,?,?,?,?,?,?,?)",
             (5, "BV1PAGING", "分页边界", "", "done", "nlp", 55, "2026-08-05T08:00:00", ""),
         )
         connection.executemany(
-            "INSERT INTO comments VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO comments (id,analysis_id,rpid,root_rpid,parent_rpid,username,gender,ip_location,content,likes,sentiment_label,sentiment_llm_label,post_time) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             [
                 (
                     100 + index, 5, 500 + index, None, None, "用户", "", "广东",
@@ -247,7 +260,8 @@ class ReadOnlyServiceTests(AgentMCPFixtureMixin, unittest.TestCase):
         self.assertIsInstance(nlp.sentiment_distribution, NLPSentimentDistribution)
         self.assertEqual(set(nlp.sentiment_distribution.model_dump()), {"positive", "negative", "neutral"})
         self.assertIsInstance(llm.sentiment_distribution, LLMSentimentDistribution)
-        self.assertEqual(len(llm.sentiment_distribution.model_dump()), 10)
+        self.assertEqual(len(llm.sentiment_distribution.model_dump()), 9)
+        self.assertEqual(len(llm.style_distribution.model_dump()), 5)
 
         mismatched = dict(nlp_payload)
         mismatched["sentiment_distribution"] = llm_payload["sentiment_distribution"]

@@ -14,7 +14,8 @@ from services.comment_quality import annotate_exact_duplicates, build_duplicate_
 from services.region import analyze_region
 
 NLP_LABELS = ("positive", "negative", "neutral")
-LLM_LABELS = ("neutral", "joy", "support", "anticipation", "surprise", "anger", "sadness", "concern", "disgust", "sarcasm")
+V2_EMOTION_LABELS = ("neutral", "joy", "trust", "anticipation", "surprise", "anger", "sadness", "fear", "disgust")
+V2_STYLE_LABELS = ("plain", "sarcasm", "meme", "rhetorical", "hyperbole")
 MAX_COMMENT_CHARS = 240
 MAX_RESPONSE_CHARS = 12_000
 MAX_OFFSET = 100_000
@@ -28,10 +29,10 @@ _WINDOWS_DRIVE_REMOVABLE = 2
 _SIDECAR_SUFFIXES = ("-wal", "-shm", "-journal")
 
 ALLOWED_READ_COLUMNS = {
-    "analyses": {"id", "bv", "video_title", "status", "mode", "total_comments", "created_at"},
+    "analyses": {"id", "bv", "video_title", "status", "mode", "total_comments", "created_at", "sentiment_llm_schema_version"},
     "comments": {
         "id", "analysis_id", "content", "likes", "ip_location", "post_time",
-        "sentiment_label", "sentiment_llm_label", "root_rpid", "parent_rpid",
+        "sentiment_label", "sentiment_llm_label", "sentiment_llm_style", "sentiment_llm_schema_version", "root_rpid", "parent_rpid",
     },
 }
 
@@ -44,6 +45,7 @@ REQUIRED_SCHEMA = {
         "mode": {"TEXT"},
         "total_comments": {"INTEGER"},
         "created_at": {"TEXT", "NUMERIC"},
+        "sentiment_llm_schema_version": {"INTEGER"},
     },
     "comments": {
         "id": {"INTEGER"},
@@ -54,6 +56,8 @@ REQUIRED_SCHEMA = {
         "post_time": {"TEXT", "NUMERIC"},
         "sentiment_label": {"TEXT"},
         "sentiment_llm_label": {"TEXT"},
+        "sentiment_llm_style": {"TEXT"},
+        "sentiment_llm_schema_version": {"INTEGER"},
         "root_rpid": {"INTEGER"},
         "parent_rpid": {"INTEGER"},
     },
@@ -261,12 +265,13 @@ class ReadOnlyService:
         return {"id": row["id"], "content": row["content"] or "", "likes": row["likes"] or 0,
                 "ip_location": row["ip_location"] or "",
                 "post_time": row["post_time"], "sentiment_label": row["sentiment_label"] or "",
-                "sentiment_llm_label": row["sentiment_llm_label"] or "", "root_rpid": row["root_rpid"],
+                "sentiment_llm_label": row["sentiment_llm_label"] or "", "sentiment_llm_style": row["sentiment_llm_style"] or "",
+                "sentiment_llm_schema_version": row["sentiment_llm_schema_version"] or 0, "root_rpid": row["root_rpid"],
                 "parent_rpid": row["parent_rpid"]}
 
     @staticmethod
     def _analysis(connection: sqlite3.Connection, analysis_id: int) -> sqlite3.Row:
-        row = connection.execute("SELECT id,bv,video_title,status,mode,total_comments,created_at FROM analyses WHERE id=?", (analysis_id,)).fetchone()
+        row = connection.execute("SELECT id,bv,video_title,status,mode,total_comments,created_at,sentiment_llm_schema_version FROM analyses WHERE id=?", (analysis_id,)).fetchone()
         if row is None:
             raise AgentReadOnlyError("未找到指定的分析记录。", "analysis_not_found")
         if row["status"] != "done":
@@ -276,7 +281,7 @@ class ReadOnlyService:
     def _comments(self, connection: sqlite3.Connection, analysis_id: int) -> list[dict[str, Any]]:
         rows = connection.execute(
             "SELECT id,content,likes,ip_location,post_time,sentiment_label,"
-            "sentiment_llm_label,root_rpid,parent_rpid FROM comments "
+            "sentiment_llm_label,sentiment_llm_style,sentiment_llm_schema_version,root_rpid,parent_rpid FROM comments "
             "WHERE analysis_id=? ORDER BY id ASC LIMIT ?",
             (analysis_id, MAX_ANALYSIS_COMMENTS + 1),
         ).fetchall()
@@ -288,33 +293,41 @@ class ReadOnlyService:
         return [self._comment(row) for row in rows]
 
     @staticmethod
-    def _llm_ready(comments: list[dict[str, Any]]) -> bool:
-        return bool(comments) and all(item["sentiment_llm_label"] in LLM_LABELS for item in comments)
+    def _v2_llm_ready(comments: list[dict[str, Any]]) -> bool:
+        return bool(comments) and all(
+            item["sentiment_llm_schema_version"] == 2
+            and item["sentiment_llm_label"] in V2_EMOTION_LABELS
+            and item["sentiment_llm_style"] in V2_STYLE_LABELS
+            for item in comments
+        )
 
     def list_analyses(self, limit: int = 20, offset: int = 0) -> dict[str, Any]:
         limit, offset = self._paging(limit, offset)
         try:
             with closing(self._connect()) as db:
                 total = db.execute("SELECT COUNT(*) FROM analyses WHERE status='done'").fetchone()[0]
-                placeholders = ",".join("?" for _ in LLM_LABELS)
+                emotion_placeholders = ",".join("?" for _ in V2_EMOTION_LABELS)
+                style_placeholders = ",".join("?" for _ in V2_STYLE_LABELS)
                 rows = db.execute(
-                    "SELECT page.id,page.bv,page.video_title,page.created_at,page.status,page.mode,"
+                    "SELECT page.id,page.bv,page.video_title,page.created_at,page.status,page.mode,page.sentiment_llm_schema_version,"
                     "page.total_comments,"
                     "(SELECT COUNT(*) FROM comments c WHERE c.analysis_id=page.id) AS stored_count,"
                     "EXISTS(SELECT 1 FROM comments c WHERE c.analysis_id=page.id) AS has_comments,"
                     "NOT EXISTS(SELECT 1 FROM comments c WHERE c.analysis_id=page.id AND "
-                    f"(c.sentiment_llm_label IS NULL OR c.sentiment_llm_label NOT IN ({placeholders}))) "
-                    "AS labels_valid FROM (SELECT id,bv,video_title,created_at,status,mode,total_comments "
+                    f"(c.sentiment_llm_schema_version != 2 OR c.sentiment_llm_label IS NULL OR c.sentiment_llm_label NOT IN ({emotion_placeholders}) OR c.sentiment_llm_style IS NULL OR c.sentiment_llm_style NOT IN ({style_placeholders}))) "
+                    "AS labels_valid FROM (SELECT id,bv,video_title,created_at,status,mode,total_comments,sentiment_llm_schema_version "
                     "FROM analyses WHERE status='done' ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?) page",
-                    (*LLM_LABELS, limit, offset),
+                    (*V2_EMOTION_LABELS, *V2_STYLE_LABELS, limit, offset),
                 ).fetchall()
                 values = []
                 for row in rows:
                     values.append({"analysis_id": row["id"], "bv": row["bv"], "video_title": row["video_title"] or "",
                                    "created_at": self._iso(row["created_at"]), "status": row["status"],
                                    "analysis_mode": row["mode"] or "nlp", "total_comments": row["stored_count"],
-                                   "has_llm_labels": bool(row["has_comments"] and row["labels_valid"])})
+                                   "llm_schema_version": row["sentiment_llm_schema_version"] if row["sentiment_llm_schema_version"] in {0, 1, 2} else 0,
+                                   "has_v2_llm_labels": bool(row["has_comments"] and row["labels_valid"])})
                 return {
+                    "mcp_contract_version": 2,
                     "items": values,
                     "total_count": total,
                     "has_more": offset + len(values) < total,
@@ -332,11 +345,13 @@ class ReadOnlyService:
             with closing(self._connect()) as db:
                 row = self._analysis(db, analysis_id)
                 comments = self._comments(db, analysis_id)
-                ready = self._llm_ready(comments)
+                schema_version = row["sentiment_llm_schema_version"] if row["sentiment_llm_schema_version"] in {0, 1, 2} else 0
+                ready = schema_version == 2 and self._v2_llm_ready(comments)
                 if mode == "llm" and not ready:
                     raise AgentReadOnlyError("该分析尚未完成大模型情绪分析。", "llm_not_ready")
-                labels, field = (LLM_LABELS, "sentiment_llm_label") if mode == "llm" else (NLP_LABELS, "sentiment_label")
+                labels, field = (V2_EMOTION_LABELS, "sentiment_llm_label") if mode == "llm" else (NLP_LABELS, "sentiment_label")
                 counts = {label: sum(item[field] == label for item in comments) for label in labels}
+                styles = {label: sum(item["sentiment_llm_style"] == label for item in comments) for label in V2_STYLE_LABELS} if mode == "llm" else None
                 sentiment_denominator = sum(counts.values())
                 times = [item["post_time"] for item in comments if item.get("post_time")]
                 annotated = annotate_exact_duplicates(comments)
@@ -346,11 +361,11 @@ class ReadOnlyService:
                     limitations.append("分析记录声明的评论数与实际保存行数不一致。")
                 if sentiment_denominator != actual:
                     limitations.append("部分评论缺少当前模式的合法情绪标签，未计入情绪分母。")
-                return {"analysis_id": row["id"], "bv": row["bv"], "video_title": row["video_title"] or "",
+                return {"mcp_contract_version": 2, "analysis_id": row["id"], "bv": row["bv"], "video_title": row["video_title"] or "",
                         "created_at": self._iso(row["created_at"]), "status": row["status"],
-                        "analysis_mode": row["mode"] if row["mode"] in {"nlp", "llm"} else "nlp", "mode": mode,
+                        "analysis_mode": row["mode"] if row["mode"] in {"nlp", "llm"} else "nlp", "llm_schema_version": schema_version, "mode": mode,
                         "declared_total_comments": declared, "stored_comment_count": actual,
-                        "sentiment_distribution": counts, "sentiment_denominator": sentiment_denominator,
+                        "sentiment_distribution": counts, "style_distribution": styles, "sentiment_denominator": sentiment_denominator,
                         "time_range": {"earliest": min(times) if times else None, "latest": max(times) if times else None},
                         "top_regions": analyze_region(annotated)[:8], "duplicate_statistics": build_duplicate_statistics(annotated),
                         "data_complete": actual == declared and sentiment_denominator == actual and (mode == "nlp" or ready),
@@ -363,7 +378,7 @@ class ReadOnlyService:
     def search_comments(self, analysis_id: int, mode: str = "nlp", keyword: str | None = None, sentiment: str | None = None, limit: int = 20, offset: int = 0) -> dict[str, Any]:
         analysis_id, mode = self._id(analysis_id), self._mode(mode)
         keyword, (limit, offset) = self._keyword(keyword), self._paging(limit, offset)
-        allowed = set(LLM_LABELS if mode == "llm" else NLP_LABELS)
+        allowed = set(V2_EMOTION_LABELS if mode == "llm" else NLP_LABELS)
         sentiment = str(sentiment or "").strip()
         if sentiment and sentiment not in allowed:
             raise AgentReadOnlyError("sentiment 与当前分析模式不匹配。", "invalid_sentiment")
@@ -371,7 +386,9 @@ class ReadOnlyService:
             with closing(self._connect()) as db:
                 self._analysis(db, analysis_id)
                 all_comments = annotate_exact_duplicates(self._comments(db, analysis_id))
-                if mode == "llm" and not self._llm_ready(all_comments):
+                schema_version = self._analysis(db, analysis_id)["sentiment_llm_schema_version"]
+                schema_version = schema_version if schema_version in {0, 1, 2} else 0
+                if mode == "llm" and (schema_version != 2 or not self._v2_llm_ready(all_comments)):
                     raise AgentReadOnlyError("该分析尚未完成大模型情绪分析。", "llm_not_ready")
                 field = "sentiment_llm_label" if mode == "llm" else "sentiment_label"
                 matched = [item for item in all_comments if (not keyword or keyword in item["content"]) and (not sentiment or item[field] == sentiment)]
@@ -383,9 +400,10 @@ class ReadOnlyService:
                     used += len(content)
                     output.append({"content": content, "post_time": self._iso(item["post_time"]),
                                    "likes": max(0, int(item["likes"] or 0)),
-                                   "sentiment": item[field] or "unclassified", "is_exact_duplicate": bool(item["is_exact_duplicate"]),
+                                   "sentiment": item[field] or "unclassified", "style": item["sentiment_llm_style"] if mode == "llm" else None,
+                                   "llm_schema_version": schema_version, "is_exact_duplicate": bool(item["is_exact_duplicate"]),
                                    "has_context": bool(item["root_rpid"] or item["parent_rpid"])})
-                return {"analysis_id": analysis_id, "mode": mode, "matched_count": len(matched),
+                return {"mcp_contract_version": 2, "analysis_id": analysis_id, "mode": mode, "llm_schema_version": schema_version, "matched_count": len(matched),
                         "returned_count": len(output), "has_more": offset + len(output) < len(matched),
                         "comments": output,
                         "limitations": ["评论正文单条最多返回 240 字符，单次响应正文合计最多 12000 字符。"]}
