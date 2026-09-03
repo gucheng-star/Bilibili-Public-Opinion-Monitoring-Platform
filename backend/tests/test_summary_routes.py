@@ -11,6 +11,7 @@ from sqlalchemy.pool import StaticPool
 from api import summary_routes
 from models.database import AISummary, Analysis, Base, Comment
 from services.ai_summary import filter_signature, input_signature
+from services.sentiment_contract import LLM_SENTIMENT_SCHEMA_V2
 
 
 class SummaryRouteTests(unittest.IsolatedAsyncioTestCase):
@@ -267,6 +268,47 @@ class SummaryRouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response["filters"]["duplicateMode"], "include")
         config.assert_not_called()
         generator.assert_not_awaited()
+
+    async def test_llm_summary_requires_full_v2_or_explicit_covered_subset(self):
+        db = self.sessions()
+        analysis = db.get(Analysis, self.analysis_id)
+        analysis.mode = "llm"
+        analysis.sentiment_llm_schema_version = 0
+        first = db.query(Comment).first()
+        first.sentiment_llm_label = "trust"
+        first.sentiment_llm_style = "plain"
+        first.sentiment_llm_schema_version = LLM_SENTIMENT_SCHEMA_V2
+        db.add(Comment(
+            analysis_id=self.analysis_id, rpid=2, content="尚未完成的评论", likes=1,
+            sentiment_label="neutral", post_time=datetime(2026, 7, 2, 12, 0),
+        ))
+        db.commit()
+        db.close()
+
+        with self.assertRaises(HTTPException) as blocked:
+            await summary_routes.create_summary(self.analysis_id, {"filters": {}})
+        self.assertEqual(blocked.exception.status_code, 409)
+
+        received = {}
+
+        async def fake_generate(comments, mode, _config, quality_context):
+            received["comments"] = comments
+            received["mode"] = mode
+            received["coverage"] = quality_context["v2_coverage"]
+            return "已覆盖子集简报", "mock", len(comments)
+
+        with patch.object(summary_routes, "get_task_config", return_value={"api_key": "test", "provider": "custom"}), patch.object(
+            summary_routes, "generate_summary", new=AsyncMock(side_effect=fake_generate),
+        ):
+            response = await summary_routes.create_summary(self.analysis_id, {
+                "filters": {}, "useV2CoveredSubset": True,
+            })
+
+        self.assertEqual(response["matched_count"], 1)
+        self.assertEqual(received["mode"], "llm")
+        self.assertEqual([comment["rpid"] for comment in received["comments"]], [1])
+        self.assertEqual(received["coverage"]["scope"], "v2_covered_subset")
+        self.assertEqual(received["coverage"]["v2_pending_comments"], 1)
 
 
 if __name__ == "__main__":

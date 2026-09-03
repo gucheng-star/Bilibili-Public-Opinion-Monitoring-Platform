@@ -12,8 +12,10 @@ from services.ai_summary import (
     filter_signature,
     generate_summary,
     input_signature,
+    is_v2_llm_comment,
     normalize_filters,
 )
+from services.sentiment_contract import LLM_SENTIMENT_SCHEMA_V2
 from services.llm_client import LLMRequestError
 from services.settings_store import get_task_config
 from services.runtime_state import activity
@@ -40,6 +42,24 @@ def _comment_dict(comment: Comment) -> dict:
         "post_time": comment.post_time,
         "sentiment_label": comment.sentiment_label or "",
         "sentiment_llm_label": comment.sentiment_llm_label or "",
+        "sentiment_llm_style": comment.sentiment_llm_style or "",
+        "sentiment_llm_schema_version": comment.sentiment_llm_schema_version,
+    }
+
+
+def _v2_summary_comments(analysis: Analysis, comments: list[dict]) -> tuple[list[dict], dict]:
+    covered = [comment for comment in comments if is_v2_llm_comment(comment)]
+    total = len(comments)
+    complete = (
+        analysis.sentiment_llm_schema_version == LLM_SENTIMENT_SCHEMA_V2
+        and len(covered) == total
+    )
+    return covered, {
+        "scope": "all_comments" if complete else "v2_covered_subset",
+        "total_comments": total,
+        "v2_completed_comments": len(covered),
+        "v2_pending_comments": total - len(covered),
+        "v2_complete": complete,
     }
 
 
@@ -78,7 +98,10 @@ def list_summaries(analysis_id: int):
         for summary in db.query(AISummary).filter_by(analysis_id=analysis_id).all():
             try:
                 filters = normalize_filters(json.loads(summary.filter_json), analysis.mode)
-                matched = apply_filters(comments, filters, analysis.mode)
+                summary_comments = comments
+                if analysis.mode == "llm":
+                    summary_comments, _coverage = _v2_summary_comments(analysis, comments)
+                matched = apply_filters(summary_comments, filters, analysis.mode)
                 current_hash = input_signature(matched, analysis.mode)
             except (ValueError, json.JSONDecodeError):
                 current_hash = ""
@@ -105,7 +128,13 @@ async def create_summary(analysis_id: int, req: dict):
         comments = annotate_exact_duplicates([
             _comment_dict(comment) for comment in db.query(Comment).filter_by(analysis_id=analysis_id).all()
         ])
-        matched = apply_filters(comments, filters, analysis.mode)
+        summary_comments = comments
+        coverage = None
+        if analysis.mode == "llm":
+            summary_comments, coverage = _v2_summary_comments(analysis, comments)
+            if not coverage["v2_complete"] and not bool(req.get("useV2CoveredSubset", False)):
+                raise HTTPException(409, "V2 大模型情绪尚未覆盖全部评论，请先补齐或明确使用已覆盖子集")
+        matched = apply_filters(summary_comments, filters, analysis.mode)
         if not matched:
             raise HTTPException(400, "当前筛选条件下没有可总结的评论")
         current_input_hash = input_signature(matched, analysis.mode)
@@ -145,6 +174,8 @@ async def create_summary(analysis_id: int, req: dict):
                 "after_duplicate_filter_count": after_duplicate_count,
                 "final_matched_count": len(matched),
             }
+            if coverage:
+                quality_context["v2_coverage"] = coverage
             summary_text, used_model, sampled_count = await generate_summary(
                 matched, analysis.mode, config, quality_context
             )

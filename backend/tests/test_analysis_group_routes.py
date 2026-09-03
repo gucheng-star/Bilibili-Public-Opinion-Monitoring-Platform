@@ -231,6 +231,9 @@ class AnalysisGroupRouteTests(unittest.IsolatedAsyncioTestCase):
         result = group_routes.get_group_results(group["id"], mode="llm")
         self.assertEqual((result["sentiment_llm"]["trust"], result["sentiment_llm"]["fear"]), (2, 1))
         self.assertNotIn("support", result["sentiment_llm"])
+        self.assertEqual(result["emotion_distribution"], result["sentiment_llm"])
+        self.assertEqual(result["style_distribution"]["plain"], 3)
+        self.assertEqual(result["llm_readiness"]["source_coverage"][0]["v2_coverage"], 1.0)
         db = self.sessions()
         try:
             for analysis_id in (self.first_id, self.second_id):
@@ -279,6 +282,50 @@ class AnalysisGroupRouteTests(unittest.IsolatedAsyncioTestCase):
         db.close()
         listed = group_routes.list_group_summaries(group["id"])
         self.assertTrue(listed[0]["stale"])
+
+    async def test_group_llm_summary_requires_complete_v2_or_explicit_subset(self):
+        group = self._create_group()
+        db = self.sessions()
+        try:
+            first = db.get(Analysis, self.first_id)
+            first.mode = "llm"
+            first.sentiment_llm_schema_version = LLM_SENTIMENT_SCHEMA_V2
+            for comment in db.query(Comment).filter_by(analysis_id=self.first_id):
+                comment.sentiment_llm_label = "trust"
+                comment.sentiment_llm_style = "plain"
+                comment.sentiment_llm_schema_version = LLM_SENTIMENT_SCHEMA_V2
+            second = db.get(Analysis, self.second_id)
+            second.mode = "llm"
+            second.sentiment_llm_schema_version = 0
+            db.commit()
+        finally:
+            db.close()
+
+        with self.assertRaises(HTTPException) as blocked:
+            await group_routes.post_group_summary(group["id"], {"mode": "llm", "filters": {}})
+        self.assertEqual(blocked.exception.status_code, 409)
+
+        received = {}
+
+        async def fake_generate(comments, _rows, mode, _config, quality_context):
+            received["source_ids"] = [comment["source_analysis_id"] for comment in comments]
+            received["mode"] = mode
+            received["coverage"] = quality_context["v2_coverage"]
+            return "已覆盖子集事件简报", "mock", len(comments)
+
+        config = {"provider": "custom", "api_key": "test", "model": "mock"}
+        with patch.object(group_routes, "get_task_config", return_value=config), patch.object(
+            group_routes, "generate_group_summary", new=AsyncMock(side_effect=fake_generate),
+        ):
+            response = await group_routes.post_group_summary(group["id"], {
+                "mode": "llm", "filters": {}, "useV2CoveredSubset": True,
+            })
+
+        self.assertEqual(response["matched_count"], 2)
+        self.assertEqual(received["mode"], "llm")
+        self.assertEqual(received["source_ids"], [self.first_id, self.first_id])
+        self.assertEqual(received["coverage"]["scope"], "v2_covered_subset")
+        self.assertEqual(received["coverage"]["source_coverage"][1]["v2_pending_comments"], 1)
 
     def test_delete_group_does_not_delete_source_analyses(self):
         group = self._create_group()

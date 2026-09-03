@@ -87,17 +87,17 @@ class AISummaryTests(unittest.TestCase):
 
     def test_llm_mode_uses_new_main_emotion_labels(self):
         comments = [
-            make_comment(1, llm_label="support"),
+            make_comment(1, llm_label="trust"),
             make_comment(2, llm_label="anger"),
         ]
-        filters = normalize_filters({"sentiment": "support"}, "llm")
+        filters = normalize_filters({"sentiment": "trust"}, "llm")
 
         matched = apply_filters(comments, filters, "llm")
 
         self.assertEqual([comment["id"] for comment in matched], [1])
 
     def test_sampling_is_deterministic_bounded_and_private(self):
-        labels = ["neutral", "joy", "support", "anticipation", "surprise", "anger", "sadness", "concern", "disgust"]
+        labels = ["neutral", "joy", "trust", "anticipation", "surprise", "anger", "sadness", "fear", "disgust"]
         comments = [make_comment(i, llm_label=labels[i % len(labels)]) for i in range(1, 121)]
 
         first = select_representative_comments(comments, "llm")
@@ -107,7 +107,7 @@ class AISummaryTests(unittest.TestCase):
         self.assertLessEqual(len(first), MAX_SAMPLE_COMMENTS)
         self.assertLessEqual(sum(len(item["content"]) for item in first), MAX_SAMPLE_CHARACTERS)
         self.assertIn(120, [comment["likes"] for comment in first])
-        self.assertTrue(set(labels).issubset({comment["sentiment"] for comment in first}))
+        self.assertTrue(set(labels).issubset({comment["emotion"] for comment in first}))
         self.assertTrue(all("id" not in comment and "username" not in comment for comment in first))
 
     def test_input_hash_tracks_content_and_mode_label_changes(self):

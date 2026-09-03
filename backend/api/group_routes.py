@@ -25,6 +25,7 @@ from services.analysis_groups import (
     select_group_representative_comments,
     update_group,
 )
+from services.ai_summary import is_v2_llm_comment
 from services.llm_client import LLMRequestError
 from services.runtime_state import activity
 from services.settings_store import get_task_config
@@ -68,6 +69,20 @@ def _ensure_llm_ready(db, group_id: int) -> None:
     readiness = llm_readiness(rows, group_comments(db, group_id))
     if not readiness["ready"]:
         raise HTTPException(409, {"message": "部分来源视频尚未完成大模型情绪分析", **readiness})
+
+
+def _group_v2_summary_comments(rows, comments: list[dict]) -> tuple[list[dict], dict]:
+    readiness = llm_readiness(rows, comments)
+    covered = [comment for comment in comments if is_v2_llm_comment(comment)]
+    total = len(comments)
+    return covered, {
+        "scope": "all_comments" if readiness["ready"] else "v2_covered_subset",
+        "total_comments": total,
+        "v2_completed_comments": len(covered),
+        "v2_pending_comments": total - len(covered),
+        "v2_complete": readiness["ready"],
+        "source_coverage": readiness["source_coverage"],
+    }
 
 
 def group_reanalysis_status(db, group: AnalysisGroup) -> dict:
@@ -390,7 +405,10 @@ def list_group_summaries(group_id: int):
         for summary in db.query(AnalysisGroupSummary).filter_by(group_id=group_id).all():
             try:
                 filters = normalize_filters(json.loads(summary.filter_json), summary.analysis_mode)
-                matched = apply_filters(comments, filters, summary.analysis_mode)
+                summary_comments = comments
+                if summary.analysis_mode == "llm":
+                    summary_comments, _coverage = _group_v2_summary_comments(rows, comments)
+                matched = apply_filters(summary_comments, filters, summary.analysis_mode)
                 current_input_hash = group_input_signature(rows, matched, summary.analysis_mode)
                 stale = (
                     summary.member_signature != current_member_signature
@@ -417,10 +435,14 @@ async def post_group_summary(group_id: int, req: dict):
         rows = group_rows(db, group_id)
         if len(rows) < 2:
             raise HTTPException(409, "该舆情事件当前不足 2 个有效来源视频")
-        if mode == "llm":
-            _ensure_llm_ready(db, group_id)
         all_comments = group_comments(db, group_id)
-        matched = apply_filters(all_comments, normalized, mode)
+        summary_comments = all_comments
+        coverage = None
+        if mode == "llm":
+            summary_comments, coverage = _group_v2_summary_comments(rows, all_comments)
+            if not coverage["v2_complete"] and not bool(req.get("useV2CoveredSubset", False)):
+                raise HTTPException(409, "V2 大模型情绪尚未覆盖全部评论，请先补齐或明确使用已覆盖子集")
+        matched = apply_filters(summary_comments, normalized, mode)
         if not matched:
             raise HTTPException(400, "当前筛选条件下没有可总结的评论")
         filter_json, filter_hash = filter_signature(normalized)
@@ -443,7 +465,10 @@ async def post_group_summary(group_id: int, req: dict):
         log_event(logger, "INFO", "group_summary.task_started", "事件简报生成已开始", group_id=group_id, task_type="group_ai_summary", count=len(matched))
         with activity("ai_summary"):
             summary_text, used_model, sampled_count = await generate_group_summary(
-                matched, rows, mode, config, group_quality_context(all_comments, normalized, matched),
+                matched, rows, mode, config, {
+                    **group_quality_context(all_comments, normalized, matched),
+                    **({"v2_coverage": coverage} if coverage else {}),
+                },
             )
         if existing:
             existing.member_signature = current_member_signature
