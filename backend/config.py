@@ -1,10 +1,8 @@
 """应用配置"""
 
 import os
-from services.runtime_paths import database_path
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATABASE_URL = f"sqlite+aiosqlite:///{database_path()}"
 
 # B站 API 配置
 BILIBILI_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
@@ -13,11 +11,6 @@ BILIBILI_REFERER = "https://www.bilibili.com"
 # 抓取配置
 MAX_COMMENTS = 100
 REQUEST_DELAY = 3.0
-
-# 词云配置
-WORDCLOUD_WIDTH = 800
-WORDCLOUD_HEIGHT = 400
-WORDCLOUD_MAX_WORDS = 100
 
 def _load_stopwords() -> set[str]:
     """从项目根目录的 stopwords.txt 加载停用词"""

@@ -134,10 +134,6 @@ export function getGroupReanalysisStatus(groupId: number) {
   return req<GroupReanalysisStatus>('/analysis-groups/' + groupId + '/reanalyze/status');
 }
 
-export function getWordCloud(analysisId: number) {
-  return req<{ base64: string }>('/wordcloud/' + analysisId);
-}
-
 export function getHistory(limit = 20) {
   return req<HistoryItem[]>('/history?limit=' + limit);
 }

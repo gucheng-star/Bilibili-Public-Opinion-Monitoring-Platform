@@ -6,7 +6,7 @@ from models.database import SessionLocal, Analysis, AnalysisGroupItem, Comment, 
 from services.bilibili import get_video_info, fetch_comments
 from services.sentiment import batch_analyze, summarize_sentiment
 from services.sentiment_llm import batch_analyze_llm, summarize_sentiment_llm
-from services.wordcloud_gen import generate_wordcloud, get_top_keywords
+from services.wordcloud_gen import get_top_keywords
 from services.region import analyze_region
 from services.heat import analyze_heat
 from services.settings_store import get_task_config
@@ -528,15 +528,6 @@ def get_filtered_keywords(analysis_id: int, req: dict):
         }
     finally:
         db.close()
-
-@router.get('/wordcloud/{analysis_id}')
-def get_wordcloud(analysis_id: int):
-    db = SessionLocal()
-    try:
-        comments = db.query(Comment).filter_by(analysis_id=analysis_id).all()
-        if not comments: raise HTTPException(404, 'No comments')
-        return {'base64':generate_wordcloud([{'content':c.content} for c in comments])}
-    finally: db.close()
 
 @router.get('/history')
 def get_history(limit: int = 20):
