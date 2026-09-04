@@ -91,7 +91,7 @@ export default function CommentCsvExportDialog({ comments, allComments, defaultS
             <h2 id="comment-csv-dialog-title">导出评论数据</h2>
             <p id="comment-csv-dialog-description">当前筛选与搜索后共 {comments.length.toLocaleString()} 条评论。导出为 UTF-8 CSV，适用于 Excel / WPS。</p>
           </div>
-          <button type="button" className="comment-csv-dialog__close ui-secondary-action" onClick={onClose} aria-label="关闭导出评论数据弹窗">×</button>
+          <button type="button" className="comment-csv-dialog__close ui-secondary-action" onClick={onClose} aria-label="关闭导出评论数据弹窗">关闭</button>
         </div>
 
         <div className="comment-csv-dialog__body">
