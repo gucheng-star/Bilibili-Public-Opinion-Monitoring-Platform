@@ -22,9 +22,17 @@ test('默认列按稳定顺序包含固定列和三项模型列，并生成可�
     defaultSource: { bv: 'BV1abc', videoTitle: '中文标题' }, exportedAt,
   });
   assert.deepEqual(result.headers, ['样本ID', '视频BV号', '视频标题', '评论内容', '大模型主情感', '大模型表达风格', '本地 NLP 情感']);
-  assert.deepEqual(result.rows[0], ['EXP20260904-123456-0001', 'BV1abc', '中文标题', '普通评论', 'joy', 'plain', 'neutral']);
+  assert.deepEqual(result.rows[0], ['EXP20260904-123456-0001', 'BV1abc', '中文标题', '普通评论', '喜悦', '平实', '中性']);
   assert.ok(result.csv.startsWith('\uFEFF样本ID,视频BV号'));
   assert.ok(result.csv.endsWith('\r\n'));
+});
+
+test('机器标签统一导出为中文展示值', () => {
+  const result = buildCommentCsv({
+    comments: [comment(1, { sentiment_llm_label: 'disgust', sentiment_llm_style: 'rhetorical', sentiment_label: 'negative' })],
+    allComments: [comment(1)], exportedAt,
+  });
+  assert.deepEqual(result.rows[0].slice(-3), ['厌恶', '反问', '负面']);
 });
 
 test('可选列按规定顺序追加，缺失模型字段保留空单元格', () => {
@@ -33,8 +41,8 @@ test('可选列按规定顺序追加，缺失模型字段保留空单元格', ()
     comments: [item], allComments: [item], exportedAt,
     options: { llmSentiment: true, llmStyle: true, nlpSentiment: false, username: true, likes: true },
   });
-  assert.deepEqual(result.headers, ['样本ID', '视频BV号', '视频标题', '评论内容', '大模型主情感', '大模型表达风格', '用户名', '点赞数']);
-  assert.deepEqual(result.rows[0].slice(4), ['', '', '用户', '0']);
+  assert.deepEqual(result.headers, ['样本ID', '视频BV号', '视频标题', '用户名', '评论内容', '大模型主情感', '大模型表达风格', '点赞数']);
+  assert.deepEqual(result.rows[0].slice(3), ['用户', '普通评论', '', '', '0']);
 });
 
 test('CSV 使用 BOM、Windows 换行、RFC 4180 转义和公式前缀防护', () => {
@@ -46,7 +54,7 @@ test('CSV 使用 BOM、Windows 换行、RFC 4180 转义和公式前缀防护', (
   assert.equal(escapeCsvCell(item.content), '"\'=中文,\n""引号"""');
   assert.match(result.csv, /^\uFEFF.*\r\n.*\r\n$/s);
   assert.match(result.csv, /"'=中文,\n""引号"""/);
-  assert.match(result.csv, /,'\+危险,'@位置\r\n$/);
+  assert.match(result.csv, /,'\+危险,'@位置,"'=中文,\n""引号"""/);
 });
 
 test('上下文从完整评论池按同一来源查找，根评论和缺失评论保持空值', () => {
@@ -59,7 +67,16 @@ test('上下文从完整评论池按同一来源查找，根评论和缺失评�
     options: { llmSentiment: false, llmStyle: false, nlpSentiment: false, context: true },
     sources: [{ analysisId: 101, bv: 'BV1event', videoTitle: '事件视频' }],
   });
-  assert.deepEqual(result.rows.map(row => row.slice(-2)), [['', ''], ['根评论', '父评论'], ['', '']]);
+  assert.deepEqual(result.rows.map(row => row.slice(3, 5)), [['', ''], ['根评论', '父评论'], ['', '']]);
+});
+
+test('勾选的人工复核信息在评论内容前按固定阅读顺序插入', () => {
+  const item = comment(1, { post_time: '2026-09-04 12:00:00', username: '标注者', gender: '女', ip_location: '北京' });
+  const result = buildCommentCsv({
+    comments: [item], allComments: [item], exportedAt,
+    options: { llmSentiment: false, llmStyle: false, nlpSentiment: false, postTime: true, username: true, gender: true, ipLocation: true, context: true },
+  });
+  assert.deepEqual(result.headers, ['样本ID', '视频BV号', '视频标题', '发布时间', '用户名', '性别', 'IP 属地', '根评论内容', '父评论内容', '评论内容']);
 });
 
 test('事件中每条评论优先保留自身来源，单视频使用默认来源', () => {

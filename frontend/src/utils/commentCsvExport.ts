@@ -63,6 +63,20 @@ interface CommentContext {
 
 const FORMULA_PREFIX = /^[=+\-@]/;
 
+const LLM_EMOTION_LABELS: Readonly<Record<string, string>> = {
+  neutral: '中性', joy: '喜悦', trust: '信任', support: '支持',
+  anticipation: '期待', surprise: '惊讶', anger: '愤怒', sadness: '悲伤',
+  fear: '恐惧', concern: '担忧', disgust: '厌恶', sarcasm: '反讽',
+};
+
+const LLM_STYLE_LABELS: Readonly<Record<string, string>> = {
+  plain: '平实', sarcasm: '反讽', meme: '玩梗', rhetorical: '反问', hyperbole: '夸张',
+};
+
+const NLP_SENTIMENT_LABELS: Readonly<Record<string, string>> = {
+  positive: '正面', negative: '负面', neutral: '中性',
+};
+
 function commentKey(comment: CommentData, rpid: number | null): string {
   return `${comment.source_analysis_id ?? 'single'}:${rpid ?? ''}`;
 }
@@ -70,6 +84,10 @@ function commentKey(comment: CommentData, rpid: number | null): string {
 function displayText(value: string | number | null | undefined): string {
   const text = value == null ? '' : String(value);
   return FORMULA_PREFIX.test(text) ? `'${text}` : text;
+}
+
+function displayLabel(value: string, labels: Readonly<Record<string, string>>): string {
+  return value ? (labels[value] ?? value) : '';
 }
 
 function resolveSource(comment: CommentData, input: CommentCsvExportInput): CommentCsvSource {
@@ -115,19 +133,21 @@ function columnsFor(options: CommentCsvOptions): CsvColumn[] {
     { header: '样本ID', value: (_comment, _context, sampleId) => sampleId },
     { header: '视频BV号', value: (_comment, context) => context.source.bv },
     { header: '视频标题', value: (_comment, context) => context.source.videoTitle },
-    { header: '评论内容', value: comment => comment.content },
   ];
-  if (options.llmSentiment) columns.push({ header: '大模型主情感', value: comment => comment.sentiment_llm_label });
-  if (options.llmStyle) columns.push({ header: '大模型表达风格', value: comment => comment.sentiment_llm_style });
-  if (options.nlpSentiment) columns.push({ header: '本地 NLP 情感', value: comment => comment.sentiment_label });
+
+  if (options.postTime) columns.push({ header: '发布时间', value: comment => comment.post_time ?? '' });
+  if (options.username) columns.push({ header: '用户名', value: comment => comment.username });
+  if (options.gender) columns.push({ header: '性别', value: comment => comment.gender });
+  if (options.ipLocation) columns.push({ header: 'IP 属地', value: comment => comment.ip_location });
   if (options.context) {
     columns.push({ header: '根评论内容', value: (_comment, context) => context.rootContent });
     columns.push({ header: '父评论内容', value: (_comment, context) => context.parentContent });
   }
-  if (options.username) columns.push({ header: '用户名', value: comment => comment.username });
-  if (options.ipLocation) columns.push({ header: 'IP 属地', value: comment => comment.ip_location });
-  if (options.gender) columns.push({ header: '性别', value: comment => comment.gender });
-  if (options.postTime) columns.push({ header: '发布时间', value: comment => comment.post_time ?? '' });
+  columns.push({ header: '评论内容', value: comment => comment.content });
+
+  if (options.llmSentiment) columns.push({ header: '大模型主情感', value: comment => displayLabel(comment.sentiment_llm_label, LLM_EMOTION_LABELS) });
+  if (options.llmStyle) columns.push({ header: '大模型表达风格', value: comment => displayLabel(comment.sentiment_llm_style, LLM_STYLE_LABELS) });
+  if (options.nlpSentiment) columns.push({ header: '本地 NLP 情感', value: comment => displayLabel(comment.sentiment_label, NLP_SENTIMENT_LABELS) });
   if (options.likes) columns.push({ header: '点赞数', value: comment => String(comment.likes) });
   return columns;
 }

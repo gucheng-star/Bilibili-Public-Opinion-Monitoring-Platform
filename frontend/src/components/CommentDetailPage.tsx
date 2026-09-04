@@ -8,6 +8,8 @@ import {
   parseDetailState, searchParamsToFilters, type DetailSort,
 } from '../utils/commentQuery';
 import { COMMENT_PAGE_SIZE, buildCommentTree, commentKey } from '../utils/commentTree';
+import type { CommentCsvSource } from '../utils/commentCsvExport';
+import CommentCsvExportDialog from './CommentCsvExportDialog';
 import CommentTable from './CommentTable';
 import FilterBar from './FilterBar';
 import './CommentDetail.css';
@@ -24,12 +26,14 @@ interface ShellProps {
   showSource?: boolean;
   workspaceGroupId?: number;
   sources?: Array<{ analysis_id: number; video_title: string; bv: string }>;
+  defaultCsvSource?: CommentCsvSource;
   llmSchemaVersion?: number;
 }
 
 function CommentDetailShell({
   title, scopeLabel, mode, totalComments, comments, filters, onFiltersChange,
   duplicateStatistics, showSource = false, workspaceGroupId, sources, llmSchemaVersion,
+  defaultCsvSource,
 }: ShellProps) {
   const location = useLocation();
   const navigate = useNavigate();
@@ -39,6 +43,7 @@ function CommentDetailShell({
   const [sort, setSort] = useState<DetailSort>('time');
   const [page, setPage] = useState(1);
   const [hydrated, setHydrated] = useState(false);
+  const [csvDialogOpen, setCsvDialogOpen] = useState(false);
 
   const filtersRef = useRef(filters);
   filtersRef.current = filters;
@@ -160,10 +165,20 @@ function CommentDetailShell({
             <button type="button" className="comment-detail__clear" onClick={() => setSearchDraft('')} aria-label="清空搜索">清空</button>
           )}
         </label>
-        <p className="comment-detail__stats" role="status">
-          命中 {searched.length.toLocaleString()} 条 · {rootCount.toLocaleString()} 个根评论 · {replyCount.toLocaleString()} 条回复
-        </p>
+        <div className="comment-detail__toolbar-actions">
+          <p className="comment-detail__stats" role="status">
+            命中 {searched.length.toLocaleString()} 条 · {rootCount.toLocaleString()} 个根评论 · {replyCount.toLocaleString()} 条回复
+          </p>
+          <button type="button" className="ui-secondary-action comment-detail__export" onClick={() => setCsvDialogOpen(true)} disabled={!searched.length}>导出 CSV</button>
+        </div>
       </div>
+      {csvDialogOpen && <CommentCsvExportDialog
+        comments={searched}
+        allComments={comments}
+        defaultSource={defaultCsvSource}
+        sources={sources?.map(source => ({ analysisId: source.analysis_id, bv: source.bv, videoTitle: source.video_title }))}
+        onClose={() => setCsvDialogOpen(false)}
+      />}
       {searched.length === 0 ? (
         <div className="app-state comment-detail__empty flex flex-col items-center justify-center py-16 text-muted">
           <p className="text-sm mb-3">{q ? '没有匹配该搜索的评论' : '当前筛选没有命中评论'}</p>
@@ -257,6 +272,7 @@ export function AnalysisCommentDetailPage({ results, filters, onFiltersChange, o
       onFiltersChange={onFiltersChange}
       duplicateStatistics={results.duplicate_statistics}
       llmSchemaVersion={results.sentiment_llm_schema_version}
+      defaultCsvSource={{ bv: results.bv, videoTitle: results.video_title }}
     />
   );
 }
