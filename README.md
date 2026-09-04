@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="#版本状态"><img src="https://img.shields.io/badge/version-0.1.1--beta-orange" alt="版本 0.2.0" /></a>
+  <a href="#版本状态"><img src="https://img.shields.io/badge/version-0.2.1-orange" alt="版本 0.2.1" /></a>
   <a href="#版本状态"><img src="https://img.shields.io/badge/status-pre--release-yellow" alt="预发布状态" /></a>
   <a href="#系统要求"><img src="https://img.shields.io/badge/platform-Windows%20x64-0078D4" alt="Windows x64" /></a>
   <a href="#数据与隐私"><img src="https://img.shields.io/badge/data-local--first-2EA44F" alt="本地优先" /></a>
@@ -16,7 +16,7 @@
 
 ## 版本状态
 
-当前版本为 **0.2.0**，仍处于预发布阶段，尚未进入稳定正式版。功能、数据结构和使用方式可能继续调整，请在更新前备份应用同级的 `data/` 目录。
+当前版本为 **0.2.1**，仍处于预发布阶段，尚未进入稳定正式版。功能、数据结构和使用方式可能继续调整，请在更新前备份应用同级的 `data/` 目录。
 
 ## 主要功能
 
