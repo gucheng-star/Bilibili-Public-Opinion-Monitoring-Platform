@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildCommentCsv, escapeCsvCell } from '../src/utils/commentCsvExport.ts';
+import {
+  buildCommentCsv,
+  buildCommentCsvFromPrepared,
+  escapeCsvCell,
+  prepareCommentCsv,
+} from '../src/utils/commentCsvExport.ts';
 
 const exportedAt = new Date(2026, 8, 4, 12, 34, 56);
 
@@ -33,6 +38,18 @@ test('机器标签统一导出为中文展示值', () => {
     allComments: [comment(1)], exportedAt,
   });
   assert.deepEqual(result.rows[0].slice(-3), ['厌恶', '反问', '负面']);
+});
+
+test('预处理缓存与直接生成的导出内容完全一致', () => {
+  const input = {
+    comments: [comment(1, { root_rpid: 2, sentiment_llm_label: 'joy' })],
+    allComments: [comment(2, { content: '根评论' }), comment(1, { root_rpid: 2, sentiment_llm_label: 'joy' })],
+    defaultSource: { bv: 'BV1cached', videoTitle: '缓存视频' },
+    options: { context: true, username: true },
+    exportedAt,
+  };
+  const { options, ...preparationInput } = input;
+  assert.deepEqual(buildCommentCsvFromPrepared(prepareCommentCsv(preparationInput), options), buildCommentCsv(input));
 });
 
 test('可选列按规定顺序追加，缺失模型字段保留空单元格', () => {

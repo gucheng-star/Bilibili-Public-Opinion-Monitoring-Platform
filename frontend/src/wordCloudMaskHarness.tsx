@@ -12,7 +12,7 @@ const words = Array.from({ length: 200 }, (_, index) => ({
   count: 300 - index,
 }));
 
-function Harness() {
+export function WordCloudMaskHarness() {
   const [status, setStatus] = useState<'ready' | 'loading'>('ready');
   const [scope, setScope] = useState('analysis:1');
   return <main style={{ maxWidth: '1080px', margin: '24px auto', padding: '0 16px' }}>
@@ -25,4 +25,4 @@ function Harness() {
   </main>;
 }
 
-createRoot(document.getElementById('root')!).render(<Harness />);
+createRoot(document.getElementById('root')!).render(<WordCloudMaskHarness />);

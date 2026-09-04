@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CommentData } from '../types';
 import {
-  buildCommentCsv,
+  buildCommentCsvFromPrepared,
   DEFAULT_COMMENT_CSV_OPTIONS,
+  prepareCommentCsv,
   type CommentCsvOptionalColumn,
   type CommentCsvOptions,
   type CommentCsvSource,
@@ -42,14 +43,14 @@ export default function CommentCsvExportDialog({ comments, allComments, defaultS
   const [options, setOptions] = useState<CommentCsvOptions>({ ...DEFAULT_COMMENT_CSV_OPTIONS });
   const exportedAt = useRef(new Date());
   const dialogRef = useRef<HTMLDivElement>(null);
-  const data = useMemo(() => buildCommentCsv({
+  const prepared = useMemo(() => prepareCommentCsv({
     comments,
     allComments,
     defaultSource,
     sources,
-    options,
     exportedAt: exportedAt.current,
-  }), [allComments, comments, defaultSource, options, sources]);
+  }), [allComments, comments, defaultSource, sources]);
+  const data = useMemo(() => buildCommentCsvFromPrepared(prepared, options), [options, prepared]);
 
   useEffect(() => {
     dialogRef.current?.focus();

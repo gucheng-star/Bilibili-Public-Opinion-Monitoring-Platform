@@ -50,9 +50,30 @@ export interface CommentCsvData {
   csv: string;
 }
 
+export interface PreparedCommentCsv {
+  rows: readonly PreparedCommentCsvRow[];
+}
+
+interface PreparedCommentCsvRow {
+  sampleId: string;
+  bv: string;
+  videoTitle: string;
+  postTime: string;
+  username: string;
+  gender: string;
+  ipLocation: string;
+  rootContent: string;
+  parentContent: string;
+  content: string;
+  llmSentiment: string;
+  llmStyle: string;
+  nlpSentiment: string;
+  likes: string;
+}
+
 interface CsvColumn {
   header: string;
-  value: (comment: CommentData, context: CommentContext, sampleId: string) => string;
+  value: (row: PreparedCommentCsvRow) => string;
 }
 
 interface CommentContext {
@@ -130,39 +151,66 @@ function resolveContext(comment: CommentData, input: CommentCsvExportInput, comm
 
 function columnsFor(options: CommentCsvOptions): CsvColumn[] {
   const columns: CsvColumn[] = [
-    { header: '样本ID', value: (_comment, _context, sampleId) => sampleId },
-    { header: '视频BV号', value: (_comment, context) => context.source.bv },
-    { header: '视频标题', value: (_comment, context) => context.source.videoTitle },
+    { header: '样本ID', value: row => row.sampleId },
+    { header: '视频BV号', value: row => row.bv },
+    { header: '视频标题', value: row => row.videoTitle },
   ];
 
-  if (options.postTime) columns.push({ header: '发布时间', value: comment => comment.post_time ?? '' });
-  if (options.username) columns.push({ header: '用户名', value: comment => comment.username });
-  if (options.gender) columns.push({ header: '性别', value: comment => comment.gender });
-  if (options.ipLocation) columns.push({ header: 'IP 属地', value: comment => comment.ip_location });
+  if (options.postTime) columns.push({ header: '发布时间', value: row => row.postTime });
+  if (options.username) columns.push({ header: '用户名', value: row => row.username });
+  if (options.gender) columns.push({ header: '性别', value: row => row.gender });
+  if (options.ipLocation) columns.push({ header: 'IP 属地', value: row => row.ipLocation });
   if (options.context) {
-    columns.push({ header: '根评论内容', value: (_comment, context) => context.rootContent });
-    columns.push({ header: '父评论内容', value: (_comment, context) => context.parentContent });
+    columns.push({ header: '根评论内容', value: row => row.rootContent });
+    columns.push({ header: '父评论内容', value: row => row.parentContent });
   }
-  columns.push({ header: '评论内容', value: comment => comment.content });
+  columns.push({ header: '评论内容', value: row => row.content });
 
-  if (options.llmSentiment) columns.push({ header: '大模型主情感', value: comment => displayLabel(comment.sentiment_llm_label, LLM_EMOTION_LABELS) });
-  if (options.llmStyle) columns.push({ header: '大模型表达风格', value: comment => displayLabel(comment.sentiment_llm_style, LLM_STYLE_LABELS) });
-  if (options.nlpSentiment) columns.push({ header: '本地 NLP 情感', value: comment => displayLabel(comment.sentiment_label, NLP_SENTIMENT_LABELS) });
-  if (options.likes) columns.push({ header: '点赞数', value: comment => String(comment.likes) });
+  if (options.llmSentiment) columns.push({ header: '大模型主情感', value: row => row.llmSentiment });
+  if (options.llmStyle) columns.push({ header: '大模型表达风格', value: row => row.llmStyle });
+  if (options.nlpSentiment) columns.push({ header: '本地 NLP 情感', value: row => row.nlpSentiment });
+  if (options.likes) columns.push({ header: '点赞数', value: row => row.likes });
   return columns;
+}
+
+/** Prepares fields independent of the user's column selection for reuse in the export dialog. */
+export function prepareCommentCsv(input: Omit<CommentCsvExportInput, 'options'>): PreparedCommentCsv {
+  const exportedAt = input.exportedAt ?? new Date();
+  const commentsByKey = new Map(input.allComments.map(comment => [commentKey(comment, comment.rpid), comment]));
+  return {
+    rows: input.comments.map((comment, index) => {
+      const context = resolveContext(comment, input, commentsByKey);
+      return {
+        sampleId: createCommentCsvSampleId(exportedAt, index + 1),
+        bv: context.source.bv,
+        videoTitle: context.source.videoTitle,
+        postTime: comment.post_time ?? '',
+        username: comment.username,
+        gender: comment.gender,
+        ipLocation: comment.ip_location,
+        rootContent: context.rootContent,
+        parentContent: context.parentContent,
+        content: comment.content,
+        llmSentiment: displayLabel(comment.sentiment_llm_label, LLM_EMOTION_LABELS),
+        llmStyle: displayLabel(comment.sentiment_llm_style, LLM_STYLE_LABELS),
+        nlpSentiment: displayLabel(comment.sentiment_label, NLP_SENTIMENT_LABELS),
+        likes: String(comment.likes),
+      };
+    }),
+  };
+}
+
+/** Builds a local-only RFC 4180-compatible CSV payload from cached comment fields. */
+export function buildCommentCsvFromPrepared(prepared: PreparedCommentCsv, options?: Partial<CommentCsvOptions>): CommentCsvData {
+  const resolvedOptions: CommentCsvOptions = { ...DEFAULT_COMMENT_CSV_OPTIONS, ...options };
+  const columns = columnsFor(resolvedOptions);
+  const rows = prepared.rows.map(row => columns.map(column => column.value(row)));
+  const headers = columns.map(column => column.header);
+  return { headers, rows, csv: serializeCsv(headers, rows) };
 }
 
 /** Builds a local-only RFC 4180-compatible CSV payload. It performs no I/O or download. */
 export function buildCommentCsv(input: CommentCsvExportInput): CommentCsvData {
-  const options: CommentCsvOptions = { ...DEFAULT_COMMENT_CSV_OPTIONS, ...input.options };
-  const columns = columnsFor(options);
-  const exportedAt = input.exportedAt ?? new Date();
-  const commentsByKey = new Map(input.allComments.map(comment => [commentKey(comment, comment.rpid), comment]));
-  const rows = input.comments.map((comment, index) => {
-    const context = resolveContext(comment, input, commentsByKey);
-    const sampleId = createCommentCsvSampleId(exportedAt, index + 1);
-    return columns.map(column => column.value(comment, context, sampleId));
-  });
-  const headers = columns.map(column => column.header);
-  return { headers, rows, csv: serializeCsv(headers, rows) };
+  const { options, ...preparationInput } = input;
+  return buildCommentCsvFromPrepared(prepareCommentCsv(preparationInput), options);
 }
