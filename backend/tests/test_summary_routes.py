@@ -101,6 +101,38 @@ class SummaryRouteTests(unittest.IsolatedAsyncioTestCase):
         listed = summary_routes.list_summaries(self.analysis_id)
         self.assertTrue(all(item["stale"] for item in listed))
 
+    async def test_all_role_mode_combinations_are_cached_independently(self):
+        config = {
+            "provider": "deepseek",
+            "base_url": "https://api.deepseek.com",
+            "model": "deepseek-v4-flash",
+            "fallback_model": "",
+            "api_key": "secret",
+        }
+        generator = AsyncMock(return_value=("角色简评", "deepseek-v4-flash", 1))
+        requests = [
+            {"filters": {}, "interpretationView": view, "reportMode": mode}
+            for view in ("public_opinion", "pr_risk", "creator", "news_editor")
+            for mode in ("quick", "standard")
+        ]
+        with patch.object(summary_routes, "get_task_config", return_value=config), patch.object(
+            summary_routes, "generate_summary", generator
+        ):
+            created = [
+                await summary_routes.create_summary(self.analysis_id, request)
+                for request in requests
+            ]
+            cached = [
+                await summary_routes.create_summary(self.analysis_id, request)
+                for request in requests
+            ]
+
+        self.assertEqual(generator.await_count, 8)
+        self.assertEqual({item["id"] for item in created}, {item["id"] for item in cached})
+        db = self.sessions()
+        self.assertEqual(db.query(AISummary).count(), 8)
+        db.close()
+
     async def test_saved_summary_becomes_stale_after_source_change(self):
         filters = {"gender": "all", "dateFrom": "", "dateTo": "", "region": "", "sentiment": "all"}
         config = {

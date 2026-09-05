@@ -191,9 +191,12 @@ class LLMClientTests(unittest.IsolatedAsyncioTestCase):
     async def test_role_summary_thinking_is_explicit_or_visibly_degraded(self):
         response = httpx.Response(200, json={"choices": [{"message": {"content": "完成"}}]}, request=httpx.Request("POST", "https://api.example.com"))
         cases = [
-            ("bailian", "qwen3-plus", "enabled", {"enable_thinking": True}),
+            ("bailian", "qwen3.6-plus", "enabled", {"enable_thinking": True}),
             ("zhipu", "glm-4.7-flash", "enabled", {"thinking": {"type": "enabled"}}),
             ("deepseek", "deepseek-v4-flash", "enabled", {"thinking": {"type": "enabled"}, "reasoning_effort": "low"}),
+            ("deepseek", "deepseek-v4-pro", "enabled", {"thinking": {"type": "enabled"}, "reasoning_effort": "low"}),
+            ("bailian", "qwen3.6-turbo", "unsupported", {}),
+            ("zhipu", "glm-4.7-air", "unsupported", {}),
             ("deepseek", "deepseek-chat", "unsupported", {}),
         ]
         for provider, model, status, expected in cases:
@@ -207,6 +210,7 @@ class LLMClientTests(unittest.IsolatedAsyncioTestCase):
                 if not expected:
                     self.assertNotIn("thinking", calls[0][1]["json"])
                     self.assertNotIn("enable_thinking", calls[0][1]["json"])
+                    self.assertNotIn("reasoning_effort", calls[0][1]["json"])
 
         calls = []
         config = {"provider": "zhipu", "base_url": "https://api.example.com/v1", "model": "glm-4.7-flash", "fallback_model": "", "api_key": "secret"}

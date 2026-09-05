@@ -23,26 +23,32 @@ class ProviderCapabilities:
 
     supports_json_object: bool = False
     sentiment_thinking_parameter: tuple[str, Any] | None = None
-    standard_summary_thinking_parameter: tuple[str, Any] | None = None
 
 
 PROVIDER_CAPABILITIES: dict[str, ProviderCapabilities] = {
     "deepseek": ProviderCapabilities(
         supports_json_object=True,
         sentiment_thinking_parameter=("thinking", {"type": "disabled"}),
-        standard_summary_thinking_parameter=("thinking", {"type": "enabled"}),
     ),
     "bailian": ProviderCapabilities(
         supports_json_object=True,
         sentiment_thinking_parameter=("enable_thinking", False),
-        standard_summary_thinking_parameter=("enable_thinking", True),
     ),
     "zhipu": ProviderCapabilities(
         supports_json_object=True,
         sentiment_thinking_parameter=("thinking", {"type": "disabled"}),
-        standard_summary_thinking_parameter=("thinking", {"type": "enabled"}),
     ),
     "custom": ProviderCapabilities(),
+}
+
+
+# Exact model allowlist: do not infer support from a provider or name prefix.
+SUMMARY_THINKING_PAYLOADS: dict[tuple[str, str], dict[str, Any]] = {
+    ("deepseek", "deepseek-v4-flash"): {"thinking": {"type": "enabled"}, "reasoning_effort": "low"},
+    ("deepseek", "deepseek-v4-pro"): {"thinking": {"type": "enabled"}, "reasoning_effort": "low"},
+    ("bailian", "qwen3.6-plus"): {"enable_thinking": True},
+    ("zhipu", "glm-4.7"): {"thinking": {"type": "enabled"}},
+    ("zhipu", "glm-4.7-flash"): {"thinking": {"type": "enabled"}},
 }
 
 
@@ -119,25 +125,22 @@ def summary_thinking_status(config: dict[str, str], report_mode: str) -> str:
         return "disabled"
     if report_mode != "standard":
         raise ValueError("无效的报告模式")
-    capabilities = _provider_capabilities(config)
     model = str(config.get("model", "")).strip().lower()
-    if not capabilities.standard_summary_thinking_parameter:
-        return "unsupported"
-    provider = str(config.get("provider", "")).strip().lower()
-    if provider == "bailian" and model.startswith("qwen3"):
-        return "enabled"
-    if provider == "zhipu" and model.startswith("glm-4.7"):
-        return "enabled"
-    if provider == "deepseek" and model in {"deepseek-v4-flash", "deepseek-v4-pro"}:
-        return "enabled"
-    return "unsupported"
+    provider = str(config.get("provider", "custom")).strip().lower()
+    return "enabled" if (provider, model) in SUMMARY_THINKING_PAYLOADS else "unsupported"
 
 
 def _task_payload(config: dict[str, str], capabilities: ProviderCapabilities, task: str, report_mode: str | None = None) -> dict[str, Any]:
     if task == LLM_TASK_SUMMARY and report_mode == "quick":
         parameter = capabilities.sentiment_thinking_parameter
     elif task == LLM_TASK_SUMMARY and report_mode == "standard":
-        parameter = capabilities.standard_summary_thinking_parameter if summary_thinking_status(config, report_mode) == "enabled" else None
+        provider = str(config.get("provider", "custom")).strip().lower()
+        model = str(config.get("model", "")).strip().lower()
+        summary_payload = SUMMARY_THINKING_PAYLOADS.get((provider, model))
+        return {
+            field: value.copy() if isinstance(value, dict) else value
+            for field, value in (summary_payload or {}).items()
+        }
     elif task == LLM_TASK_SENTIMENT:
         parameter = capabilities.sentiment_thinking_parameter
     else:
@@ -146,12 +149,6 @@ def _task_payload(config: dict[str, str], capabilities: ProviderCapabilities, ta
         return {}
     field, value = parameter
     payload = {field: value.copy() if isinstance(value, dict) else value}
-    if (
-        task == LLM_TASK_SUMMARY
-        and report_mode == "standard"
-        and str(config.get("provider", "")).strip().lower() == "deepseek"
-    ):
-        payload["reasoning_effort"] = "low"
     return payload
 
 

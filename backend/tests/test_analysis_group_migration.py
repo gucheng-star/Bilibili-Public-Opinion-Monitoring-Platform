@@ -10,6 +10,36 @@ from models import database
 
 
 class AnalysisGroupMigrationTests(unittest.TestCase):
+    def test_ai_summary_migration_rebuilds_legacy_unique_constraint_even_when_columns_exist(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "legacy-summary-constraint.sqlite3"
+            engine = create_engine(f"sqlite:///{path}")
+            try:
+                database.Base.metadata.create_all(engine)
+                connection = sqlite3.connect(path)
+                connection.execute("DROP TABLE ai_summaries")
+                connection.execute(
+                    "CREATE TABLE ai_summaries (id INTEGER PRIMARY KEY, analysis_id INTEGER NOT NULL, "
+                    "filter_json TEXT NOT NULL, filter_hash VARCHAR(64) NOT NULL, "
+                    "interpretation_view VARCHAR(30) NOT NULL DEFAULT 'public_opinion', "
+                    "report_mode VARCHAR(10) NOT NULL DEFAULT 'quick', "
+                    "thinking_status VARCHAR(20) NOT NULL DEFAULT 'disabled', "
+                    "input_hash VARCHAR(64) NOT NULL, summary_text TEXT NOT NULL, "
+                    "provider VARCHAR(30) NOT NULL, model VARCHAR(100) NOT NULL, "
+                    "matched_count INTEGER, sampled_count INTEGER, created_at DATETIME, updated_at DATETIME, "
+                    "UNIQUE (analysis_id, filter_hash), "
+                    "UNIQUE (analysis_id, filter_hash, interpretation_view, report_mode))"
+                )
+                connection.execute("INSERT INTO analyses (id, bv, avid) VALUES (1, 'BV1LEGACY', 1)")
+                connection.commit()
+                connection.close()
+
+                self.assertTrue(database._ai_summary_role_migration_required(engine))
+                database._migrate(engine)
+                self.assertFalse(database._ai_summary_role_migration_required(engine))
+            finally:
+                engine.dispose()
+
     def test_ai_summary_role_migration_preserves_legacy_cache_and_allows_combinations(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "legacy-summary.sqlite3"

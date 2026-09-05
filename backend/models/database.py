@@ -343,7 +343,20 @@ def _ai_summary_role_migration_required(eng) -> bool:
     if "ai_summaries" not in inspector.get_table_names():
         return False
     columns = {column["name"] for column in inspector.get_columns("ai_summaries")}
-    return not {"interpretation_view", "report_mode", "thinking_status"} <= columns
+    if not {"interpretation_view", "report_mode", "thinking_status"} <= columns:
+        return True
+    expected_columns = {"analysis_id", "filter_hash", "interpretation_view", "report_mode"}
+    unique_sets = [
+        set(constraint.get("column_names") or [])
+        for constraint in inspector.get_unique_constraints("ai_summaries")
+    ]
+    unique_sets.extend(
+        set(index.get("column_names") or [])
+        for index in inspector.get_indexes("ai_summaries")
+        if index.get("unique")
+    )
+    legacy_columns = {"analysis_id", "filter_hash"}
+    return expected_columns not in unique_sets or legacy_columns in unique_sets
 
 
 def _schema_change_required(eng) -> bool:
