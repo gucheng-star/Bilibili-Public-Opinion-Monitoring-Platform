@@ -48,7 +48,7 @@ def _write_handshake() -> None:
         "schema": 1,
         "port": int(port),
         "pid": os.getpid(),
-        "version": os.getenv("BILI_APP_VERSION", "0.2.2"),
+        "version": os.getenv("BILI_APP_VERSION", "0.1.1-beta"),
     }), encoding="utf-8")
     os.replace(temporary, path)
 
@@ -63,7 +63,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="B站舆论监测平台", version="0.2.2", lifespan=lifespan)
+app = FastAPI(title="B站舆论监测平台", version="0.1.1-beta", lifespan=lifespan)
 
 
 def _route_template(request: Request) -> str:

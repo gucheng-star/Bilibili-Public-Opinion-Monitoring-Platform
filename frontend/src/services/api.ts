@@ -7,9 +7,11 @@ import type {
   GroupAnalysisResult,
   GroupReanalysisStatus,
   FilterState,
+  InterpretationView,
   HistoryItem,
   KeywordItem,
   LLMTask,
+  SummaryReportMode,
   LLMTaskUpdate,
   SettingsResponse,
   StatusResponse,
@@ -182,11 +184,17 @@ export function getSummaries(analysisId: number) {
   return req<AISummary[]>('/summaries/' + analysisId);
 }
 
-export function generateSummary(analysisId: number, filters: FilterState, regenerate = false) {
+export function generateSummary(
+  analysisId: number,
+  filters: FilterState,
+  regenerate = false,
+  interpretationView: InterpretationView = 'public_opinion',
+  reportMode: SummaryReportMode = 'quick',
+) {
   return req<AISummary>('/summaries/' + analysisId, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ filters, regenerate }),
+    body: JSON.stringify({ filters, regenerate, interpretationView, reportMode }),
   });
 }
 

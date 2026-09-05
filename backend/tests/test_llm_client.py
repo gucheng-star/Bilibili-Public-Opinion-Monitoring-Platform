@@ -188,6 +188,32 @@ class LLMClientTests(unittest.IsolatedAsyncioTestCase):
                 else:
                     self.assertEqual(sentiment_calls[0][1]["json"]["thinking"], {"type": "disabled"})
 
+    async def test_role_summary_thinking_is_explicit_or_visibly_degraded(self):
+        response = httpx.Response(200, json={"choices": [{"message": {"content": "完成"}}]}, request=httpx.Request("POST", "https://api.example.com"))
+        cases = [
+            ("bailian", "qwen3-plus", "enabled", {"enable_thinking": True}),
+            ("zhipu", "glm-4.7-flash", "enabled", {"thinking": {"type": "enabled"}}),
+            ("deepseek", "deepseek-v4-flash", "enabled", {"thinking": {"type": "enabled"}, "reasoning_effort": "low"}),
+            ("deepseek", "deepseek-chat", "unsupported", {}),
+        ]
+        for provider, model, status, expected in cases:
+            with self.subTest(provider=provider):
+                calls = []
+                config = {"provider": provider, "base_url": "https://api.example.com/v1", "model": model, "fallback_model": "", "api_key": "secret"}
+                self.assertEqual(llm_client.summary_thinking_status(config, "standard"), status)
+                with patch.object(llm_client.httpx, "AsyncClient", return_value=FakeClient(response, calls)):
+                    await llm_client.chat_completion(config, [{"role": "user", "content": "summary"}], check_dns=False, retries=0, task="summary", report_mode="standard")
+                self.assertEqual({key: calls[0][1]["json"][key] for key in expected}, expected)
+                if not expected:
+                    self.assertNotIn("thinking", calls[0][1]["json"])
+                    self.assertNotIn("enable_thinking", calls[0][1]["json"])
+
+        calls = []
+        config = {"provider": "zhipu", "base_url": "https://api.example.com/v1", "model": "glm-4.7-flash", "fallback_model": "", "api_key": "secret"}
+        with patch.object(llm_client.httpx, "AsyncClient", return_value=FakeClient(response, calls)):
+            await llm_client.chat_completion(config, [{"role": "user", "content": "summary"}], check_dns=False, retries=0, task="summary", report_mode="quick")
+        self.assertEqual(calls[0][1]["json"]["thinking"], {"type": "disabled"})
+
     async def test_authentication_error_is_sanitized(self):
         response = httpx.Response(
             401,

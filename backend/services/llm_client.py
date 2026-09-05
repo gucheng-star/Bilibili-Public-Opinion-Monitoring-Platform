@@ -23,20 +23,24 @@ class ProviderCapabilities:
 
     supports_json_object: bool = False
     sentiment_thinking_parameter: tuple[str, Any] | None = None
+    standard_summary_thinking_parameter: tuple[str, Any] | None = None
 
 
 PROVIDER_CAPABILITIES: dict[str, ProviderCapabilities] = {
     "deepseek": ProviderCapabilities(
         supports_json_object=True,
         sentiment_thinking_parameter=("thinking", {"type": "disabled"}),
+        standard_summary_thinking_parameter=("thinking", {"type": "enabled"}),
     ),
     "bailian": ProviderCapabilities(
         supports_json_object=True,
         sentiment_thinking_parameter=("enable_thinking", False),
+        standard_summary_thinking_parameter=("enable_thinking", True),
     ),
     "zhipu": ProviderCapabilities(
         supports_json_object=True,
         sentiment_thinking_parameter=("thinking", {"type": "disabled"}),
+        standard_summary_thinking_parameter=("thinking", {"type": "enabled"}),
     ),
     "custom": ProviderCapabilities(),
 }
@@ -109,11 +113,46 @@ def _provider_capabilities(config: dict[str, str]) -> ProviderCapabilities:
     return PROVIDER_CAPABILITIES.get(str(config.get("provider", "custom")).strip().lower(), PROVIDER_CAPABILITIES["custom"])
 
 
-def _task_payload(capabilities: ProviderCapabilities, task: str) -> dict[str, Any]:
-    if task != LLM_TASK_SENTIMENT or not capabilities.sentiment_thinking_parameter:
+def summary_thinking_status(config: dict[str, str], report_mode: str) -> str:
+    """Return the visible summary-thinking outcome without guessing custom APIs."""
+    if report_mode == "quick":
+        return "disabled"
+    if report_mode != "standard":
+        raise ValueError("无效的报告模式")
+    capabilities = _provider_capabilities(config)
+    model = str(config.get("model", "")).strip().lower()
+    if not capabilities.standard_summary_thinking_parameter:
+        return "unsupported"
+    provider = str(config.get("provider", "")).strip().lower()
+    if provider == "bailian" and model.startswith("qwen3"):
+        return "enabled"
+    if provider == "zhipu" and model.startswith("glm-4.7"):
+        return "enabled"
+    if provider == "deepseek" and model in {"deepseek-v4-flash", "deepseek-v4-pro"}:
+        return "enabled"
+    return "unsupported"
+
+
+def _task_payload(config: dict[str, str], capabilities: ProviderCapabilities, task: str, report_mode: str | None = None) -> dict[str, Any]:
+    if task == LLM_TASK_SUMMARY and report_mode == "quick":
+        parameter = capabilities.sentiment_thinking_parameter
+    elif task == LLM_TASK_SUMMARY and report_mode == "standard":
+        parameter = capabilities.standard_summary_thinking_parameter if summary_thinking_status(config, report_mode) == "enabled" else None
+    elif task == LLM_TASK_SENTIMENT:
+        parameter = capabilities.sentiment_thinking_parameter
+    else:
+        parameter = None
+    if not parameter:
         return {}
-    field, value = capabilities.sentiment_thinking_parameter
-    return {field: value.copy() if isinstance(value, dict) else value}
+    field, value = parameter
+    payload = {field: value.copy() if isinstance(value, dict) else value}
+    if (
+        task == LLM_TASK_SUMMARY
+        and report_mode == "standard"
+        and str(config.get("provider", "")).strip().lower() == "deepseek"
+    ):
+        payload["reasoning_effort"] = "low"
+    return payload
 
 
 def _retry_after(response: httpx.Response) -> int | None:
@@ -264,6 +303,7 @@ async def chat_completion(
     check_dns: bool = True,
     response_format: dict[str, str] | None = None,
     task: str = LLM_TASK_SUMMARY,
+    report_mode: str | None = None,
 ) -> tuple[str, str]:
     """Return response content and the model that succeeded."""
     if task not in {LLM_TASK_SENTIMENT, LLM_TASK_SUMMARY}:
@@ -289,7 +329,13 @@ async def chat_completion(
         "temperature": temperature,
         "max_tokens": max_tokens,
     }
-    payload.update(_task_payload(capabilities, task))
+    if report_mode is not None and task != LLM_TASK_SUMMARY:
+        raise ValueError("报告模式只适用于智能总结")
+    if report_mode is not None and report_mode not in {"quick", "standard"}:
+        raise ValueError("无效的报告模式")
+    if task == LLM_TASK_SUMMARY and report_mode == "standard" and summary_thinking_status(config, report_mode) != "enabled":
+        report_mode = None
+    payload.update(_task_payload(config, capabilities, task, report_mode))
     if response_format and capabilities.supports_json_object:
         payload["response_format"] = response_format
     try:

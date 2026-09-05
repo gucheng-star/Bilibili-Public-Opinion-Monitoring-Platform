@@ -1,6 +1,6 @@
 [package]
 name = "bili-opinion-desktop"
-version = "0.2.2"
+version = "0.2.1"
 description = "Portable desktop shell for the Bilibili public-opinion monitor"
 authors = ["gucheng-star"]
 edition = "2021"

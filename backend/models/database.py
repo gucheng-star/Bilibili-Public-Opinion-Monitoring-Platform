@@ -118,13 +118,16 @@ class SentimentResult(Base):
 class AISummary(Base):
     __tablename__ = "ai_summaries"
     __table_args__ = (
-        UniqueConstraint("analysis_id", "filter_hash", name="uq_ai_summary_analysis_filter"),
+        UniqueConstraint("analysis_id", "filter_hash", "interpretation_view", "report_mode", name="uq_ai_summary_analysis_filter_view_mode"),
     )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     analysis_id = Column(Integer, ForeignKey("analyses.id"), nullable=False, index=True)
     filter_json = Column(Text, nullable=False)
     filter_hash = Column(String(64), nullable=False)
+    interpretation_view = Column(String(30), nullable=False, default="public_opinion", server_default="public_opinion")
+    report_mode = Column(String(10), nullable=False, default="quick", server_default="quick")
+    thinking_status = Column(String(20), nullable=False, default="disabled", server_default="disabled")
     input_hash = Column(String(64), nullable=False)
     summary_text = Column(Text, nullable=False)
     provider = Column(String(30), nullable=False)
@@ -334,6 +337,15 @@ def _pending_column_migrations(eng):
     return migrations
 
 
+def _ai_summary_role_migration_required(eng) -> bool:
+    from sqlalchemy import inspect
+    inspector = inspect(eng)
+    if "ai_summaries" not in inspector.get_table_names():
+        return False
+    columns = {column["name"] for column in inspector.get_columns("ai_summaries")}
+    return not {"interpretation_view", "report_mode", "thinking_status"} <= columns
+
+
 def _schema_change_required(eng) -> bool:
     """Check before create_all so every mutating upgrade is backed up first."""
     source = Path(DB_PATH)
@@ -346,6 +358,7 @@ def _schema_change_required(eng) -> bool:
         required - existing
         or _pending_column_migrations(eng)
         or _pending_llm_sentiment_version_backfill(eng)
+        or _ai_summary_role_migration_required(eng)
     )
 
 
@@ -427,10 +440,54 @@ def _migrate(eng):
     needs_version_backfill = bool(migrations) or _pending_llm_sentiment_version_backfill(eng)
     tables = set(inspect(eng).get_table_names())
     with eng.begin() as connection:
+        if _ai_summary_role_migration_required(eng):
+            _migrate_ai_summaries_for_roles(connection)
         for _table, sql in migrations:
             connection.execute(text(sql))
         if needs_version_backfill:
             _migrate_llm_sentiment_versions(connection, tables)
+
+
+def _migrate_ai_summaries_for_roles(connection) -> None:
+    """Rebuild the SQLite cache table to replace its legacy uniqueness scope."""
+    from sqlalchemy import text
+
+    connection.execute(text("ALTER TABLE ai_summaries RENAME TO ai_summaries_legacy"))
+    # SQLite keeps an index name when its table is renamed.  Release the
+    # legacy table's generated index before creating the same index for the
+    # rebuilt cache table below.
+    connection.execute(text("DROP INDEX IF EXISTS ix_ai_summaries_analysis_id"))
+    connection.execute(text("""
+        CREATE TABLE ai_summaries (
+            id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+            analysis_id INTEGER NOT NULL REFERENCES analyses (id),
+            filter_json TEXT NOT NULL,
+            filter_hash VARCHAR(64) NOT NULL,
+            interpretation_view VARCHAR(30) NOT NULL DEFAULT 'public_opinion',
+            report_mode VARCHAR(10) NOT NULL DEFAULT 'quick',
+            thinking_status VARCHAR(20) NOT NULL DEFAULT 'disabled',
+            input_hash VARCHAR(64) NOT NULL,
+            summary_text TEXT NOT NULL,
+            provider VARCHAR(30) NOT NULL,
+            model VARCHAR(100) NOT NULL,
+            matched_count INTEGER,
+            sampled_count INTEGER,
+            created_at DATETIME,
+            updated_at DATETIME,
+            CONSTRAINT uq_ai_summary_analysis_filter_view_mode
+                UNIQUE (analysis_id, filter_hash, interpretation_view, report_mode)
+        )
+    """))
+    connection.execute(text("""
+        INSERT INTO ai_summaries (
+            id, analysis_id, filter_json, filter_hash, input_hash, summary_text,
+            provider, model, matched_count, sampled_count, created_at, updated_at
+        ) SELECT id, analysis_id, filter_json, filter_hash, input_hash, summary_text,
+            provider, model, matched_count, sampled_count, created_at, updated_at
+        FROM ai_summaries_legacy
+    """))
+    connection.execute(text("CREATE INDEX ix_ai_summaries_analysis_id ON ai_summaries (analysis_id)"))
+    connection.execute(text("DROP TABLE ai_summaries_legacy"))
 
 
 def _migrate_llm_sentiment_versions(connection, tables: set[str]) -> None:
@@ -494,6 +551,11 @@ def _validate_schema(eng) -> None:
             "id", "group_id", "analysis_mode", "member_signature", "filter_json", "filter_hash",
             "input_hash", "summary_text", "provider", "model", "matched_count", "sampled_count",
             "created_at", "updated_at",
+        },
+        "ai_summaries": {
+            "id", "analysis_id", "filter_json", "filter_hash", "interpretation_view",
+            "report_mode", "thinking_status", "input_hash", "summary_text", "provider",
+            "model", "matched_count", "sampled_count", "created_at", "updated_at",
         },
     }
     inspector = inspect(eng)

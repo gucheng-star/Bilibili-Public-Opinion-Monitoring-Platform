@@ -105,6 +105,15 @@
 .ai-summary-card .panel-status { margin-bottom: 0; }
 .ai-summary-card__action { flex: 0 0 auto; }
 .ai-summary-card .ai-summary-empty { background: color-mix(in srgb, var(--bg) 52%, transparent); }
+.ai-summary-controls { display:grid; grid-template-columns:minmax(0, 1fr) minmax(0, 1fr); gap:.55rem .75rem; margin-top:.9rem; padding:.7rem .8rem; background:color-mix(in srgb, var(--bg) 55%, transparent); border:1px solid var(--border); border-radius:var(--radius-sm); }
+.ai-summary-control { position:relative; display:grid; gap:.3rem; min-width:0; color:var(--text-muted); font-size:.625rem; letter-spacing:.04em; }
+.ai-summary-control .filter-select { min-width:0; }
+.ai-summary-boundary { grid-column:1 / -1; margin:0; color:var(--text-secondary); font-size:.6875rem; line-height:1.55; }
+.ai-summary-meta__notice { color:var(--text-secondary); }
+.ai-summary-standard-report { display:grid; gap:.65rem; margin:1rem 0 .9rem; }
+.ai-summary-standard-report section { padding-left:.7rem; border-left:2px solid var(--border-accent); }
+.ai-summary-standard-report h4 { margin:0 0 .2rem; color:var(--text-primary); font-size:.75rem; font-weight:650; }
+.ai-summary-standard-report p { margin:0; color:var(--text-secondary); font-size:.8125rem; line-height:1.75; }
 .ai-summary-thinking { margin-top: 1rem; padding: 1rem 1.1rem; background: color-mix(in srgb, var(--bg) 58%, transparent); border: 1px dashed var(--border-accent); border-radius: var(--radius); }
 .ai-summary-thinking__line { display: flex; align-items: center; gap: .7rem; min-height: 1.75rem; }
 .ai-summary-thinking__prompt { display: inline-flex; align-items: center; justify-content: center; width: 1.75rem; height: 1.75rem; flex: 0 0 auto; color: #fff; background: var(--accent); border-radius: 50%; font: 700 .625rem/1 var(--font-data); box-shadow: 0 0 0 4px var(--accent-soft); }
@@ -158,6 +167,7 @@
   .video-observation-panel { grid-template-columns: 1fr; gap: .65rem; }
   .video-observation-panel__header { flex-direction: row; justify-content: space-between; padding: 0 0 .55rem; border-right: 0; border-bottom: 1px solid var(--border); }
   .ai-summary-header { flex-wrap: wrap; }
+  .ai-summary-controls { grid-template-columns:1fr; }
   .analysis-progress { padding: .9rem; }
   .event-observation-panel { grid-template-columns:1fr; gap:.65rem; }
   .event-observation-panel__header { flex-direction:row; justify-content:space-between; padding:0 0 .55rem; border-right:0; border-bottom:1px solid var(--border); }
