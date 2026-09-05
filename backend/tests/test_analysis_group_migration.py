@@ -10,6 +10,48 @@ from models import database
 
 
 class AnalysisGroupMigrationTests(unittest.TestCase):
+    def test_ai_summary_role_migration_preserves_legacy_cache_and_allows_combinations(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "legacy-summary.sqlite3"
+            engine = create_engine(f"sqlite:///{path}")
+            try:
+                database.Base.metadata.create_all(engine)
+                connection = sqlite3.connect(path)
+                connection.execute("DROP TABLE ai_summaries")
+                connection.execute(
+                    "CREATE TABLE ai_summaries (id INTEGER PRIMARY KEY, analysis_id INTEGER NOT NULL, "
+                    "filter_json TEXT NOT NULL, filter_hash VARCHAR(64) NOT NULL, input_hash VARCHAR(64) NOT NULL, "
+                    "summary_text TEXT NOT NULL, provider VARCHAR(30) NOT NULL, model VARCHAR(100) NOT NULL, "
+                    "matched_count INTEGER, sampled_count INTEGER, created_at DATETIME, updated_at DATETIME, "
+                    "UNIQUE (analysis_id, filter_hash))"
+                )
+                connection.execute(
+                    "CREATE INDEX ix_ai_summaries_analysis_id ON ai_summaries (analysis_id)"
+                )
+                connection.execute("INSERT INTO analyses (id, bv, avid) VALUES (1, 'BV1LEGACY', 1)")
+                connection.execute(
+                    "INSERT INTO ai_summaries VALUES (1, 1, '{}', 'filter', 'input', '旧简报', 'custom', 'model', 1, 1, NULL, NULL)"
+                )
+                connection.commit()
+                connection.close()
+
+                self.assertTrue(database._ai_summary_role_migration_required(engine))
+                database._migrate(engine)
+                database._validate_schema(engine)
+                connection = sqlite3.connect(path)
+                self.assertEqual(connection.execute(
+                    "SELECT interpretation_view, report_mode, thinking_status, summary_text FROM ai_summaries"
+                ).fetchone(), ("public_opinion", "quick", "disabled", "旧简报"))
+                connection.execute(
+                    "INSERT INTO ai_summaries (analysis_id, filter_json, filter_hash, interpretation_view, report_mode, thinking_status, input_hash, summary_text, provider, model) "
+                    "VALUES (1, '{}', 'filter', 'creator', 'quick', 'disabled', 'input', '另一简报', 'custom', 'model')"
+                )
+                connection.commit()
+                self.assertEqual(connection.execute("SELECT COUNT(*) FROM ai_summaries").fetchone()[0], 2)
+                connection.close()
+            finally:
+                engine.dispose()
+
     def test_migration_preserves_labels_when_partial_tables_lack_analysis(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "legacy-taxonomy.sqlite3"

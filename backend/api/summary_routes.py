@@ -14,9 +14,10 @@ from services.ai_summary import (
     input_signature,
     is_v2_llm_comment,
     normalize_filters,
+    normalize_report_options,
 )
 from services.sentiment_contract import LLM_SENTIMENT_SCHEMA_V2
-from services.llm_client import LLMRequestError
+from services.llm_client import LLMRequestError, summary_thinking_status
 from services.settings_store import get_task_config
 from services.runtime_state import activity
 from services.comment_quality import (
@@ -73,6 +74,9 @@ def _serialize(
         "analysis_id": summary.analysis_id,
         "filters": normalized_filters or json.loads(summary.filter_json),
         "filter_hash": summary.filter_hash,
+        "interpretation_view": summary.interpretation_view,
+        "report_mode": summary.report_mode,
+        "thinking_status": summary.thinking_status,
         "summary_text": summary.summary_text,
         "provider": summary.provider,
         "model": summary.model,
@@ -122,6 +126,7 @@ async def create_summary(analysis_id: int, req: dict):
             raise HTTPException(400, "分析尚未完成")
         try:
             filters = normalize_filters(req.get("filters"), analysis.mode)
+            interpretation_view, report_mode = normalize_report_options(req)
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         filter_json, filter_hash = filter_signature(filters)
@@ -141,8 +146,10 @@ async def create_summary(analysis_id: int, req: dict):
         existing = db.query(AISummary).filter_by(
             analysis_id=analysis_id,
             filter_hash=filter_hash,
+            interpretation_view=interpretation_view,
+            report_mode=report_mode,
         ).first()
-        if not existing and filters["duplicateMode"] == "include":
+        if not existing and filters["duplicateMode"] == "include" and interpretation_view == "public_opinion" and report_mode == "quick":
             legacy_filters = {
                 key: value for key, value in filters.items()
                 if key not in {"duplicateMode", "sourceAnalysisId"}
@@ -151,6 +158,8 @@ async def create_summary(analysis_id: int, req: dict):
             existing = db.query(AISummary).filter_by(
                 analysis_id=analysis_id,
                 filter_hash=legacy_hash,
+                interpretation_view=interpretation_view,
+                report_mode=report_mode,
             ).first()
         regenerate = bool(req.get("regenerate", False))
         if existing and existing.input_hash == current_input_hash and not regenerate:
@@ -176,12 +185,22 @@ async def create_summary(analysis_id: int, req: dict):
             }
             if coverage:
                 quality_context["v2_coverage"] = coverage
+            generation_options = {}
+            if interpretation_view != "public_opinion" or report_mode != "quick":
+                generation_options = {
+                    "interpretation_view": interpretation_view,
+                    "report_mode": report_mode,
+                }
             summary_text, used_model, sampled_count = await generate_summary(
-                matched, analysis.mode, config, quality_context
+                matched, analysis.mode, config, quality_context, **generation_options,
             )
+        thinking_status = summary_thinking_status(config, report_mode)
         if existing:
             existing.filter_json = filter_json
             existing.filter_hash = filter_hash
+            existing.interpretation_view = interpretation_view
+            existing.report_mode = report_mode
+            existing.thinking_status = thinking_status
             existing.input_hash = current_input_hash
             existing.summary_text = summary_text
             existing.provider = config["provider"]
@@ -194,6 +213,9 @@ async def create_summary(analysis_id: int, req: dict):
                 analysis_id=analysis_id,
                 filter_json=filter_json,
                 filter_hash=filter_hash,
+                interpretation_view=interpretation_view,
+                report_mode=report_mode,
+                thinking_status=thinking_status,
                 input_hash=current_input_hash,
                 summary_text=summary_text,
                 provider=config["provider"],

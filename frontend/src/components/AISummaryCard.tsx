@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { generateGroupSummary, generateSummary, getGroupSummaries, getSummaries } from '../services/api';
-import type { AISummary, AnalysisMode, FilterState, GroupAISummary, LLMProvider } from '../types';
+import FilterSelect, { type FilterSelectOption } from './FilterSelect';
+import type { AISummary, AnalysisMode, FilterState, GroupAISummary, InterpretationView, LLMProvider, SummaryReportMode } from '../types';
 import './DataPanels.css';
 
 interface Props {
@@ -19,6 +20,45 @@ const PROVIDER_NAMES: Record<LLMProvider, string> = {
 
 const THINKING_MESSAGES = ['AI 正在思考', '正在仔细分析', '正在遣词造句'];
 
+const VIEW_OPTIONS: readonly FilterSelectOption<InterpretationView>[] = [
+  { value: 'public_opinion', label: '舆情观察' },
+  { value: 'pr_risk', label: '公关与风险处置' },
+  { value: 'creator', label: '视频创作者' },
+  { value: 'news_editor', label: '新闻编辑' },
+];
+
+const REPORT_MODE_OPTIONS: readonly FilterSelectOption<SummaryReportMode>[] = [
+  { value: 'quick', label: '快速' },
+  { value: 'standard', label: '标准' },
+];
+
+const VIEW_BOUNDARIES: Record<InterpretationView, string> = {
+  public_opinion: '关注整体情绪、讨论焦点、主要分歧与变化线索。',
+  pr_risk: '关注可能引发误解的表达、潜在舆情风险与待关注事项。',
+  creator: '关注观众关注点、理解障碍与内容改进线索。',
+  news_editor: '关注待核实说法、观点分歧、叙事倾向与采访线索。',
+};
+
+const STANDARD_HEADINGS = ['观察', '依据与边界', '建议线索'] as const;
+
+function standardSections(summary: string): Array<{ heading: string; content: string }> | null {
+  const matches = Array.from(summary.matchAll(/(?:^|\n)\s*(?:#{1,6}\s*|\*\*)?(观察|依据与边界|建议线索)(?:\*\*)?\s*(?:[：:]|\n)/g));
+  if (matches.length !== STANDARD_HEADINGS.length) return null;
+
+  const sections = matches.map((match, index) => ({
+    heading: match[1],
+    content: summary.slice((match.index ?? 0) + match[0].length, matches[index + 1]?.index).trim(),
+  }));
+  return sections.every(section => section.content) ? sections : null;
+}
+
+function renderInlineMarkdown(value: string): ReactNode {
+  return value.split(/(\*\*[^*]+\*\*)/g).map((part, index) => {
+    const bold = /^\*\*([^*]+)\*\*$/.exec(part);
+    return bold ? <strong key={index}>{bold[1]}</strong> : part;
+  });
+}
+
 function sameFilters(left: FilterState, right: FilterState): boolean {
   return left.gender === right.gender
     && left.dateFrom === right.dateFrom
@@ -35,6 +75,8 @@ export default function AISummaryCard({ scope, filters, matchedCount, mode }: Pr
   const [generating, setGenerating] = useState(false);
   const [thinkingText, setThinkingText] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [interpretationView, setInterpretationView] = useState<InterpretationView>('public_opinion');
+  const [reportMode, setReportMode] = useState<SummaryReportMode>('quick');
 
   useEffect(() => {
     let active = true;
@@ -87,24 +129,32 @@ export default function AISummaryCard({ scope, filters, matchedCount, mode }: Pr
     };
   }, [generating]);
 
-  const exact = useMemo(
-    () => summaries.find(item => sameFilters(item.filters, filters)),
-    [summaries, filters],
-  );
+  const exact = useMemo(() => summaries.find(item => {
+    if (!sameFilters(item.filters, filters)) return false;
+    if (scope.kind === 'group') return true;
+    return 'analysis_id' in item
+      && item.interpretation_view === interpretationView
+      && item.report_mode === reportMode;
+  }), [summaries, filters, interpretationView, reportMode, scope.kind]);
   const current = exact && !exact.stale ? exact : null;
+  const analysisSummary = scope.kind === 'analysis' && current && 'analysis_id' in current ? current : null;
+  const standardReportSections = analysisSummary?.report_mode === 'standard'
+    ? standardSections(analysisSummary.summary_text)
+    : null;
 
   const run = async () => {
     setGenerating(true); setError(null);
     try {
       const result = scope.kind === 'group'
         ? await generateGroupSummary(scope.id, mode, filters, Boolean(exact))
-        : await generateSummary(scope.id, filters, Boolean(exact));
+        : await generateSummary(scope.id, filters, Boolean(exact), interpretationView, reportMode);
       setSummaries(items => {
         // Regenerating a legacy `include` summary can retain its database id while
         // moving it to the new filter hash. Remove by both identities so the
         // obsolete object cannot win the next exact-match lookup.
-        const others = items.filter(
-          item => item.id !== result.id && item.filter_hash !== result.filter_hash,
+        const others = items.filter(item => scope.kind === 'group'
+          ? item.id !== result.id && item.filter_hash !== result.filter_hash
+          : item.id !== result.id,
         );
         return [...others, result];
       });
@@ -133,6 +183,20 @@ export default function AISummaryCard({ scope, filters, matchedCount, mode }: Pr
         </button>
       </div>
 
+      {scope.kind === 'analysis' && (
+        <div className="ai-summary-controls" aria-label="简评生成选项">
+          <label className="ai-summary-control">
+            <span>解读视角</span>
+            <FilterSelect ariaLabel="解读视角" value={interpretationView} options={VIEW_OPTIONS} onChange={setInterpretationView} />
+          </label>
+          <label className="ai-summary-control">
+            <span>报告模式</span>
+            <FilterSelect ariaLabel="报告模式" value={reportMode} options={REPORT_MODE_OPTIONS} onChange={setReportMode} />
+          </label>
+          <p className="ai-summary-boundary">{VIEW_BOUNDARIES[interpretationView]}</p>
+        </div>
+      )}
+
       {loadingList ? (
         <div className="ai-summary-loading"><span className="pulse-dot" />正在读取已保存的简报…</div>
       ) : generating ? (
@@ -145,11 +209,21 @@ export default function AISummaryCard({ scope, filters, matchedCount, mode }: Pr
         </div>
       ) : current ? (
         <>
-          <p className="ai-summary-text">{current.summary_text}</p>
+          {standardReportSections ? (
+            <div className="ai-summary-standard-report" aria-label="标准报告内容">
+              {standardReportSections.map(section => <section key={section.heading}>
+                <h4>{section.heading}</h4>
+                <p>{renderInlineMarkdown(section.content)}</p>
+              </section>)}
+            </div>
+          ) : <p className="ai-summary-text">{renderInlineMarkdown(current.summary_text)}</p>}
           <div className="ai-summary-meta" aria-label="简报元数据">
             <span>基于 {current.matched_count} 条筛选数据</span>
             <span>抽取 {current.sampled_count} 条代表评论</span>
             <span>{PROVIDER_NAMES[current.provider]} · {current.model}</span>
+            {analysisSummary && <span>{VIEW_OPTIONS.find(option => option.value === analysisSummary.interpretation_view)?.label} · {analysisSummary.report_mode === 'quick' ? '快速报告' : '标准报告'}</span>}
+            {analysisSummary?.report_mode === 'standard' && analysisSummary.thinking_status === 'enabled' && <span>已启用模型思考</span>}
+            {analysisSummary?.report_mode === 'standard' && analysisSummary.thinking_status === 'unsupported' && <span className="ai-summary-meta__notice">当前模型未启用思考，已按普通生成完成</span>}
             {updatedAt && <span>{new Date(updatedAt).toLocaleString('zh-CN')}</span>}
           </div>
         </>
@@ -163,7 +237,7 @@ export default function AISummaryCard({ scope, filters, matchedCount, mode }: Pr
       )}
 
       {error && <div className="ai-summary-error" role="alert">{error}</div>}
-      <p className="ai-summary-disclaimer">统计基于全部筛选结果，观点归纳使用代表性样本，AI 内容仅供参考。</p>
+      <p className="ai-summary-disclaimer">统计基于全部筛选结果，观点归纳使用代表性样本；点击生成或重新生成会按当前模型配置产生费用，AI 内容仅供参考。</p>
     </section>
   );
 }

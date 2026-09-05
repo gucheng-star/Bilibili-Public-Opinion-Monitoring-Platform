@@ -5,6 +5,9 @@ export type AnalysisStatus = "pending" | "fetching" | "analyzing" | "done" | "er
 export type AnalysisMode = "nlp" | "llm";
 export type LLMProvider = "bailian" | "deepseek" | "zhipu" | "custom";
 export type LLMTask = "sentiment" | "summary";
+export type InterpretationView = "public_opinion" | "pr_risk" | "creator" | "news_editor";
+export type SummaryReportMode = "quick" | "standard";
+export type SummaryThinkingStatus = "disabled" | "enabled" | "unsupported";
 
 /** Sentiment label (traditional 3-class) */
 export type SentimentLabel = "positive" | "negative" | "neutral";
@@ -260,6 +263,9 @@ export interface AISummary {
   analysis_id: number;
   filters: FilterState;
   filter_hash: string;
+  interpretation_view: InterpretationView;
+  report_mode: SummaryReportMode;
+  thinking_status: SummaryThinkingStatus;
   summary_text: string;
   provider: LLMProvider;
   model: string;
@@ -270,7 +276,8 @@ export interface AISummary {
   stale: boolean;
 }
 
-export interface GroupAISummary extends Omit<AISummary, 'analysis_id'> {
+/** Event brief responses intentionally retain the pre-role-report contract. */
+export interface GroupAISummary extends Omit<AISummary, 'analysis_id' | 'interpretation_view' | 'report_mode' | 'thinking_status'> {
   group_id: number;
   member_signature?: string;
 }

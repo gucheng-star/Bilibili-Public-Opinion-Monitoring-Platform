@@ -85,6 +85,22 @@ class SummaryRouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(db.query(AISummary).count(), 1)
         db.close()
 
+    async def test_role_mode_combinations_coexist_and_stale_independently(self):
+        config = {"provider": "deepseek", "base_url": "https://api.deepseek.com", "model": "deepseek-chat", "fallback_model": "", "api_key": "secret"}
+        generator = AsyncMock(return_value=("角色简评", "deepseek-chat", 1))
+        with patch.object(summary_routes, "get_task_config", return_value=config), patch.object(summary_routes, "generate_summary", generator):
+            quick = await summary_routes.create_summary(self.analysis_id, {"filters": {}, "interpretationView": "creator", "reportMode": "quick"})
+            standard = await summary_routes.create_summary(self.analysis_id, {"filters": {}, "interpretationView": "creator", "reportMode": "standard"})
+        self.assertNotEqual(quick["id"], standard["id"])
+        self.assertEqual(standard["thinking_status"], "unsupported")
+        self.assertEqual(generator.await_count, 2)
+        db = self.sessions()
+        db.query(Comment).first().content = "输入改变后不应复用旧报告"
+        db.commit()
+        db.close()
+        listed = summary_routes.list_summaries(self.analysis_id)
+        self.assertTrue(all(item["stale"] for item in listed))
+
     async def test_saved_summary_becomes_stale_after_source_change(self):
         filters = {"gender": "all", "dateFrom": "", "dateTo": "", "region": "", "sentiment": "all"}
         config = {
