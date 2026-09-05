@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from services.bilibili import fetch_comments
+from services.bilibili import fetch_comments, get_video_info
 
 
 def make_reply(rpid: int, root: int = 0, parent: int = 0):
@@ -35,7 +35,40 @@ class FakeClient:
         return FakeResponse(next(self._pages))
 
 
+class VideoInfoClient:
+    async def get(self, *_args, **_kwargs):
+        class Response:
+            status_code = 200
+
+            @staticmethod
+            def json():
+                return {
+                    "code": 0,
+                    "data": {
+                        "aid": 123,
+                        "title": "测试视频",
+                        "duration": 660,
+                        "pic": "http://example.com/cover.jpg",
+                        "stat": {"view": 9, "reply": 2},
+                        "pages": [
+                            {"page": 1, "cid": 456, "part": "上", "duration": 600},
+                            {"page": 2, "cid": 789, "part": "下", "duration": 60},
+                        ],
+                    },
+                }
+        return Response()
+
+
 class BilibiliProgressTests(unittest.IsolatedAsyncioTestCase):
+    async def test_video_info_exposes_selected_part_cid_and_duration_for_danmaku_only(self):
+        info = await get_video_info(VideoInfoClient(), "BV1TEST00000")
+        self.assertEqual(info["duration"], 660)
+        self.assertEqual(info["pages"], [
+            {"page": 1, "cid": 456, "part": "上", "duration": 600},
+            {"page": 2, "cid": 789, "part": "下", "duration": 60},
+        ])
+        self.assertEqual(info["comment_count"], 2)
+
     async def test_reports_real_comment_count_after_each_page(self):
         client = FakeClient([
             [make_reply(1), make_reply(2)],

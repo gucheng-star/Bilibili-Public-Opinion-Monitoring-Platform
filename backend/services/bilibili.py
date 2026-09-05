@@ -30,7 +30,18 @@ async def get_video_info(client: httpx.AsyncClient, bv: str):
     cover = (d.get('pic','') or '').replace('http://','https://')
     return {'bv':bv,'avid':d.get('aid',0),'title':d.get('title',''),
             'cover':cover,'play':d.get('stat',{}).get('view',0),
-            'comment_count':d.get('stat',{}).get('reply',0)}
+            'comment_count':d.get('stat',{}).get('reply',0),
+            'duration':d.get('duration', 0),
+            'pages':[
+                {
+                    'page': page.get('page', index + 1),
+                    'cid': page.get('cid', 0),
+                    'part': page.get('part', ''),
+                    'duration': page.get('duration', 0),
+                }
+                for index, page in enumerate(d.get('pages') or [])
+                if isinstance(page, dict)
+            ]}
 
 def _extract_comment(r: dict) -> dict:
     m = r.get('member',{})

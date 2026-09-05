@@ -61,6 +61,7 @@ class Analysis(Base):
     sentiment = relationship("SentimentResult", back_populates="analysis", uselist=False, cascade="all, delete-orphan")
     summaries = relationship("AISummary", back_populates="analysis", cascade="all, delete-orphan")
     group_items = relationship("AnalysisGroupItem", back_populates="analysis", passive_deletes=True)
+    danmaku_tasks = relationship("DanmakuAnalysis", back_populates="analysis", cascade="all, delete-orphan")
 
 
 class Comment(Base):
@@ -215,6 +216,55 @@ class AnalysisGroupSummary(Base):
     group = relationship("AnalysisGroup", back_populates="summaries")
 
 
+class DanmakuAnalysis(Base):
+    """A separately scoped, sampled danmaku task for one selected video part."""
+
+    __tablename__ = "danmaku_analyses"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    analysis_id = Column(Integer, ForeignKey("analyses.id", ondelete="CASCADE"), nullable=True, index=True)
+    bv = Column(String(20), nullable=False, index=True)
+    avid = Column(Integer, nullable=False)
+    cid = Column(Integer, nullable=False)
+    part_index = Column(Integer, nullable=False, default=1)
+    attempt_index = Column(Integer, nullable=False, default=1)
+    part_title = Column(String(500), nullable=False, default="")
+    video_duration_seconds = Column(Integer, nullable=False)
+    status = Column(String(20), nullable=False, default="pending")
+    sample_limit = Column(Integer, nullable=False, default=100)
+    segment_count = Column(Integer, nullable=False, default=1)
+    requested_segments = Column(Integer, nullable=False, default=0)
+    requested_segment_indexes = Column(Text, nullable=False, default="[]")
+    successful_segments = Column(Integer, nullable=False, default=0)
+    kept_count = Column(Integer, nullable=False, default=0)
+    ignored_count = Column(Integer, nullable=False, default=0)
+    failed_segment_indexes = Column(Text, nullable=False, default="[]")
+    error_msg = Column(Text)
+    created_at = Column(DateTime, default=datetime.now, nullable=False)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, nullable=False)
+
+    analysis = relationship("Analysis", back_populates="danmaku_tasks")
+    samples = relationship("DanmakuSample", back_populates="danmaku_analysis", cascade="all, delete-orphan")
+
+
+class DanmakuSample(Base):
+    """Minimal local data retained for the sampled-timeline feature only."""
+
+    __tablename__ = "danmaku_samples"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    danmaku_analysis_id = Column(
+        Integer, ForeignKey("danmaku_analyses.id", ondelete="CASCADE"), nullable=False, index=True,
+    )
+    content = Column(Text, nullable=False)
+    progress_ms = Column(Integer, nullable=False)
+    segment_index = Column(Integer, nullable=False)
+    sentiment_label = Column(String(10))
+    sentiment_score = Column(Float)
+    created_at = Column(DateTime, default=datetime.now, nullable=False)
+
+    danmaku_analysis = relationship("DanmakuAnalysis", back_populates="samples")
+
+
 def init_db():
     """Initialize and safely upgrade the local SQLite schema."""
     backup = None
@@ -287,6 +337,13 @@ def _mark_interrupted_jobs() -> None:
                 "WHERE status IN ('pending', 'fetching', 'analyzing')"
             )
         )
+        connection.execute(
+            text(
+                "UPDATE danmaku_analyses SET status = 'interrupted', "
+                "error_msg = COALESCE(error_msg, '应用上次关闭时任务被中断') "
+                "WHERE status IN ('pending', 'fetching')"
+            )
+        )
 
 def _pending_column_migrations(eng):
     from sqlalchemy import inspect
@@ -333,7 +390,6 @@ def _pending_column_migrations(eng):
                 "sentiment_results",
                 "ALTER TABLE sentiment_results ADD COLUMN sentiment_llm_schema_version INTEGER NOT NULL DEFAULT 0",
             ))
-
     return migrations
 
 
@@ -366,13 +422,34 @@ def _schema_change_required(eng) -> bool:
         return False
     from sqlalchemy import inspect
     existing = set(inspect(eng).get_table_names())
-    required = {"analysis_groups", "analysis_group_items", "analysis_group_summaries"}
+    required = {
+        "analysis_groups", "analysis_group_items", "analysis_group_summaries",
+        "danmaku_analyses", "danmaku_samples",
+    }
     return bool(
         required - existing
         or _pending_column_migrations(eng)
+        or _danmaku_attempt_migration_required(eng)
         or _pending_llm_sentiment_version_backfill(eng)
         or _ai_summary_role_migration_required(eng)
     )
+
+
+def _danmaku_attempt_migration_required(eng) -> bool:
+    """Detect the short-lived single-attempt table shape before retry rows exist."""
+    from sqlalchemy import inspect
+
+    inspector = inspect(eng)
+    if "danmaku_analyses" not in inspector.get_table_names():
+        return False
+    columns = {column["name"] for column in inspector.get_columns("danmaku_analyses")}
+    if "attempt_index" not in columns:
+        return True
+    unique_sets = [
+        set(constraint.get("column_names") or [])
+        for constraint in inspector.get_unique_constraints("danmaku_analyses")
+    ]
+    return {"analysis_id", "part_index"} in unique_sets
 
 
 def _pending_llm_sentiment_version_backfill(eng) -> bool:
@@ -450,15 +527,58 @@ def _migrate(eng):
     """Apply pending schema and non-destructive LLM-version migrations atomically."""
     from sqlalchemy import inspect, text
     migrations = _pending_column_migrations(eng)
+    needs_danmaku_attempt_migration = _danmaku_attempt_migration_required(eng)
     needs_version_backfill = bool(migrations) or _pending_llm_sentiment_version_backfill(eng)
     tables = set(inspect(eng).get_table_names())
     with eng.begin() as connection:
         if _ai_summary_role_migration_required(eng):
             _migrate_ai_summaries_for_roles(connection)
+        if needs_danmaku_attempt_migration:
+            _migrate_danmaku_attempts(connection)
         for _table, sql in migrations:
             connection.execute(text(sql))
         if needs_version_backfill:
             _migrate_llm_sentiment_versions(connection, tables)
+
+
+def _migrate_danmaku_attempts(connection) -> None:
+    """Rebuild the early single-attempt schema without orphaning stored samples."""
+    from sqlalchemy import text
+
+    connection.execute(text("ALTER TABLE danmaku_samples RENAME TO danmaku_samples_legacy"))
+    connection.execute(text("ALTER TABLE danmaku_analyses RENAME TO danmaku_analyses_legacy"))
+    for index_name in (
+        "ix_danmaku_analyses_analysis_id",
+        "ix_danmaku_analyses_bv",
+        "ix_danmaku_samples_danmaku_analysis_id",
+    ):
+        connection.execute(text(f"DROP INDEX IF EXISTS {index_name}"))
+    DanmakuAnalysis.__table__.create(connection)
+    DanmakuSample.__table__.create(connection)
+    connection.execute(text("""
+        INSERT INTO danmaku_analyses (
+            id, analysis_id, bv, avid, cid, part_index, part_title, attempt_index,
+            video_duration_seconds, status, sample_limit, segment_count, requested_segments,
+            requested_segment_indexes, successful_segments, kept_count, ignored_count,
+            failed_segment_indexes, error_msg, created_at, updated_at
+        ) SELECT
+            id, analysis_id, bv, avid, cid, part_index, part_title, 1,
+            video_duration_seconds, status, sample_limit, segment_count, requested_segments,
+            requested_segment_indexes, successful_segments, kept_count, ignored_count,
+            failed_segment_indexes, error_msg, created_at, updated_at
+        FROM danmaku_analyses_legacy
+    """))
+    connection.execute(text("""
+        INSERT INTO danmaku_samples (
+            id, danmaku_analysis_id, content, progress_ms, segment_index,
+            sentiment_label, sentiment_score, created_at
+        ) SELECT
+            id, danmaku_analysis_id, content, progress_ms, segment_index,
+            sentiment_label, sentiment_score, created_at
+        FROM danmaku_samples_legacy
+    """))
+    connection.execute(text("DROP TABLE danmaku_samples_legacy"))
+    connection.execute(text("DROP TABLE danmaku_analyses_legacy"))
 
 
 def _migrate_ai_summaries_for_roles(connection) -> None:
@@ -569,6 +689,17 @@ def _validate_schema(eng) -> None:
             "id", "analysis_id", "filter_json", "filter_hash", "interpretation_view",
             "report_mode", "thinking_status", "input_hash", "summary_text", "provider",
             "model", "matched_count", "sampled_count", "created_at", "updated_at",
+        },
+        "danmaku_analyses": {
+            "id", "analysis_id", "bv", "avid", "cid", "part_index", "part_title",
+            "attempt_index",
+            "video_duration_seconds", "status", "sample_limit", "segment_count",
+            "requested_segments", "requested_segment_indexes", "successful_segments", "kept_count", "ignored_count",
+            "failed_segment_indexes", "error_msg", "created_at", "updated_at",
+        },
+        "danmaku_samples": {
+            "id", "danmaku_analysis_id", "content", "progress_ms", "segment_index",
+            "sentiment_label", "sentiment_score", "created_at",
         },
     }
     inspector = inspect(eng)
