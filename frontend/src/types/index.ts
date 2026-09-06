@@ -81,8 +81,9 @@ export interface DanmakuTask {
   attempt_index: number;
   part_title: string;
   video_duration_seconds: number;
-  status: 'pending' | 'fetching' | 'analyzing' | 'done' | 'error';
+  status: 'pending' | 'fetching' | 'analyzing' | 'done' | 'partial' | 'error';
   sample_limit: number;
+  request_delay: number;
   segment_count: number;
   requested_segments: number;
   requested_segment_indexes: number[];

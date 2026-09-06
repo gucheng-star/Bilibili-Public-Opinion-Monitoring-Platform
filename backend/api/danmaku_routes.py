@@ -13,6 +13,7 @@ from services.bilibili import get_video_info
 from services.danmaku import (
     DanmakuFetchResult,
     fetch_sampled_danmaku,
+    MAX_SAMPLES_PER_SEGMENT,
     segment_count_for_duration,
 )
 from services.danmaku_timeline import analyze_danmaku_items, annotate_samples, build_timeline
@@ -22,8 +23,8 @@ from services.runtime_state import activity
 
 router = APIRouter(prefix="/api/danmaku")
 logger = get_logger("danmaku_api")
-DEFAULT_SAMPLE_LIMIT = 100
-MAX_SAMPLE_LIMIT = 10_000
+DEFAULT_SAMPLES_PER_SEGMENT = 100
+DEFAULT_REQUEST_DELAY = 3.0
 
 
 def _safe_error_message() -> str:
@@ -41,6 +42,7 @@ def _task_payload(task: DanmakuAnalysis, timeline: dict | None = None) -> dict:
         "video_duration_seconds": task.video_duration_seconds,
         "status": task.status,
         "sample_limit": task.sample_limit,
+        "request_delay": task.request_delay,
         "segment_count": task.segment_count,
         "requested_segments": task.requested_segments,
         "requested_segment_indexes": json.loads(task.requested_segment_indexes or "[]"),
@@ -144,6 +146,7 @@ async def _run_danmaku_task_inner(danmaku_analysis_id: int) -> bool:
                 task.cid,
                 task.video_duration_seconds,
                 task.sample_limit,
+                request_delay=task.request_delay,
                 progress_callback=report_progress,
             )
         report_progress(result)
@@ -153,10 +156,10 @@ async def _run_danmaku_task_inner(danmaku_analysis_id: int) -> bool:
             db.commit()
             log_event(logger, "WARNING", "danmaku.task_failed", "所有弹幕分段获取失败", analysis_id=task.analysis_id, task_type="danmaku_sampling")
             return False
-        task.status = "done"
+        task.status = "partial" if result.failed_segments else "done"
         task.error_msg = None
         db.commit()
-        log_event(logger, "INFO", "danmaku.task_completed", "弹幕抽样任务已完成", analysis_id=task.analysis_id, task_type="danmaku_sampling", count=task.kept_count)
+        log_event(logger, "INFO", "danmaku.task_completed", "弹幕抽样任务已完成", analysis_id=task.analysis_id, task_type="danmaku_sampling", count=task.kept_count, partial=bool(result.failed_segments))
         return True
     except Exception as exc:
         db.rollback()
@@ -174,15 +177,16 @@ async def _run_danmaku_task_inner(danmaku_analysis_id: int) -> bool:
 @router.post("")
 async def start_danmaku_sampling(req: dict, background_tasks: BackgroundTasks):
     """Start (or retry) a task only after an explicit user action."""
+    raw_sample_limit = req.get("sample_limit")
     try:
-        sample_limit = int(req.get("sample_limit", DEFAULT_SAMPLE_LIMIT))
         part_index = int(req.get("part_index", 1))
+        request_delay = float(req.get("request_delay", DEFAULT_REQUEST_DELAY))
     except (TypeError, ValueError) as exc:
         raise HTTPException(400, "弹幕抓取参数无效") from exc
-    if not 1 <= sample_limit <= MAX_SAMPLE_LIMIT:
-        raise HTTPException(400, f"弹幕抓取上限必须在 1 到 {MAX_SAMPLE_LIMIT} 之间")
     if part_index < 1:
         raise HTTPException(400, "分 P 序号无效")
+    if not 1.0 <= request_delay <= 60.0:
+        raise HTTPException(400, "请求间隔必须在 1 到 60 秒之间")
 
     analysis_id = req.get("analysis_id")
     db = SessionLocal()
@@ -206,6 +210,14 @@ async def start_danmaku_sampling(req: dict, background_tasks: BackgroundTasks):
         duration_seconds = int(page.get("duration") or 0)
         if cid <= 0 or duration_seconds <= 0:
             raise HTTPException(400, "所选分 P 缺少可用的弹幕时长或 CID")
+        segment_count = segment_count_for_duration(duration_seconds)
+        try:
+            sample_limit = int(raw_sample_limit) if raw_sample_limit is not None else segment_count * DEFAULT_SAMPLES_PER_SEGMENT
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(400, "弹幕抓取参数无效") from exc
+        max_sample_limit = segment_count * MAX_SAMPLES_PER_SEGMENT
+        if not 1 <= sample_limit <= max_sample_limit:
+            raise HTTPException(400, f"本次抽样上限必须在 1 到 {max_sample_limit} 条之间")
 
         previous_task = (
             db.query(DanmakuAnalysis).filter_by(analysis_id=source.id, part_index=part_index)
@@ -226,7 +238,8 @@ async def start_danmaku_sampling(req: dict, background_tasks: BackgroundTasks):
             video_duration_seconds=duration_seconds,
             status="pending",
             sample_limit=sample_limit,
-            segment_count=segment_count_for_duration(duration_seconds),
+            request_delay=request_delay,
+            segment_count=segment_count,
         )
         db.add(task)
         db.flush()
@@ -238,7 +251,8 @@ async def start_danmaku_sampling(req: dict, background_tasks: BackgroundTasks):
         task.video_duration_seconds = duration_seconds
         task.status = "pending"
         task.sample_limit = sample_limit
-        task.segment_count = segment_count_for_duration(duration_seconds)
+        task.request_delay = request_delay
+        task.segment_count = segment_count
         task.requested_segments = 0
         task.requested_segment_indexes = "[]"
         task.successful_segments = 0

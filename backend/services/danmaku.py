@@ -15,7 +15,7 @@ from services.logging_config import get_logger, log_event
 
 
 SEGMENT_SECONDS = 6 * 60
-MAX_REQUEST_SEGMENTS = 24
+MAX_SAMPLES_PER_SEGMENT = 500
 SEGMENT_RETRY_ATTEMPTS = 3
 NORMAL_DANMAKU_MODES = set(range(1, 7))
 logger = get_logger("danmaku")
@@ -54,24 +54,18 @@ def _evenly_spaced_indices(total: int, count: int) -> list[int]:
 
 
 def build_segment_plan(duration_seconds: int | float, sample_limit: int) -> list[SegmentPlan]:
-    """Allocate at most ``sample_limit`` samples without scanning more than 24 segments.
-
-    Selection deliberately depends only on duration and limit so retrying a task
-    yields the same request plan.  When the request guard removes segments, the
-    remaining target is redistributed across the actually requested segments.
-    """
+    """Evenly allocate a total target across the real six-minute segments."""
     if sample_limit < 1:
         raise ValueError("弹幕抓取上限必须至少为 1")
     segment_count = segment_count_for_duration(duration_seconds)
+    if sample_limit > segment_count * MAX_SAMPLES_PER_SEGMENT:
+        raise ValueError("弹幕抓取上限超过当前视频的分段保护上限")
     candidate_indexes = (
         list(range(segment_count))
         if sample_limit >= segment_count
         else _evenly_spaced_indices(segment_count, sample_limit)
     )
-    requested_indexes = [
-        candidate_indexes[index]
-        for index in _evenly_spaced_indices(len(candidate_indexes), MAX_REQUEST_SEGMENTS)
-    ]
+    requested_indexes = candidate_indexes
     if sample_limit < segment_count:
         return [SegmentPlan(index=index, target_count=1) for index in requested_indexes]
 
@@ -167,6 +161,7 @@ async def _get_segment_with_retry(
     cid: int,
     segment_index: int,
     *,
+    request_delay: float,
     sleep: Callable[[float], Awaitable[None]],
 ) -> bytes | None:
     for attempt in range(SEGMENT_RETRY_ATTEMPTS):
@@ -182,7 +177,7 @@ async def _get_segment_with_retry(
         except Exception as exc:
             log_event(logger, "WARNING", "danmaku.segment_request_failed", "弹幕分段请求失败", segment_index=segment_index, exception=exc)
         if attempt + 1 < SEGMENT_RETRY_ATTEMPTS:
-            await sleep(REQUEST_DELAY)
+            await sleep(request_delay)
     return None
 
 
@@ -192,6 +187,7 @@ async def fetch_sampled_danmaku(
     duration_seconds: int | float,
     sample_limit: int,
     *,
+    request_delay: float = REQUEST_DELAY,
     progress_callback: Callable[[DanmakuFetchResult], None] | None = None,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
 ) -> DanmakuFetchResult:
@@ -199,7 +195,9 @@ async def fetch_sampled_danmaku(
     plan = build_segment_plan(duration_seconds, sample_limit)
     result = DanmakuFetchResult()
     for position, segment in enumerate(plan):
-        payload = await _get_segment_with_retry(client, cid, segment.index, sleep=sleep)
+        payload = await _get_segment_with_retry(
+            client, cid, segment.index, request_delay=request_delay, sleep=sleep,
+        )
         result.requested_segments += 1
         result.requested_segment_indexes.append(segment.index)
         if payload is None:
@@ -219,5 +217,5 @@ async def fetch_sampled_danmaku(
         if progress_callback:
             progress_callback(result)
         if position + 1 < len(plan):
-            await sleep(REQUEST_DELAY)
+            await sleep(request_delay)
     return result

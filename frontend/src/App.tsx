@@ -18,6 +18,7 @@ import AISummaryCard from './components/AISummaryCard';
 import SettingsEntry from './components/SettingsEntry';
 import AnalysisProgress from './components/AnalysisProgress';
 import CommentCollectionDialog from './components/CommentCollectionDialog';
+import DanmakuSamplingDialog from './components/DanmakuSamplingDialog';
 import EventWorkspace from './components/EventWorkspace';
 import AppErrorBoundary from './components/AppErrorBoundary';
 import SettingsPage from './pages/SettingsPage';
@@ -35,6 +36,7 @@ const V2_EMOTIONS: V2Emotion[] = ['neutral', 'joy', 'trust', 'anticipation', 'su
 const V2_STYLES: V2Style[] = ['plain', 'sarcasm', 'meme', 'rhetorical', 'hyperbole'];
 const EMPTY_SEARCH_DRAFT: SearchDraft = { rawInput: '', bv: '', videoInfo: null };
 type CommentCollectionDialogState = { bv: string; videoInfo: VideoInfoResponse; target: number; delay: number };
+type DanmakuSamplingDialogState = { videoInfo: VideoInfoResponse; partIndex?: number; sampleLimit?: number; delay?: number };
 
 function getLlmProgressText(processed: number, total: number): string {
   return `正在分析评论 ${Math.min(processed, total)} / ${total}`;
@@ -83,6 +85,7 @@ function App() {
   const [danmakuTimeline, setDanmakuTimeline] = useState<DanmakuTimelineData | null>(null);
   const [danmakuLoading, setDanmakuLoading] = useState(false);
   const [danmakuError, setDanmakuError] = useState<string | null>(null);
+  const [danmakuSamplingDialog, setDanmakuSamplingDialog] = useState<DanmakuSamplingDialogState | null>(null);
   const danmakuRequestRef = useRef(0);
   const danmakuTaskId = danmakuTask?.danmaku_analysis_id;
   const danmakuTaskStatus = danmakuTask?.status;
@@ -563,15 +566,31 @@ function App() {
     setWorkspaceSource('comments');
     setFilters({ ...EMPTY_FILTERS });
   }, []);
-  const handleStartDanmaku = useCallback(async (partIndex: number, sampleLimit: number) => {
+  const openDanmakuSamplingDialog = useCallback(async () => {
+    if (!results) return;
+    setDanmakuError(null);
+    try {
+      const videoInfo = await getVideoInfo(results.bv);
+      setDanmakuSamplingDialog({
+        videoInfo,
+        partIndex: danmakuTask?.part_index,
+        sampleLimit: danmakuTask?.sample_limit,
+        delay: danmakuTask?.request_delay,
+      });
+    } catch (reason) {
+      setDanmakuError(reason instanceof Error ? reason.message : '无法获取视频的弹幕分 P 信息');
+    }
+  }, [danmakuTask, results]);
+  const handleStartDanmaku = useCallback(async (partIndex: number, sampleLimit: number, requestDelay: number) => {
     if (analysisId === null) return;
     setDanmakuLoading(true);
     setDanmakuError(null);
     setDanmakuTimeline(null);
     try {
-      const task = await startDanmakuSampling(analysisId, partIndex, sampleLimit);
+      const task = await startDanmakuSampling(analysisId, partIndex, sampleLimit, requestDelay);
       setDanmakuTask(task);
       setWorkspaceSource('danmaku');
+      setDanmakuSamplingDialog(null);
     } catch (reason) {
       setDanmakuError(reason instanceof Error ? reason.message : '创建弹幕抽样任务失败');
     } finally {
@@ -844,7 +863,7 @@ function App() {
               timeline={danmakuTimeline}
               loadingTask={danmakuLoading}
               error={danmakuError}
-              onStart={handleStartDanmaku}
+              onOpenStart={() => { void openDanmakuSamplingDialog(); }}
             />
           </div>}
         </>}
@@ -857,6 +876,14 @@ function App() {
           initialDelay={commentCollectionDialog.delay}
           onCancel={() => setCommentCollectionDialog(null)}
           onStart={startCommentCollection}
+        />}
+        {danmakuSamplingDialog && <DanmakuSamplingDialog
+          videoInfo={danmakuSamplingDialog.videoInfo}
+          initialPartIndex={danmakuSamplingDialog.partIndex}
+          initialSampleLimit={danmakuSamplingDialog.sampleLimit}
+          initialDelay={danmakuSamplingDialog.delay}
+          onCancel={() => setDanmakuSamplingDialog(null)}
+          onStart={(partIndex, sampleLimit, requestDelay) => { void handleStartDanmaku(partIndex, sampleLimit, requestDelay); }}
         />}
         {reanalyzeModal && (
           <div className="reanalyze-dialog" onClick={()=>setReanalyzeModal(false)}>

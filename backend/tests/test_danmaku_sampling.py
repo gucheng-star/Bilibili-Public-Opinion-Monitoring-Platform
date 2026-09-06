@@ -2,7 +2,6 @@ import unittest
 from unittest.mock import AsyncMock, patch
 
 from services.danmaku import (
-    MAX_REQUEST_SEGMENTS,
     build_segment_plan,
     fetch_sampled_danmaku,
     parse_segment_payload,
@@ -57,13 +56,17 @@ class DanmakuSamplingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([(item.index, item.target_count) for item in build_segment_plan(900, 2)], expected)
         self.assertEqual([(item.index, item.target_count) for item in build_segment_plan(900, 2)], expected)
 
-    def test_long_video_requests_no_more_than_guard_and_spreads_remainder(self):
+    def test_total_limit_spans_all_segments_and_never_exceeds_per_segment_guard(self):
         plan = build_segment_plan(25 * 360, 100)
-        self.assertEqual(len(plan), MAX_REQUEST_SEGMENTS)
+        self.assertEqual(len(plan), 25)
         self.assertEqual(sum(item.target_count for item in plan), 100)
-        self.assertEqual({item.target_count for item in plan}, {4, 5})
+        self.assertEqual({item.target_count for item in plan}, {4})
         self.assertEqual(plan[0].index, 0)
         self.assertEqual(plan[-1].index, 24)
+        self.assertEqual([(item.index, item.target_count) for item in build_segment_plan(12 * 60, 1_000)], [(0, 500), (1, 500)])
+        self.assertEqual(sum(item.target_count for item in build_segment_plan(12 * 60 + 1, 1_500)), 1_500)
+        with self.assertRaises(ValueError):
+            build_segment_plan(12 * 60, 1_001)
 
     def test_parser_keeps_only_ordinary_pool_and_uniform_sampling_is_not_prefix(self):
         ordinary, ignored = parse_segment_payload(payload(
@@ -120,6 +123,15 @@ class DanmakuSamplingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.successful_segments, 0)
         self.assertEqual(result.failed_segments, [0])
         self.assertEqual(result.kept, [])
+
+    async def test_uses_task_request_delay_between_segments(self):
+        client = FakeClient([
+            FakeResponse(200, payload(element(1000, "A"))),
+            FakeResponse(200, payload(element(2000, "B"))),
+        ])
+        sleep = AsyncMock()
+        await fetch_sampled_danmaku(client, 123, 720, 2, request_delay=2.5, sleep=sleep)
+        sleep.assert_awaited_once_with(2.5)
 
 
 if __name__ == "__main__":

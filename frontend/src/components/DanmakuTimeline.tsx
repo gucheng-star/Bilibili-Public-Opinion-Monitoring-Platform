@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useRef } from 'react';
 import ReactECharts from 'echarts-for-react';
 import type { DanmakuTask, DanmakuTimeline as DanmakuTimelineData, DanmakuTimelineBucket } from '../types';
 import { chartTextColor, chartTooltip } from '../utils';
@@ -9,11 +9,8 @@ interface Props {
   timeline: DanmakuTimelineData | null;
   loadingTask: boolean;
   error: string | null;
-  onStart: (partIndex: number, sampleLimit: number) => void;
+  onOpenStart: () => void;
 }
-
-const MIN_SAMPLE_LIMIT = 1;
-const MAX_SAMPLE_LIMIT = 10_000;
 
 function formatPlaybackTime(milliseconds: number): string {
   const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
@@ -38,22 +35,10 @@ function coverageText(coverage: DanmakuTimelineBucket['coverage']): string {
   }
 }
 
-export default function DanmakuTimeline({ task, timeline, loadingTask, error, onStart }: Props) {
-  const [sampleLimit, setSampleLimit] = useState(task?.sample_limit ?? 100);
-  const [partIndex, setPartIndex] = useState(task?.part_index ?? 1);
+export default function DanmakuTimeline({ task, timeline, loadingTask, error, onOpenStart }: Props) {
   const chartRef = useRef<ReactECharts | null>(null);
   const tooltipTheme = chartTooltip();
   const textColor = chartTextColor();
-  const taskId = task?.danmaku_analysis_id;
-  const taskSampleLimit = task?.sample_limit;
-  const taskPartIndex = task?.part_index;
-
-  useEffect(() => {
-    if (taskSampleLimit === undefined || taskPartIndex === undefined) return;
-    setSampleLimit(taskSampleLimit);
-    setPartIndex(taskPartIndex);
-  }, [taskId, taskPartIndex, taskSampleLimit]);
-
   const buckets = useMemo(() => timeline?.buckets ?? [], [timeline]);
   const quality = useMemo(() => {
     if (!task) return null;
@@ -107,16 +92,8 @@ export default function DanmakuTimeline({ task, timeline, loadingTask, error, on
     ],
   }), [buckets, textColor, tooltipTheme]);
 
-  const startSampling = () => {
-    const safePart = Math.max(1, Math.trunc(partIndex) || 1);
-    const safeLimit = Math.min(MAX_SAMPLE_LIMIT, Math.max(MIN_SAMPLE_LIMIT, Math.trunc(sampleLimit) || 100));
-    setPartIndex(safePart);
-    setSampleLimit(safeLimit);
-    onStart(safePart, safeLimit);
-  };
-
   const isRunning = task?.status === 'pending' || task?.status === 'fetching' || task?.status === 'analyzing';
-  const canRenderTimeline = task?.status === 'done' && timeline && buckets.length > 0;
+  const canRenderTimeline = (task?.status === 'done' || task?.status === 'partial') && timeline && buckets.length > 0;
 
   return (
     <section className="danmaku-timeline card" aria-label="弹幕时间轴">
@@ -127,7 +104,7 @@ export default function DanmakuTimeline({ task, timeline, loadingTask, error, on
           <p>仅统计主动发起的分时段抽样弹幕；每个时间段按弹幕在视频内的精确出现时间聚合。</p>
         </div>
         {task && <div className={`danmaku-timeline__state danmaku-timeline__state--${task.status}`}>
-          {task.status === 'done' ? '已完成' : task.status === 'error' ? '需要重试' : '正在处理'}
+          {task.status === 'done' ? '已完成' : task.status === 'partial' ? '部分完成' : task.status === 'error' ? '需要重试' : '正在处理'}
         </div>}
       </header>
 
@@ -135,9 +112,9 @@ export default function DanmakuTimeline({ task, timeline, loadingTask, error, on
         <div className="danmaku-timeline__empty">
           <div className="danmaku-timeline__empty-copy">
             <strong>尚未开始分时段抽样</strong>
-            <p>系统会顺序请求至多 24 个 6 分钟片段，只保留普通弹幕并在本机进行 NLP 三分类。不会调用大模型。</p>
+          <p>系统会顺序请求本分 P 的 6 分钟片段，只保留普通弹幕并在本机进行 NLP 三分类。不会调用大模型。</p>
           </div>
-          <SamplingForm partIndex={partIndex} sampleLimit={sampleLimit} disabled={false} onPartIndexChange={setPartIndex} onSampleLimitChange={setSampleLimit} onStart={startSampling} />
+          <button type="button" className="btn btn-primary" onClick={onOpenStart}>开始分时段抽样</button>
         </div>
       )}
 
@@ -152,6 +129,7 @@ export default function DanmakuTimeline({ task, timeline, loadingTask, error, on
             <Metric label="视频时长" value={durationText(task.video_duration_seconds)} />
             <Metric label="6 分钟片段" value={`${task.segment_count} 段`} />
             <Metric label="保留样本" value={`${task.kept_count} / ${task.sample_limit} 条`} />
+            <Metric label="请求间隔" value={`${task.request_delay} 秒`} />
             <Metric label="已忽略" value={`${task.ignored_count} 项`} />
           </div>
 
@@ -162,10 +140,10 @@ export default function DanmakuTimeline({ task, timeline, loadingTask, error, on
             </div>
           )}
 
-          {task.status === 'error' && (
+          {(task.status === 'error' || task.status === 'partial') && (
             <div className="danmaku-timeline__failure" role="alert">
-              <div><strong>{task.error_msg || '弹幕获取失败，可重试'}</strong><p>此前的抽样尝试会保留在本机；再次开始会创建新的尝试，不会覆盖已有记录。</p></div>
-              <SamplingForm partIndex={partIndex} sampleLimit={sampleLimit} disabled={false} compact onPartIndexChange={setPartIndex} onSampleLimitChange={setSampleLimit} onStart={startSampling} />
+              <div><strong>{task.status === 'partial' ? '部分片段获取失败，可重试' : task.error_msg || '弹幕获取失败，可重试'}</strong><p>此前的抽样尝试会保留在本机；再次开始会创建新的尝试，不会覆盖已有记录。</p></div>
+              <button type="button" className="btn btn-primary" onClick={onOpenStart}>重新尝试</button>
             </div>
           )}
 
@@ -204,20 +182,4 @@ export default function DanmakuTimeline({ task, timeline, loadingTask, error, on
 
 function Metric({ label, value }: { label: string; value: string }) {
   return <div className="danmaku-timeline__metric"><span>{label}</span><b title={value}>{value}</b></div>;
-}
-
-function SamplingForm({ partIndex, sampleLimit, disabled, compact = false, onPartIndexChange, onSampleLimitChange, onStart }: {
-  partIndex: number;
-  sampleLimit: number;
-  disabled: boolean;
-  compact?: boolean;
-  onPartIndexChange: (value: number) => void;
-  onSampleLimitChange: (value: number) => void;
-  onStart: () => void;
-}) {
-  return <div className={`danmaku-timeline__form${compact ? ' danmaku-timeline__form--compact' : ''}`}>
-    <label>分 P<input type="number" min="1" step="1" value={partIndex} onChange={event => onPartIndexChange(Number(event.target.value))} disabled={disabled} /></label>
-    <label>抓取上限<input type="number" min={MIN_SAMPLE_LIMIT} max={MAX_SAMPLE_LIMIT} step="1" value={sampleLimit} onChange={event => onSampleLimitChange(Number(event.target.value))} disabled={disabled} /></label>
-    <button type="button" className="btn btn-primary" onClick={onStart} disabled={disabled}>开始分时段抽样</button>
-  </div>;
 }

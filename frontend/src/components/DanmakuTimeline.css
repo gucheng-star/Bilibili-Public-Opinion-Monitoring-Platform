@@ -7,16 +7,12 @@
 .danmaku-timeline__state { flex:0 0 auto; align-self:flex-start; padding:.3rem .55rem; border:1px solid var(--border); border-radius:999px; color:var(--text-muted); background:var(--bg-subtle); font-size:.68rem; font-weight:650; }
 .danmaku-timeline__state--done { color:var(--green); border-color:color-mix(in srgb, var(--green) 26%, transparent); background:var(--green-soft); }
 .danmaku-timeline__state--error { color:var(--red); border-color:color-mix(in srgb, var(--red) 26%, transparent); background:var(--red-soft); }
+.danmaku-timeline__state--partial { color:#8b5cf6; border-color:color-mix(in srgb, #8b5cf6 28%, transparent); background:color-mix(in srgb, #8b5cf6 10%, transparent); }
 .danmaku-timeline__empty { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:1.5rem; align-items:end; padding:1.25rem 0 .1rem; }
 .danmaku-timeline__empty-copy strong { color:var(--text-primary); font-size:.86rem; }
 .danmaku-timeline__empty-copy p { max-width:38rem; margin:.35rem 0 0; color:var(--text-secondary); font-size:.75rem; line-height:1.65; }
-.danmaku-timeline__form { display:flex; align-items:end; gap:.55rem; }
-.danmaku-timeline__form label { display:grid; gap:.26rem; color:var(--text-muted); font-size:.625rem; font-weight:650; letter-spacing:.04em; }
-.danmaku-timeline__form input { width:5.35rem; min-height:2rem; padding:.25rem .45rem; color:var(--text-primary); background:var(--input-bg); border:1px solid var(--input-border); border-radius:var(--radius-sm); font:600 .75rem var(--font-data); }
-.danmaku-timeline__form input:focus { outline:2px solid var(--input-focus-glow); border-color:var(--accent); }
-.danmaku-timeline__form .btn { min-height:2rem; white-space:nowrap; font-size:.72rem; }
 .danmaku-timeline__loading { margin-top:1.15rem; padding:1rem; color:var(--text-secondary); background:var(--bg-subtle); border:1px dashed var(--border-strong); border-radius:var(--radius); font-size:.75rem; text-align:center; }
-.danmaku-timeline__metrics { display:grid; grid-template-columns:1fr 1fr 1fr 1.25fr .8fr; gap:0; margin-top:1rem; border:1px solid var(--border); border-radius:var(--radius); overflow:hidden; }
+.danmaku-timeline__metrics { display:grid; grid-template-columns:1fr 1fr 1fr 1.25fr .9fr .8fr; gap:0; margin-top:1rem; border:1px solid var(--border); border-radius:var(--radius); overflow:hidden; }
 .danmaku-timeline__metric { min-width:0; padding:.72rem .8rem; border-right:1px solid var(--border); }
 .danmaku-timeline__metric:last-child { border-right:0; }
 .danmaku-timeline__metric span { display:block; margin-bottom:.22rem; color:var(--text-muted); font-size:.62rem; }
@@ -46,7 +42,6 @@
 .danmaku-timeline__coverage--partial { background:#8b5cf6; }
 @media (max-width: 760px) {
   .danmaku-timeline__empty { grid-template-columns:1fr; gap:1rem; }
-  .danmaku-timeline__form { flex-wrap:wrap; }
   .danmaku-timeline__metrics { grid-template-columns:1fr 1fr; }
   .danmaku-timeline__metric:nth-child(2) { border-right:0; }
   .danmaku-timeline__metric:nth-child(-n+4) { border-bottom:1px solid var(--border); }

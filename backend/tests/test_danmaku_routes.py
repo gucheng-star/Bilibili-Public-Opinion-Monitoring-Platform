@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from fastapi import BackgroundTasks
+from fastapi import BackgroundTasks, HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -44,11 +44,12 @@ class DanmakuRouteTests(unittest.IsolatedAsyncioTestCase):
             patch.object(danmaku_routes, "get_video_info", new=AsyncMock(return_value=self.video_info())),
         ):
             response = await danmaku_routes.start_danmaku_sampling(
-                {"analysis_id": self.analysis_id, "part_index": 2, "sample_limit": 10}, tasks,
+                {"analysis_id": self.analysis_id, "part_index": 2, "sample_limit": 10, "request_delay": 2.5}, tasks,
             )
         self.assertEqual(response["status"], "pending")
         self.assertNotIn("cid", response)
         self.assertEqual(response["segment_count"], 1)
+        self.assertEqual(response["request_delay"], 2.5)
         self.assertEqual(response["timeline"]["state"], "not_sampled")
         self.assertTrue(all(bucket["coverage"] == "not_sampled" for bucket in response["timeline"]["buckets"]))
         self.assertEqual(len(tasks.tasks), 1)
@@ -57,6 +58,7 @@ class DanmakuRouteTests(unittest.IsolatedAsyncioTestCase):
             task = session.get(DanmakuAnalysis, response["danmaku_analysis_id"])
             self.assertEqual(task.analysis_id, self.analysis_id)
             self.assertEqual(task.kept_count, 0)
+            self.assertEqual(task.request_delay, 2.5)
             self.assertEqual(session.query(DanmakuSample).count(), 0)
         finally:
             session.close()
@@ -72,7 +74,7 @@ class DanmakuRouteTests(unittest.IsolatedAsyncioTestCase):
         task_id = task.id
         session.close()
 
-        async def fake_fetch(_client, _cid, _duration, _limit, *, progress_callback):
+        async def fake_fetch(_client, _cid, _duration, _limit, *, progress_callback, request_delay):
             result = DanmakuFetchResult(requested_segments=2, requested_segment_indexes=[0, 1], successful_segments=1)
             result.kept.append({"content": "保留 A", "progress_ms": 1000, "segment_index": 0})
             progress_callback(result)
@@ -90,7 +92,7 @@ class DanmakuRouteTests(unittest.IsolatedAsyncioTestCase):
         session = self.sessions()
         try:
             saved = session.get(DanmakuAnalysis, task_id)
-            self.assertEqual(saved.status, "done")
+            self.assertEqual(saved.status, "partial")
             self.assertEqual((saved.requested_segments, saved.successful_segments, saved.kept_count), (2, 1, 1))
             self.assertEqual(saved.failed_segment_indexes, "[1]")
             self.assertEqual(saved.requested_segment_indexes, "[0, 1]")
@@ -123,6 +125,31 @@ class DanmakuRouteTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(danmaku_routes, "SessionLocal", self.sessions):
             selected = danmaku_routes.get_danmaku_sampling_for_analysis(self.analysis_id, part_index=2)
         self.assertEqual(selected["part_index"], 2)
+
+    async def test_selected_part_sets_dynamic_total_sample_limit(self):
+        with (
+            patch.object(danmaku_routes, "SessionLocal", self.sessions),
+            patch.object(danmaku_routes, "get_video_info", new=AsyncMock(return_value=self.video_info())),
+        ):
+            with self.assertRaises(HTTPException) as rejected:
+                await danmaku_routes.start_danmaku_sampling(
+                    {"analysis_id": self.analysis_id, "part_index": 2, "sample_limit": 501}, BackgroundTasks(),
+                )
+            full_part = await danmaku_routes.start_danmaku_sampling(
+                {"analysis_id": self.analysis_id, "part_index": 1, "sample_limit": 1_000}, BackgroundTasks(),
+            )
+        self.assertEqual(rejected.exception.status_code, 400)
+        self.assertEqual(full_part["sample_limit"], 1_000)
+
+    async def test_default_total_sample_limit_scales_with_selected_duration(self):
+        with (
+            patch.object(danmaku_routes, "SessionLocal", self.sessions),
+            patch.object(danmaku_routes, "get_video_info", new=AsyncMock(return_value=self.video_info())),
+        ):
+            response = await danmaku_routes.start_danmaku_sampling(
+                {"analysis_id": self.analysis_id, "part_index": 1}, BackgroundTasks(),
+            )
+        self.assertEqual(response["sample_limit"], 200)
 
     async def test_runner_marks_all_segment_failure_as_retryable_error(self):
         session = self.sessions()
@@ -160,7 +187,7 @@ class DanmakuRouteTests(unittest.IsolatedAsyncioTestCase):
         task_id = task.id
         session.close()
 
-        async def crash_after_progress(_client, _cid, _duration, _limit, *, progress_callback):
+        async def crash_after_progress(_client, _cid, _duration, _limit, *, progress_callback, request_delay):
             partial = DanmakuFetchResult(
                 requested_segments=1, requested_segment_indexes=[0], successful_segments=1,
                 kept=[{"content": "已完成片段", "progress_ms": 1000, "segment_index": 0}],

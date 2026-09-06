@@ -237,6 +237,7 @@ class DanmakuAnalysis(Base):
     video_duration_seconds = Column(Integer, nullable=False)
     status = Column(String(20), nullable=False, default="pending")
     sample_limit = Column(Integer, nullable=False, default=100)
+    request_delay = Column(Float, nullable=False, default=3.0, server_default="3.0")
     segment_count = Column(Integer, nullable=False, default=1)
     requested_segments = Column(Integer, nullable=False, default=0)
     requested_segment_indexes = Column(Text, nullable=False, default="[]")
@@ -379,6 +380,10 @@ def _pending_column_migrations(eng):
                 "analyses",
                 "ALTER TABLE analyses ADD COLUMN sentiment_llm_schema_version INTEGER NOT NULL DEFAULT 0",
             ))
+    if "danmaku_analyses" in inspector.get_table_names():
+        cols = {column["name"] for column in inspector.get_columns("danmaku_analyses")}
+        if "request_delay" not in cols:
+            migrations.append(("danmaku_analyses", "ALTER TABLE danmaku_analyses ADD COLUMN request_delay FLOAT NOT NULL DEFAULT 3.0"))
     if "comments" in inspector.get_table_names():
         cols = {c["name"] for c in inspector.get_columns("comments")}
         if "sentiment_llm_label" not in cols:
@@ -546,6 +551,8 @@ def _migrate(eng):
     from sqlalchemy import inspect, text
     migrations = _pending_column_migrations(eng)
     needs_danmaku_attempt_migration = _danmaku_attempt_migration_required(eng)
+    if needs_danmaku_attempt_migration:
+        migrations = [item for item in migrations if item[0] != "danmaku_analyses"]
     needs_version_backfill = bool(migrations) or _pending_llm_sentiment_version_backfill(eng)
     tables = set(inspect(eng).get_table_names())
     with eng.begin() as connection:
@@ -749,7 +756,7 @@ def _validate_schema(eng) -> None:
         "danmaku_analyses": {
             "id", "analysis_id", "bv", "avid", "cid", "part_index", "part_title",
             "attempt_index",
-            "video_duration_seconds", "status", "sample_limit", "segment_count",
+            "video_duration_seconds", "status", "sample_limit", "request_delay", "segment_count",
             "requested_segments", "requested_segment_indexes", "successful_segments", "kept_count", "ignored_count",
             "failed_segment_indexes", "error_msg", "created_at", "updated_at",
         },
