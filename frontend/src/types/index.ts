@@ -1,5 +1,6 @@
 /** Analysis status */
 export type AnalysisStatus = "pending" | "fetching" | "analyzing" | "done" | "error";
+export type CommentCollectionStatus = "pending" | "fetching" | "completed" | "partial" | "failed";
 
 /** Analysis mode */
 export type AnalysisMode = "nlp" | "llm";
@@ -125,6 +126,12 @@ export interface AnalysisResult {
   video_cover: string;
   video_play: number;
   total_comments: number;
+  comment_target_count: number;
+  comment_fetched_count: number;
+  comment_request_delay: number;
+  comment_collection_status: CommentCollectionStatus;
+  comment_termination_reason: string | null;
+  comment_error_summary: string | null;
   created_at: string | null;
   mode: AnalysisMode;
   sentiment: { positive: number; negative: number; neutral: number };
@@ -233,6 +240,12 @@ export interface HistoryItem {
   video_title: string;
   video_cover: string;
   total_comments: number;
+  comment_target_count: number;
+  comment_fetched_count: number;
+  comment_request_delay: number;
+  comment_collection_status: CommentCollectionStatus;
+  comment_termination_reason: string | null;
+  comment_error_summary: string | null;
   status: AnalysisStatus;
   mode?: AnalysisMode;
   affected_group_count?: number;
@@ -244,6 +257,12 @@ export interface StatusResponse {
   analysis_id: number;
   status: AnalysisStatus;
   total_comments: number;
+  comment_target_count: number;
+  comment_fetched_count: number;
+  comment_request_delay: number;
+  comment_collection_status: CommentCollectionStatus;
+  comment_termination_reason: string | null;
+  comment_error_summary: string | null;
   processed_comments: number;
   error_msg: string | null;
   error_summary?: string | null;

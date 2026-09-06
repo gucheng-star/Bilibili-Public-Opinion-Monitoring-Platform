@@ -134,6 +134,7 @@ class DevFaultScenarioTests(unittest.IsolatedAsyncioTestCase):
             "title": "local fake video",
             "cover": "https://example.invalid/cover.jpg",
             "play": 1,
+            "comment_count": 20,
         }
         local_client = LocalAsyncClient()
 
@@ -146,7 +147,8 @@ class DevFaultScenarioTests(unittest.IsolatedAsyncioTestCase):
                 await routes.start_analysis({"bv": "BV1FAULT00002"}, BackgroundTasks())
 
         self.assertEqual(raised.exception.status_code, 500)
-        self.assertEqual(raised.exception.detail, "local task-create database fault")
+        self.assertEqual(raised.exception.detail, "创建评论采集任务失败")
+        self.assertNotIn("database fault", raised.exception.detail)
         get_info.assert_awaited_once_with(local_client, "BV1FAULT00002")
         session_local.assert_called_once_with()
         self.assertEqual(session.commit_calls, 1)

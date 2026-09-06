@@ -65,9 +65,12 @@ def validate_member_ids(db: Session, analysis_ids: Any) -> list[Analysis]:
     if len(by_id) != len(normalized_ids):
         raise GroupValidationError("存在不存在的分析记录")
     ordered = [by_id[value] for value in normalized_ids]
-    unavailable = [analysis.id for analysis in ordered if analysis.status != "done"]
+    unavailable = [
+        analysis.id for analysis in ordered
+        if analysis.status != "done" or analysis.comment_collection_status != "completed"
+    ]
     if unavailable:
-        raise GroupValidationError("只能选择已完成的分析记录")
+        raise GroupValidationError("只能选择评论采集已完成的分析记录")
     bvs = [analysis.bv for analysis in ordered]
     if len(set(bvs)) != len(bvs):
         raise GroupValidationError("同一 BV 的分析记录不能同时加入一个舆情事件")
@@ -119,6 +122,7 @@ def _member_payload(item: AnalysisGroupItem, analysis: Analysis) -> dict[str, An
         "video_cover": analysis.video_cover,
         "total_comments": analysis.total_comments or 0,
         "status": analysis.status,
+        "comment_collection_status": analysis.comment_collection_status,
         "mode": analysis.mode or "nlp",
         "position": item.position,
         "created_at": analysis.created_at.isoformat() if analysis.created_at else None,
@@ -130,7 +134,10 @@ def group_metadata(
 ) -> dict[str, Any]:
     rows = rows if rows is not None else group_rows(db, group.id)
     members = [_member_payload(item, analysis) for item, analysis in rows]
-    is_analyzable = len(rows) >= MIN_GROUP_MEMBERS and all(analysis.status == "done" for _item, analysis in rows)
+    is_analyzable = len(rows) >= MIN_GROUP_MEMBERS and all(
+        analysis.status == "done" and analysis.comment_collection_status == "completed"
+        for _item, analysis in rows
+    )
     return {
         "id": group.id,
         "name": group.name,

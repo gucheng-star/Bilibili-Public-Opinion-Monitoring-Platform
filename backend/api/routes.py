@@ -4,6 +4,13 @@ from fastapi import APIRouter, HTTPException, BackgroundTasks
 from sqlalchemy import desc, func
 from models.database import SessionLocal, Analysis, AnalysisGroupItem, Comment, SentimentResult, init_db
 from services.bilibili import get_video_info, fetch_comments
+from services.comment_collection import (
+    COMMENT_COLLECTION_COMPLETED,
+    COMMENT_COLLECTION_FAILED,
+    COMMENT_COLLECTION_FETCHING,
+    CommentCollectionResult,
+    safe_comment_collection_error,
+)
 from services.sentiment import batch_analyze, summarize_sentiment
 from services.sentiment_llm import batch_analyze_llm, summarize_sentiment_llm
 from services.wordcloud_gen import get_top_keywords
@@ -110,6 +117,17 @@ def _public_video_info(info: dict) -> dict:
         ],
     }
 
+
+def _comment_collection_payload(analysis: Analysis) -> dict:
+    return {
+        'comment_target_count': analysis.comment_target_count or 0,
+        'comment_fetched_count': analysis.comment_fetched_count or 0,
+        'comment_request_delay': analysis.comment_request_delay or 3.0,
+        'comment_collection_status': analysis.comment_collection_status or 'pending',
+        'comment_termination_reason': analysis.comment_termination_reason,
+        'comment_error_summary': analysis.comment_error_summary,
+    }
+
 async def _run_analysis(
     analysis_id: int, bv: str, avid: int, max_comments: int = 100,
     delay: float = 3.0, mode: str = "nlp", request_id: str | None = None,
@@ -131,11 +149,17 @@ async def _run_analysis_inner(analysis_id: int, bv: str, avid: int, max_comments
             log_event(logger, "WARNING", "analysis.task_aborted", "分析记录已不存在，任务已中止", analysis_id=analysis_id, task_type="single_video_analysis")
             return False
         analysis.status = 'fetching'; analysis.mode = mode; analysis.total_comments = 0
+        analysis.comment_fetched_count = 0
+        analysis.comment_collection_status = COMMENT_COLLECTION_FETCHING
+        analysis.comment_termination_reason = None
+        analysis.comment_error_summary = None
+        analysis.error_msg = None
         db.commit()
         log_event(logger, "INFO", "analysis.fetch_started", "开始抓取评论", analysis_id=analysis_id, task_type="single_video_analysis")
 
         def report_fetch_progress(count: int):
             analysis.total_comments = count
+            analysis.comment_fetched_count = count
             db.commit()
 
         async with httpx.AsyncClient(timeout=30) as client:
@@ -146,11 +170,24 @@ async def _run_analysis_inner(analysis_id: int, bv: str, avid: int, max_comments
                 delay=delay,
                 progress_callback=report_fetch_progress,
             )
+        collection = comments_raw if isinstance(comments_raw, CommentCollectionResult) else None
+        if collection:
+            analysis.comment_target_count = collection.target_count
+            analysis.comment_fetched_count = collection.fetched_count
+            analysis.comment_collection_status = collection.collection_status
+            analysis.comment_termination_reason = collection.termination_reason
+            analysis.comment_error_summary = safe_comment_collection_error(
+                collection.termination_reason, collection.fetched_count,
+            )
         if not comments_raw:
-            analysis.status = 'error'; analysis.error_msg = 'No comments fetched'; db.commit()
+            analysis.status = 'error'
+            analysis.comment_collection_status = COMMENT_COLLECTION_FAILED
+            analysis.comment_error_summary = (analysis.comment_error_summary or '评论获取失败，可重新采集')
+            analysis.error_msg = analysis.comment_error_summary
+            db.commit()
             log_event(logger, "WARNING", "analysis.task_failed", "未抓取到可分析评论", analysis_id=analysis_id, task_type="single_video_analysis")
             return False
-        analysis.status = 'analyzing'; analysis.total_comments = len(comments_raw); db.commit()
+        analysis.status = 'analyzing'; analysis.total_comments = len(comments_raw); analysis.comment_fetched_count = len(comments_raw); db.commit()
 
         if mode == "llm":
             log_event(logger, "INFO", "analysis.llm_started", "开始大模型情绪分析", analysis_id=analysis_id, task_type="single_video_analysis", count=len(comments_raw))
@@ -195,7 +232,13 @@ async def _run_analysis_inner(analysis_id: int, bv: str, avid: int, max_comments
         log_event(logger, "ERROR", "analysis.task_failed", "视频分析任务失败", analysis_id=analysis_id, task_type="single_video_analysis", exception=e)
         db.rollback()
         a = db.query(Analysis).filter_by(id=analysis_id).first()
-        if a: a.status = 'error'; a.error_msg = str(e); db.commit()
+        if a:
+            a.status = 'error'
+            if a.comment_collection_status in ('pending', COMMENT_COLLECTION_FETCHING):
+                a.comment_collection_status = COMMENT_COLLECTION_FAILED
+                a.comment_error_summary = '评论采集任务失败，可重新采集'
+            a.error_msg = a.comment_error_summary or '分析任务失败，请稍后重试'
+            db.commit()
         return False
     finally:
         db.close()
@@ -203,8 +246,6 @@ async def _run_analysis_inner(analysis_id: int, bv: str, avid: int, max_comments
 @router.post('/analyze')
 async def start_analysis(req: dict, background_tasks: BackgroundTasks):
     bv = req.get('bv', '').strip()
-    max_comments = min(max(req.get('max_comments', 100), 20), 10000)
-    request_delay = min(max(req.get('request_delay', 3.0), 1.0), 60.0)
     # New analyses always start with local Python NLP. LLM sentiment analysis
     # is an explicit second step exposed only by /reanalyze/{analysis_id}.
     mode = 'nlp'
@@ -214,10 +255,23 @@ async def start_analysis(req: dict, background_tasks: BackgroundTasks):
         info = await get_video_info(client, bv)
     if not info:
         raise HTTPException(404, 'Video not found or inaccessible')
+    public_comment_count = max(0, int(info.get('comment_count') or 0))
+    if public_comment_count == 0:
+        raise HTTPException(409, '该视频暂无可采集的公开评论')
+    try:
+        max_comments = int(req.get('max_comments', min(100, public_comment_count)))
+        request_delay = float(req.get('request_delay', 3.0))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(400, '评论采集参数无效') from exc
+    if not 1 <= max_comments <= public_comment_count:
+        raise HTTPException(400, f'本次评论数量必须在 1 到 {public_comment_count} 之间')
+    if not 1.0 <= request_delay <= 60.0:
+        raise HTTPException(400, '请求间隔必须在 1 到 60 秒之间')
     db = SessionLocal()
     try:
         analysis = Analysis(bv=bv, avid=info['avid'], video_title=info['title'], mode=mode,
-            video_cover=info['cover'], video_play=info['play'], status='pending')
+            video_cover=info['cover'], video_play=info['play'], status='pending',
+            comment_target_count=max_comments, comment_request_delay=request_delay)
         db.add(analysis); db.commit(); db.refresh(analysis)
         log_event(logger, "INFO", "analysis.task_created", "视频分析任务已创建", analysis_id=analysis.id, task_type="single_video_analysis")
         background_tasks.add_task(
@@ -225,10 +279,11 @@ async def start_analysis(req: dict, background_tasks: BackgroundTasks):
             mode=mode, request_id=get_request_id(),
         )
         return {'analysis_id':analysis.id,'bv':bv,'video_title':info['title'],
-            'video_cover':info['cover'],'video_play':info['play'],'status':'pending','mode':mode}
+            'video_cover':info['cover'],'video_play':info['play'],'status':'pending','mode':mode,
+            **_comment_collection_payload(analysis)}
     except Exception as e:
         log_event(logger, "ERROR", "analysis.task_create_failed", "创建视频分析任务失败", task_type="single_video_analysis", exception=e)
-        db.rollback(); raise HTTPException(500, str(e))
+        db.rollback(); raise HTTPException(500, '创建评论采集任务失败')
     finally:
         db.close()
 
@@ -451,10 +506,11 @@ def get_status(analysis_id: int):
             analysis_id=analysis_id,
             sentiment_llm_schema_version=LLM_SENTIMENT_SCHEMA_V2,
         ).count()
-        error_summary = _safe_reanalysis_error() if a.error_msg else None
+        error_summary = a.comment_error_summary if a.comment_collection_status == COMMENT_COLLECTION_FAILED else (_safe_reanalysis_error() if a.error_msg else None)
         return {'analysis_id':a.id,'status':a.status,'total_comments':a.total_comments,
             'processed_comments':a.processed_comments,'error_msg':error_summary,
             'error_summary':error_summary,
+            **_comment_collection_payload(a),
             'v2_target_count':v2_target_count,
             'v2_completed_count':v2_completed_count,
             'v2_pending_count':v2_target_count - v2_completed_count}
@@ -484,6 +540,7 @@ def get_results(analysis_id: int):
             'mode':a.mode,
             'sentiment_llm_schema_version':a.sentiment_llm_schema_version,
             'total_comments':a.total_comments,'created_at':a.created_at.isoformat() if a.created_at else None,
+            **_comment_collection_payload(a),
             'sentiment':{'positive':s.positive_count if s else 0,'negative':s.negative_count if s else 0,'neutral':s.neutral_count if s else 0},
             'gender':_calc_gender(cl),'region':analyze_region(cl),'heat':analyze_heat(cl),
             'keywords':get_top_keywords(cl, top_n=500),
@@ -560,6 +617,7 @@ def get_history(limit: int = 20):
         ) if analysis_ids else {}
         return [{'id':a.id,'bv':a.bv,'video_title':a.video_title,'video_cover':a.video_cover,
             'total_comments':a.total_comments,'status':a.status,'mode':a.mode,
+            **_comment_collection_payload(a),
             'affected_group_count':affected_counts.get(a.id, 0),
             'created_at':a.created_at.isoformat() if a.created_at else None}
             for a in analyses]

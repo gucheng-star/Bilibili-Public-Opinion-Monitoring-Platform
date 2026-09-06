@@ -69,7 +69,7 @@ async function req<T>(url: string, options?: RequestInit): Promise<T> {
   }
 }
 
-export function startAnalysis(bv: string, maxComments = 100, requestDelay = 3.0) {
+export function startAnalysis(bv: string, maxComments: number, requestDelay: number) {
   return req<{ analysis_id: number; status: string }>('/analyze', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

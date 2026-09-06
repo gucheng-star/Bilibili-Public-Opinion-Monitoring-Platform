@@ -5,10 +5,6 @@ import type { SettingsResponse } from '../types';
 import './SettingsPage.css';
 
 export interface SettingsPageProps {
-  maxComments: number;
-  onMaxCommentsChange: (value: number) => void;
-  delay: number;
-  onDelayChange: (value: number) => void;
   onSettingsChanged: (settings: SettingsResponse) => void;
   desktopMode?: boolean;
   onCheckUpdate?: () => void;
@@ -16,10 +12,6 @@ export interface SettingsPageProps {
 }
 
 export default function SettingsPage({
-  maxComments,
-  onMaxCommentsChange,
-  delay,
-  onDelayChange,
   onSettingsChanged,
   desktopMode = false,
   onCheckUpdate,
@@ -52,15 +44,11 @@ export default function SettingsPage({
         <div>
           <span className="settings-page__eyebrow">视频信号观测台</span>
           <h1>设置中心</h1>
-          <p>管理抓取节奏与智能分析模型配置。所有设置和敏感信息仅保留在本机。</p>
+          <p>管理账号、应用与智能分析模型配置。所有设置和敏感信息仅保留在本机。</p>
         </div>
       </div>
 
       <SettingsPanel
-        maxComments={maxComments}
-        onMaxCommentsChange={onMaxCommentsChange}
-        delay={delay}
-        onDelayChange={onDelayChange}
         onSettingsChanged={onSettingsChanged}
         desktopMode={desktopMode}
         onCheckUpdate={onCheckUpdate}

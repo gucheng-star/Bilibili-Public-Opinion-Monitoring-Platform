@@ -26,8 +26,10 @@ class AnalysisGroupRouteTests(unittest.IsolatedAsyncioTestCase):
         Base.metadata.create_all(self.engine)
         self.sessions = sessionmaker(bind=self.engine)
         db = self.sessions()
-        first = Analysis(bv="BV1GROUPA", avid=1, video_title="来源 A", status="done", mode="nlp", total_comments=2)
-        second = Analysis(bv="BV1GROUPB", avid=2, video_title="来源 B", status="done", mode="nlp", total_comments=1)
+        first = Analysis(bv="BV1GROUPA", avid=1, video_title="来源 A", status="done", mode="nlp", total_comments=2,
+            comment_target_count=2, comment_fetched_count=2, comment_collection_status="completed")
+        second = Analysis(bv="BV1GROUPB", avid=2, video_title="来源 B", status="done", mode="nlp", total_comments=1,
+            comment_target_count=1, comment_fetched_count=1, comment_collection_status="completed")
         db.add_all([first, second])
         db.flush()
         db.add_all([
@@ -75,6 +77,16 @@ class AnalysisGroupRouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(db.query(AnalysisGroupItem).filter_by(group_id=group["id"]).count(), 1)
         self.assertEqual(db.query(Analysis).filter_by(id=self.second_id).count(), 1)
         db.close()
+
+    def test_partial_collection_cannot_join_event(self):
+        db = self.sessions()
+        db.get(Analysis, self.first_id).comment_collection_status = "partial"
+        db.commit()
+        db.close()
+        with self.assertRaises(HTTPException) as rejected:
+            self._create_group()
+        self.assertEqual(rejected.exception.status_code, 400)
+        self.assertEqual(rejected.exception.detail, "只能选择评论采集已完成的分析记录")
 
     def test_scoped_duplicates_filters_and_llm_readiness(self):
         group = self._create_group()

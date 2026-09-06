@@ -31,6 +31,7 @@ class InitialAnalysisModeTests(unittest.IsolatedAsyncioTestCase):
             "title": "test video",
             "cover": "https://example.com/cover.jpg",
             "play": 456,
+            "comment_count": 20,
         }
 
         with (

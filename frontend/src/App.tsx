@@ -17,14 +17,15 @@ import FilterBar from './components/FilterBar';
 import AISummaryCard from './components/AISummaryCard';
 import SettingsEntry from './components/SettingsEntry';
 import AnalysisProgress from './components/AnalysisProgress';
+import CommentCollectionDialog from './components/CommentCollectionDialog';
 import EventWorkspace from './components/EventWorkspace';
 import AppErrorBoundary from './components/AppErrorBoundary';
 import SettingsPage from './pages/SettingsPage';
-import { getAuthStatus, getDanmakuSamplingForAnalysis, getDanmakuTimeline, getFilteredKeywords, getResults, getRuntimeActivity, getSettings, getStatus, logout, prepareRuntimeExit, reanalyze, startAnalysis, startDanmakuSampling } from './services/api';
+import { getAuthStatus, getDanmakuSamplingForAnalysis, getDanmakuTimeline, getFilteredKeywords, getResults, getRuntimeActivity, getSettings, getStatus, getVideoInfo, logout, prepareRuntimeExit, reanalyze, startAnalysis, startDanmakuSampling } from './services/api';
 import { checkForUpdates, downloadUpdate, installDownloadedUpdate, isDesktopRuntime, onCloseRequested, respondToCloseRequest } from './services/desktop';
 import { activeFilterFields, recordBreadcrumb, setDiagnosticState, type DiagnosticState } from './services/devDiagnostics';
 import { LatestRequestGuard, runConfirmedWorkflowTransition } from './services/latestRequestGuard';
-import type { AnalysisResult, DanmakuTask, DanmakuTimeline as DanmakuTimelineData, FilterState, AnalysisMode, KeywordItem, SentimentLLMV2, StyleDistributionV2, V2Emotion, V2Style, StatusResponse } from './types';
+import type { AnalysisResult, DanmakuTask, DanmakuTimeline as DanmakuTimelineData, FilterState, AnalysisMode, HistoryItem, KeywordItem, SentimentLLMV2, StyleDistributionV2, V2Emotion, V2Style, StatusResponse, VideoInfoResponse } from './types';
 import { EMPTY_FILTERS, applyCommentFilters, applyDuplicateMode, buildDuplicateGroups, listRegions, normalizeProvince } from './utils/commentFilters';
 import { filtersEqual, filtersSearchString, searchParamsToFilters } from './utils/commentQuery';
 import { buildCommentTree, commentKey } from './utils/commentTree';
@@ -33,6 +34,7 @@ import './AppShell.css';
 const V2_EMOTIONS: V2Emotion[] = ['neutral', 'joy', 'trust', 'anticipation', 'surprise', 'anger', 'sadness', 'fear', 'disgust'];
 const V2_STYLES: V2Style[] = ['plain', 'sarcasm', 'meme', 'rhetorical', 'hyperbole'];
 const EMPTY_SEARCH_DRAFT: SearchDraft = { rawInput: '', bv: '', videoInfo: null };
+type CommentCollectionDialogState = { bv: string; videoInfo: VideoInfoResponse; target: number; delay: number };
 
 function getLlmProgressText(processed: number, total: number): string {
   return `正在分析评论 ${Math.min(processed, total)} / ${total}`;
@@ -65,8 +67,7 @@ function App() {
   const [scrolledPast, setScrolledPast] = useState(false);
 
   const [analysisMode, setAnalysisMode] = useState<AnalysisMode>('nlp');
-  const [maxComments, setMaxComments] = useState(100);
-  const [delay, setDelay] = useState(3.0);
+  const [commentCollectionDialog, setCommentCollectionDialog] = useState<CommentCollectionDialogState | null>(null);
   const [filters, setFilters] = useState<FilterState>(EMPTY_FILTERS);
   const [workspaceFiltersHydrated, setWorkspaceFiltersHydrated] = useState(false);
   const [filteredKeywords, setFilteredKeywords] = useState<KeywordItem[]>([]);
@@ -427,15 +428,17 @@ function App() {
             const status = await getStatus(analysis_id);
             if (!isCurrent()) return;
             recordPollStatus(status.status);
-            setProgress(status.total_comments);
+            setProgress(status.comment_fetched_count);
+            setProgressMax(status.comment_target_count);
             if (status.status === 'done') {
               setStatusText(''); const data = await getResults(analysis_id);
               if (!isCurrent()) return;
-              setResults(data); setAnalysisMode(data.mode); setLoading(false); setHistoryRefreshKey(k=>k+1); showToast('分析完成');
+              setResults(data); setAnalysisMode(data.mode); setLoading(false); setHistoryRefreshKey(k=>k+1);
+              showToast(data.comment_collection_status === 'partial' ? '评论部分完成，可查看已有分析' : '评论分析完成');
               return;
             }
-            if (status.status === 'error') { setError(status.error_msg || '分析失败'); setLoading(false); showToast('分析失败'); return; }
-            if (status.status === 'fetching') setStatusText('抓取中 ('+status.total_comments+'/'+_maxComments+')');
+            if (status.status === 'error') { setError(status.comment_error_summary || status.error_msg || '评论采集失败'); setLoading(false); setHistoryRefreshKey(k=>k+1); showToast('评论采集失败'); return; }
+            if (status.status === 'fetching') setStatusText('抓取中 ('+status.comment_fetched_count+'/'+status.comment_target_count+')');
             else if (status.status === 'analyzing') {
               setStatusText('分析中...');
             }
@@ -453,6 +456,27 @@ function App() {
       setError(e.message || '失败'); setLoading(false);
     }
   }, [recordPollStatus]);
+
+  const openCommentCollectionDialog = useCallback((bv: string, videoInfo: VideoInfoResponse, target = Math.min(100, videoInfo.comment_count), requestDelay = 3) => {
+    setCommentCollectionDialog({ bv, videoInfo, target, delay: requestDelay });
+  }, []);
+
+  const retryCommentCollection = useCallback(async (item: HistoryItem) => {
+    setError(null);
+    try {
+      const videoInfo = await getVideoInfo(item.bv);
+      openCommentCollectionDialog(item.bv, videoInfo, Math.min(item.comment_target_count || 100, videoInfo.comment_count), item.comment_request_delay || 3);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '无法获取视频的最新采集参数');
+    }
+  }, [openCommentCollectionDialog]);
+
+  const startCommentCollection = useCallback((target: number, requestDelay: number) => {
+    const pending = commentCollectionDialog;
+    if (!pending) return;
+    setCommentCollectionDialog(null);
+    void handleAnalyze(pending.bv, target, requestDelay);
+  }, [commentCollectionDialog, handleAnalyze]);
 
   const handleViewHistory = useCallback(async (id: number) => {
     const request = workflowGuardRef.current.begin();
@@ -696,10 +720,6 @@ function App() {
       <Routes location={location}>
         <Route path="/settings" element={(
           <SettingsPage
-            maxComments={maxComments}
-            onMaxCommentsChange={setMaxComments}
-            delay={delay}
-            onDelayChange={setDelay}
             onSettingsChanged={settings => setHasApiKey(settings.llm.sentiment.has_api_key)}
             desktopMode={isDesktopRuntime()}
             onCheckUpdate={() => { void checkUpdate(true); }}
@@ -711,10 +731,8 @@ function App() {
         <section ref={commandDeckRef} className="command-deck route-reveal-element" aria-label="视频分析指令舱">
           <div className="command-deck__label"><span aria-hidden="true"></span>VIDEO SIGNAL COMMAND</div>
           <SearchBar
-            onAnalyze={handleAnalyze}
+            onRequestStart={openCommentCollectionDialog}
             loading={loading}
-            maxComments={maxComments}
-            delay={delay}
             draft={searchDraft}
             onDraftChange={setSearchDraft}
           />
@@ -732,12 +750,13 @@ function App() {
               selectedId={analysisId}
               selectedGroupId={selectedGroupId}
               refreshKey={historyRefreshKey}
+              onRetry={retryCommentCollection}
               onGroupChanged={() => setGroupRevision(current => current + 1)}
             />}
           </div>
         </section>
         {selectedGroupId ? <EventWorkspace key={`${selectedGroupId}-${groupRevision}`} groupId={selectedGroupId} initialFilters={groupFilters[selectedGroupId] || EMPTY_FILTERS} initialMode={groupModes[selectedGroupId] || 'nlp'} onFiltersChange={next => setGroupFilters(current => ({ ...current, [selectedGroupId]: next }))} onModeChange={mode => setGroupModes(current => current[selectedGroupId] === mode ? current : { ...current, [selectedGroupId]: mode })} /> : <>
-        {!loading && results && (<div className="app-alert app-alert--status">模式: {results.mode === 'llm' ? '大模型十分类' : 'NLP三分类'} · 共 {results.total_comments} 条评论</div>)}
+        {!loading && results && (<div className="app-alert app-alert--status">{results.comment_collection_status === 'partial' ? `评论部分完成：已获取 ${results.comment_fetched_count} / ${results.comment_target_count} 条` : `评论采集完成：已获取 ${results.comment_fetched_count} / ${results.comment_target_count} 条`} · {results.mode === 'llm' ? '大模型十分类' : 'NLP三分类'}<button type="button" className="btn btn-ghost" onClick={() => void retryCommentCollection({ id: results.analysis_id, bv: results.bv, video_title: results.video_title, video_cover: results.video_cover, total_comments: results.total_comments, status: 'done', mode: results.mode, created_at: results.created_at, comment_target_count: results.comment_target_count, comment_fetched_count: results.comment_fetched_count, comment_request_delay: results.comment_request_delay, comment_collection_status: results.comment_collection_status, comment_termination_reason: results.comment_termination_reason, comment_error_summary: results.comment_error_summary })}>重新采集评论</button></div>)}
 
         {loading && !results && (
           <div className="app-state flex items-center justify-center py-20">
@@ -832,6 +851,13 @@ function App() {
         </>}
 
         {/* Reanalyze confirmation modal */}
+        {commentCollectionDialog && <CommentCollectionDialog
+          videoInfo={commentCollectionDialog.videoInfo}
+          initialTarget={commentCollectionDialog.target}
+          initialDelay={commentCollectionDialog.delay}
+          onCancel={() => setCommentCollectionDialog(null)}
+          onStart={startCommentCollection}
+        />}
         {reanalyzeModal && (
           <div className="reanalyze-dialog" onClick={()=>setReanalyzeModal(false)}>
             <div className="reanalyze-dialog__panel" role="dialog" aria-modal="true" aria-labelledby="reanalyze-title" onClick={e=>e.stopPropagation()}>

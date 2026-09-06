@@ -10,10 +10,8 @@ export interface SearchDraft {
 }
 
 interface BaseProps {
-  onAnalyze: (bv: string, maxComments: number, delay: number) => void;
+  onRequestStart: (bv: string, videoInfo: VideoInfoResponse) => void;
   loading: boolean;
-  maxComments: number;
-  delay: number;
 }
 
 type Props = BaseProps & (
@@ -26,7 +24,7 @@ function parseBv(input: string): string {
   return m ? m[0] : '';
 }
 
-export default function SearchBar({ onAnalyze, loading, maxComments, delay, draft, onDraftChange }: Props) {
+export default function SearchBar({ onRequestStart, loading, draft, onDraftChange }: Props) {
   const [uncontrolledDraft, setUncontrolledDraft] = useState<SearchDraft>({ rawInput: '', bv: '', videoInfo: null });
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState('');
@@ -59,7 +57,7 @@ export default function SearchBar({ onAnalyze, loading, maxComments, delay, draf
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (bv) onAnalyze(bv, maxComments, delay);
+    if (bv && videoInfo) onRequestStart(bv, videoInfo);
   };
 
   return (

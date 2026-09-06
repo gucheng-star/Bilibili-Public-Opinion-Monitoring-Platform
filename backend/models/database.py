@@ -53,6 +53,7 @@ class Analysis(Base):
     processed_comments = Column(Integer, default=0)
     comment_target_count = Column(Integer, nullable=False, default=0, server_default="0")
     comment_fetched_count = Column(Integer, nullable=False, default=0, server_default="0")
+    comment_request_delay = Column(Float, nullable=False, default=3.0, server_default="3.0")
     comment_collection_status = Column(String(20), nullable=False, default="pending", server_default="pending")
     comment_termination_reason = Column(String(40))
     comment_error_summary = Column(Text)
@@ -365,6 +366,8 @@ def _pending_column_migrations(eng):
             migrations.append(("analyses", "ALTER TABLE analyses ADD COLUMN comment_target_count INTEGER NOT NULL DEFAULT 0"))
         if "comment_fetched_count" not in cols:
             migrations.append(("analyses", "ALTER TABLE analyses ADD COLUMN comment_fetched_count INTEGER NOT NULL DEFAULT 0"))
+        if "comment_request_delay" not in cols:
+            migrations.append(("analyses", "ALTER TABLE analyses ADD COLUMN comment_request_delay FLOAT NOT NULL DEFAULT 3.0"))
         if "comment_collection_status" not in cols:
             migrations.append(("analyses", "ALTER TABLE analyses ADD COLUMN comment_collection_status VARCHAR(20) NOT NULL DEFAULT 'pending'"))
         if "comment_termination_reason" not in cols:
@@ -727,7 +730,7 @@ def _validate_schema(eng) -> None:
     required_columns = {
         "analyses": {
             "sentiment_llm_schema_version", "comment_target_count", "comment_fetched_count",
-            "comment_collection_status", "comment_termination_reason", "comment_error_summary",
+            "comment_request_delay", "comment_collection_status", "comment_termination_reason", "comment_error_summary",
         },
         "comments": {"sentiment_llm_schema_version"},
         "sentiment_results": {"sentiment_llm_schema_version"},
