@@ -71,6 +71,47 @@ export interface HeatPoint {
   count: number;
 }
 
+/** A separately persisted, locally analysed danmaku sampling task. */
+export interface DanmakuTask {
+  danmaku_analysis_id: number;
+  analysis_id: number | null;
+  bv: string;
+  cid: number;
+  part_index: number;
+  attempt_index: number;
+  part_title: string;
+  video_duration_seconds: number;
+  status: 'pending' | 'fetching' | 'analyzing' | 'done' | 'error';
+  sample_limit: number;
+  segment_count: number;
+  requested_segments: number;
+  requested_segment_indexes: number[];
+  successful_segments: number;
+  kept_count: number;
+  ignored_count: number;
+  failed_segment_indexes: number[];
+  error_msg: string | null;
+  timeline?: DanmakuTimeline;
+}
+
+export interface DanmakuTimelineBucket {
+  start_ms: number;
+  end_ms: number;
+  positive: number;
+  neutral: number;
+  negative: number;
+  total: number;
+  /** Successful sampling is intentionally distinct from no sample and failure. */
+  coverage: 'sampled' | 'not_sampled' | 'failed' | 'partial';
+}
+
+export interface DanmakuTimeline {
+  state: 'not_sampled' | 'failed' | 'partial' | 'sampled_empty' | 'ready';
+  bucket_seconds: number;
+  sampled_count: number;
+  buckets: DanmakuTimelineBucket[];
+}
+
 /** Keyword item */
 export interface KeywordItem {
   word: string;

@@ -15,6 +15,7 @@ from services.danmaku import (
     fetch_sampled_danmaku,
     segment_count_for_duration,
 )
+from services.danmaku_timeline import analyze_danmaku_items, annotate_samples, build_timeline
 from services.logging_config import get_logger, get_request_id, log_event, reset_request_id, set_request_id
 from services.runtime_state import activity
 
@@ -29,8 +30,8 @@ def _safe_error_message() -> str:
     return "弹幕获取失败，可重试"
 
 
-def _task_payload(task: DanmakuAnalysis) -> dict:
-    return {
+def _task_payload(task: DanmakuAnalysis, timeline: dict | None = None) -> dict:
+    payload = {
         "danmaku_analysis_id": task.id,
         "analysis_id": task.analysis_id,
         "bv": task.bv,
@@ -50,6 +51,37 @@ def _task_payload(task: DanmakuAnalysis) -> dict:
         "failed_segment_indexes": json.loads(task.failed_segment_indexes or "[]"),
         "error_msg": task.error_msg,
     }
+    if timeline is not None:
+        payload["timeline"] = timeline
+    return payload
+
+
+def _timeline_payload(db, task: DanmakuAnalysis) -> dict:
+    """Read sampled data only; retrieval state remains visible to the client."""
+    samples = list(task.samples)
+    if annotate_samples(samples):
+        db.commit()
+    timeline = build_timeline(
+        duration_seconds=task.video_duration_seconds,
+        requested_segment_indexes=json.loads(task.requested_segment_indexes or "[]"),
+        failed_segment_indexes=json.loads(task.failed_segment_indexes or "[]"),
+        samples=samples,
+    )
+    failed_segments = json.loads(task.failed_segment_indexes or "[]")
+    if task.status == "error" and not samples:
+        state = "failed"
+    elif task.status in {"pending", "fetching"} and not samples:
+        state = "not_sampled"
+    elif failed_segments:
+        state = "partial"
+    elif task.status == "done" and not samples:
+        state = "sampled_empty"
+    elif task.status == "done":
+        state = "ready"
+    else:
+        state = "partial"
+    timeline["state"] = state
+    return timeline
 
 
 def _select_page(info: dict, part_index: int) -> dict:
@@ -87,12 +119,16 @@ async def _run_danmaku_task_inner(danmaku_analysis_id: int) -> bool:
 
         def report_progress(result: DanmakuFetchResult) -> None:
             nonlocal persisted_sample_count
-            for sample in result.kept[persisted_sample_count:]:
+            new_samples = result.kept[persisted_sample_count:]
+            analyze_danmaku_items(new_samples)
+            for sample in new_samples:
                 db.add(DanmakuSample(
                     danmaku_analysis_id=task.id,
                     content=sample["content"],
                     progress_ms=sample["progress_ms"],
                     segment_index=sample["segment_index"],
+                    sentiment_label=sample["sentiment_label"],
+                    sentiment_score=sample["sentiment_score"],
                 ))
             task.requested_segments = result.requested_segments
             task.requested_segment_indexes = json.dumps(result.requested_segment_indexes)
@@ -215,7 +251,7 @@ async def start_danmaku_sampling(req: dict, background_tasks: BackgroundTasks):
         db.refresh(task)
         background_tasks.add_task(_run_danmaku_task, task.id, request_id=get_request_id())
         log_event(logger, "INFO", "danmaku.task_created", "弹幕抽样任务已创建", analysis_id=task.analysis_id, task_type="danmaku_sampling")
-        return _task_payload(task)
+        return _task_payload(task, _timeline_payload(db, task))
     except HTTPException:
         db.rollback()
         raise
@@ -237,7 +273,7 @@ def get_danmaku_sampling_for_analysis(analysis_id: int, part_index: int | None =
         task = query.order_by(desc(DanmakuAnalysis.updated_at), desc(DanmakuAnalysis.id)).first()
         if not task:
             raise HTTPException(404, "该视频尚未开始弹幕抽样")
-        return _task_payload(task)
+        return _task_payload(task, _timeline_payload(db, task))
     finally:
         db.close()
 
@@ -250,6 +286,6 @@ def get_danmaku_sampling(danmaku_analysis_id: int):
         task = db.get(DanmakuAnalysis, danmaku_analysis_id)
         if not task:
             raise HTTPException(404, "弹幕抽样任务不存在")
-        return _task_payload(task)
+        return _task_payload(task, _timeline_payload(db, task))
     finally:
         db.close()

@@ -3,6 +3,7 @@ import type {
   AnalysisMode,
   AnalysisResult,
   AnalysisGroup,
+  DanmakuTask,
   GroupAISummary,
   GroupAnalysisResult,
   GroupReanalysisStatus,
@@ -82,6 +83,22 @@ export function getStatus(analysisId: number) {
 
 export function getResults(analysisId: number) {
   return req<AnalysisResult>('/results/' + analysisId);
+}
+
+export function startDanmakuSampling(analysisId: number, partIndex: number, sampleLimit: number) {
+  return req<DanmakuTask>('/danmaku', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ analysis_id: analysisId, part_index: partIndex, sample_limit: sampleLimit }),
+  });
+}
+
+export function getDanmakuSamplingForAnalysis(analysisId: number) {
+  return req<DanmakuTask>('/danmaku/by-analysis/' + analysisId);
+}
+
+export function getDanmakuTimeline(danmakuAnalysisId: number) {
+  return req<DanmakuTask>('/danmaku/' + danmakuAnalysisId);
 }
 
 export function getFilteredKeywords(analysisId: number, filters: FilterState) {

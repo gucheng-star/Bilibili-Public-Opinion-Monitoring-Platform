@@ -29,6 +29,10 @@
 .app-state__pulse { width: .875rem; height: .875rem; margin-bottom: 1.5rem; }
 .app-state__empty-icon { opacity: .24; color: var(--accent); }
 .app-state__action { margin-top:1rem; font-size:.75rem; }
+.analysis-source-tabs { display:inline-flex; gap:.2rem; margin-top:1rem; padding:.2rem; border:1px solid var(--border); border-radius:var(--radius); background:var(--bg-subtle); }
+.analysis-source-tabs button { min-height:2rem; padding:.3rem .72rem; border:0; border-radius:calc(var(--radius) - .16rem); color:var(--text-muted); background:transparent; font:600 .72rem var(--font-ui); cursor:pointer; transition:background .18s ease, color .18s ease, box-shadow .18s ease; }
+.analysis-source-tabs button:hover:not(.active) { color:var(--text-primary); background:var(--selection-bg-hover); }
+.analysis-source-tabs button.active { color:var(--text-primary); background:var(--bg-card); box-shadow:0 1px 3px rgba(17,24,39,.08); }
 .reanalyze-dialog { position:fixed; inset:0; z-index:200; display:flex; align-items:center; justify-content:center; padding:1rem; background:rgba(5,10,21,.62); backdrop-filter:blur(8px); }
 .reanalyze-dialog__panel { width:min(100%,28rem); padding:1.5rem; background:var(--bg-card); border:1px solid var(--border-strong); border-radius:var(--radius-xl); box-shadow:var(--shadow-modal); }
 .reanalyze-dialog__panel h3 { margin-bottom:.75rem; color:var(--text-primary); font-size:1rem; font-weight:700; }

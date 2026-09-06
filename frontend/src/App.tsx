@@ -7,6 +7,7 @@ import GenderChart from './components/GenderChart';
 import RegionMap from './components/RegionMap';
 import WordCloudCard from './components/WordCloudCard';
 import HeatTimeline from './components/HeatTimeline';
+import DanmakuTimeline from './components/DanmakuTimeline';
 import CommentEntryCard from './components/CommentEntryCard';
 import { AnalysisCommentDetailPage, GroupCommentDetailPage } from './components/CommentDetailPage';
 import HistoryPanel from './components/HistoryPanel';
@@ -19,11 +20,11 @@ import AnalysisProgress from './components/AnalysisProgress';
 import EventWorkspace from './components/EventWorkspace';
 import AppErrorBoundary from './components/AppErrorBoundary';
 import SettingsPage from './pages/SettingsPage';
-import { getAuthStatus, getFilteredKeywords, getResults, getRuntimeActivity, getSettings, getStatus, logout, prepareRuntimeExit, reanalyze, startAnalysis } from './services/api';
+import { getAuthStatus, getDanmakuSamplingForAnalysis, getDanmakuTimeline, getFilteredKeywords, getResults, getRuntimeActivity, getSettings, getStatus, logout, prepareRuntimeExit, reanalyze, startAnalysis, startDanmakuSampling } from './services/api';
 import { checkForUpdates, downloadUpdate, installDownloadedUpdate, isDesktopRuntime, onCloseRequested, respondToCloseRequest } from './services/desktop';
 import { activeFilterFields, recordBreadcrumb, setDiagnosticState, type DiagnosticState } from './services/devDiagnostics';
 import { LatestRequestGuard, runConfirmedWorkflowTransition } from './services/latestRequestGuard';
-import type { AnalysisResult, FilterState, AnalysisMode, KeywordItem, SentimentLLMV2, StyleDistributionV2, V2Emotion, V2Style, StatusResponse } from './types';
+import type { AnalysisResult, DanmakuTask, DanmakuTimeline as DanmakuTimelineData, FilterState, AnalysisMode, KeywordItem, SentimentLLMV2, StyleDistributionV2, V2Emotion, V2Style, StatusResponse } from './types';
 import { EMPTY_FILTERS, applyCommentFilters, applyDuplicateMode, buildDuplicateGroups, listRegions, normalizeProvince } from './utils/commentFilters';
 import { filtersEqual, filtersSearchString, searchParamsToFilters } from './utils/commentQuery';
 import { buildCommentTree, commentKey } from './utils/commentTree';
@@ -76,6 +77,14 @@ function App() {
   const [hasApiKey, setHasApiKey] = useState(false);
   const [reanalyzing, setReanalyzing] = useState(false);
   const [reanalysisStatus, setReanalysisStatus] = useState<StatusResponse | null>(null);
+  const [workspaceSource, setWorkspaceSource] = useState<'comments' | 'danmaku'>('comments');
+  const [danmakuTask, setDanmakuTask] = useState<DanmakuTask | null>(null);
+  const [danmakuTimeline, setDanmakuTimeline] = useState<DanmakuTimelineData | null>(null);
+  const [danmakuLoading, setDanmakuLoading] = useState(false);
+  const [danmakuError, setDanmakuError] = useState<string | null>(null);
+  const danmakuRequestRef = useRef(0);
+  const danmakuTaskId = danmakuTask?.danmaku_analysis_id;
+  const danmakuTaskStatus = danmakuTask?.status;
   const [reanalyzeModal, setReanalyzeModal] = useState(false);
   const [updateInfo, setUpdateInfo] = useState<{ version?: string; notes?: string; notesUrl?: string } | null>(null);
   const [updateBusy, setUpdateBusy] = useState(false);
@@ -148,6 +157,52 @@ function App() {
 
   useEffect(() => { getAuthStatus().then(d=>setLoggedIn(d.logged_in)).catch(()=>setLoggedIn(false)); }, []);
   useEffect(() => { getSettings().then(s => { setHasApiKey(s.llm.sentiment.has_api_key); }).catch(() => {}); }, []);
+  // This only reads an already persisted local task. Switching sources never
+  // starts a B站 request; collection remains behind the explicit action below.
+  useEffect(() => {
+    const request = ++danmakuRequestRef.current;
+    if (analysisId === null) {
+      setDanmakuTask(null);
+      setDanmakuTimeline(null);
+      setDanmakuLoading(false);
+      setDanmakuError(null);
+      return;
+    }
+    setDanmakuLoading(true);
+    setDanmakuError(null);
+    getDanmakuSamplingForAnalysis(analysisId)
+      .then(async task => {
+        if (danmakuRequestRef.current !== request) return;
+        setDanmakuTask(task);
+        setDanmakuTimeline(task.timeline ?? null);
+      })
+      .catch(() => {
+        if (danmakuRequestRef.current !== request) return;
+        setDanmakuTask(null);
+        setDanmakuTimeline(null);
+      })
+      .finally(() => {
+        if (danmakuRequestRef.current === request) setDanmakuLoading(false);
+      });
+  }, [analysisId]);
+
+  useEffect(() => {
+    if (danmakuTaskId === undefined || danmakuTaskStatus === undefined || !['pending', 'fetching', 'analyzing'].includes(danmakuTaskStatus)) return;
+    let active = true;
+    const poll = async () => {
+      try {
+        const payload = await getDanmakuTimeline(danmakuTaskId);
+        if (!active) return;
+        setDanmakuTask(payload);
+        setDanmakuTimeline(payload.timeline ?? null);
+      } catch {
+        // A transient local read error should not replace the task's persisted status.
+      }
+    };
+    void poll();
+    const timer = window.setInterval(() => { void poll(); }, 1200);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [danmakuTaskId, danmakuTaskStatus]);
   // Hydrate workspace filters before mirroring state back into the URL, so a
   // refreshed or shared link cannot be replaced with empty default filters.
   useEffect(() => {
@@ -354,6 +409,7 @@ function App() {
     pollStatusRef.current = null;
     setReanalyzing(false);
     setReanalysisStatus(null);
+    setWorkspaceSource('comments');
     setLoading(true); setError(null); setResults(null); setSelectedGroupId(null); cancelRef.current = false;
     setAnalysisMode('nlp');
     setProgress(0); setProgressMax(_maxComments); setStatusText('正在获取视频信息...');
@@ -411,6 +467,7 @@ function App() {
     }
     setReanalyzing(false);
     setReanalysisStatus(null);
+    setWorkspaceSource('comments');
     setSelectedGroupId(null);
     setLoading(true); setError(null); setStatusText('加载中...');
     try {
@@ -479,8 +536,24 @@ function App() {
     setResults(data);
     setAnalysisId(data.analysis_id);
     setAnalysisMode(data.mode);
+    setWorkspaceSource('comments');
     setFilters({ ...EMPTY_FILTERS });
   }, []);
+  const handleStartDanmaku = useCallback(async (partIndex: number, sampleLimit: number) => {
+    if (analysisId === null) return;
+    setDanmakuLoading(true);
+    setDanmakuError(null);
+    setDanmakuTimeline(null);
+    try {
+      const task = await startDanmakuSampling(analysisId, partIndex, sampleLimit);
+      setDanmakuTask(task);
+      setWorkspaceSource('danmaku');
+    } catch (reason) {
+      setDanmakuError(reason instanceof Error ? reason.message : '创建弹幕抽样任务失败');
+    } finally {
+      setDanmakuLoading(false);
+    }
+  }, [analysisId]);
   const resolveClose = async (action: 'exit' | 'tray' | 'cancel') => {
     if (action === 'exit') await prepareRuntimeExit().catch(() => {});
     await respondToCloseRequest(action, closeRequest?.requestId).catch(() => {});
@@ -697,6 +770,11 @@ function App() {
         )}
         {results && <>
           <VideoInfo title={results.video_title} play={results.video_play} totalComments={results.total_comments}/>
+          <div className="analysis-source-tabs" role="tablist" aria-label="单视频数据源">
+            <button type="button" className={workspaceSource === 'comments' ? 'active' : ''} role="tab" aria-selected={workspaceSource === 'comments'} onClick={() => setWorkspaceSource('comments')}>评论分析</button>
+            <button type="button" className={workspaceSource === 'danmaku' ? 'active' : ''} role="tab" aria-selected={workspaceSource === 'danmaku'} onClick={() => setWorkspaceSource('danmaku')}>弹幕时间轴</button>
+          </div>
+          {workspaceSource === 'comments' ? <>
           <FilterBar
             filters={filters}
             onApply={handleApplyFilters}
@@ -741,6 +819,15 @@ function App() {
               search={filtersSearchString(filters)}
             />
           </div>
+          </> : analysisId && <div className="card-enter mt-4">
+            <DanmakuTimeline
+              task={danmakuTask}
+              timeline={danmakuTimeline}
+              loadingTask={danmakuLoading}
+              error={danmakuError}
+              onStart={handleStartDanmaku}
+            />
+          </div>}
         </>}
         </>}
 

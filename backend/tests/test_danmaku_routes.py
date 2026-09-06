@@ -49,6 +49,8 @@ class DanmakuRouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response["status"], "pending")
         self.assertEqual(response["cid"], 789)
         self.assertEqual(response["segment_count"], 1)
+        self.assertEqual(response["timeline"]["state"], "not_sampled")
+        self.assertTrue(all(bucket["coverage"] == "not_sampled" for bucket in response["timeline"]["buckets"]))
         self.assertEqual(len(tasks.tasks), 1)
         session = self.sessions()
         try:
@@ -92,7 +94,9 @@ class DanmakuRouteTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((saved.requested_segments, saved.successful_segments, saved.kept_count), (2, 1, 1))
             self.assertEqual(saved.failed_segment_indexes, "[1]")
             self.assertEqual(saved.requested_segment_indexes, "[0, 1]")
-            self.assertEqual(session.query(DanmakuSample).filter_by(danmaku_analysis_id=task_id).count(), 1)
+            sample = session.query(DanmakuSample).filter_by(danmaku_analysis_id=task_id).one()
+            self.assertIn(sample.sentiment_label, {"positive", "neutral", "negative"})
+            self.assertIsNotNone(sample.sentiment_score)
             self.assertEqual(session.query(Analysis).filter_by(id=self.analysis_id).one().total_comments, 0)
         finally:
             session.close()
@@ -142,6 +146,8 @@ class DanmakuRouteTests(unittest.IsolatedAsyncioTestCase):
             response = danmaku_routes.get_danmaku_sampling(task_id)
         self.assertEqual(response["status"], "error")
         self.assertEqual(response["error_msg"], "弹幕获取失败，可重试")
+        self.assertEqual(response["timeline"]["state"], "failed")
+        self.assertTrue(all(bucket["coverage"] == "failed" for bucket in response["timeline"]["buckets"]))
 
     async def test_progress_and_samples_commit_together_when_later_fetch_crashes(self):
         session = self.sessions()
