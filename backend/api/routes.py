@@ -91,7 +91,24 @@ async def get_video(bv: str):
     async with httpx.AsyncClient(timeout=15) as client:
         info = await get_video_info(client, bv)
     if not info: raise HTTPException(404, 'Video not found')
-    return info
+    return _public_video_info(info)
+
+
+def _public_video_info(info: dict) -> dict:
+    """Expose only the metadata needed to preview and select real video parts."""
+    return {
+        'bv': info['bv'], 'avid': info['avid'], 'title': info['title'],
+        'cover': info['cover'], 'play': info['play'],
+        'comment_count': info['comment_count'], 'duration': info['duration'],
+        'pages': [
+            {
+                'page': page.get('page'),
+                'part': page.get('part', ''),
+                'duration': page.get('duration', 0),
+            }
+            for page in info.get('pages') or []
+        ],
+    }
 
 async def _run_analysis(
     analysis_id: int, bv: str, avid: int, max_comments: int = 100,

@@ -47,7 +47,7 @@ class DanmakuRouteTests(unittest.IsolatedAsyncioTestCase):
                 {"analysis_id": self.analysis_id, "part_index": 2, "sample_limit": 10}, tasks,
             )
         self.assertEqual(response["status"], "pending")
-        self.assertEqual(response["cid"], 789)
+        self.assertNotIn("cid", response)
         self.assertEqual(response["segment_count"], 1)
         self.assertEqual(response["timeline"]["state"], "not_sampled")
         self.assertTrue(all(bucket["coverage"] == "not_sampled" for bucket in response["timeline"]["buckets"]))

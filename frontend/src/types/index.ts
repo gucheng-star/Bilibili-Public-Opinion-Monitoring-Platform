@@ -76,7 +76,6 @@ export interface DanmakuTask {
   danmaku_analysis_id: number;
   analysis_id: number | null;
   bv: string;
-  cid: number;
   part_index: number;
   attempt_index: number;
   part_title: string;
@@ -255,7 +254,8 @@ export interface StatusResponse {
 
 /** Video info response */
 export interface VideoInfoResponse {
-  bv: string; avid: number; title: string; cover: string; play: number; comment_count: number;
+  bv: string; avid: number; title: string; cover: string; play: number; comment_count: number; duration: number;
+  pages: Array<{ page: number; part: string; duration: number }>;
 }
 
 /** Settings response */

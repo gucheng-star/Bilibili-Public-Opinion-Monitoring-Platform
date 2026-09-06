@@ -10,6 +10,38 @@ from models import database
 
 
 class DanmakuMigrationTests(unittest.TestCase):
+    def test_comment_collection_contract_backfills_existing_analysis_counts_safely(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "legacy-comment-collection.sqlite3"
+            connection = sqlite3.connect(path)
+            connection.execute("""
+                CREATE TABLE analyses (
+                    id INTEGER PRIMARY KEY, bv VARCHAR(20), avid INTEGER,
+                    status VARCHAR(20), total_comments INTEGER,
+                    sentiment_llm_schema_version INTEGER NOT NULL DEFAULT 0
+                )
+            """)
+            connection.execute(
+                "INSERT INTO analyses (id, bv, avid, status, total_comments) VALUES (1, 'BV1LEGACY', 1, 'done', 17)",
+            )
+            connection.commit()
+            connection.close()
+            engine = create_engine(f"sqlite:///{path}")
+            try:
+                database.Base.metadata.create_all(engine)
+                database._migrate(engine)
+                database._validate_schema(engine)
+                connection = sqlite3.connect(path)
+                row = connection.execute("""
+                    SELECT comment_target_count, comment_fetched_count, comment_collection_status,
+                           comment_termination_reason, comment_error_summary
+                    FROM analyses WHERE id = 1
+                """).fetchone()
+                self.assertEqual(row, (17, 17, "completed", "legacy_record", None))
+                connection.close()
+            finally:
+                engine.dispose()
+
     def test_existing_database_is_backed_up_before_danmaku_tables_are_created(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "legacy.sqlite3"
@@ -31,6 +63,11 @@ class DanmakuMigrationTests(unittest.TestCase):
                 self.assertTrue({"danmaku_analyses", "danmaku_samples"} <= tables)
                 connection = sqlite3.connect(path)
                 self.assertEqual(connection.execute("SELECT bv FROM analyses").fetchone()[0], "BV1LEGACY")
+                columns = {item[1] for item in connection.execute("PRAGMA table_info(analyses)")}
+                self.assertTrue({
+                    "comment_target_count", "comment_fetched_count", "comment_collection_status",
+                    "comment_termination_reason", "comment_error_summary",
+                } <= columns)
                 connection.close()
             finally:
                 engine.dispose()

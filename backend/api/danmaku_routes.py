@@ -35,7 +35,6 @@ def _task_payload(task: DanmakuAnalysis, timeline: dict | None = None) -> dict:
         "danmaku_analysis_id": task.id,
         "analysis_id": task.analysis_id,
         "bv": task.bv,
-        "cid": task.cid,
         "part_index": task.part_index,
         "attempt_index": task.attempt_index,
         "part_title": task.part_title,

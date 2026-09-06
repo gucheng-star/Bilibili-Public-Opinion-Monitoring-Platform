@@ -3,6 +3,13 @@ from datetime import datetime
 import httpx
 from config import BILIBILI_USER_AGENT, BILIBILI_REFERER, MAX_COMMENTS, REQUEST_DELAY
 from services.auth import get_cookie
+from services.comment_collection import (
+    COMMENT_COLLECTION_COMPLETED,
+    COMMENT_COLLECTION_FAILED,
+    COMMENT_COLLECTION_PARTIAL,
+    CommentCollectionResult,
+    safe_comment_collection_error,
+)
 from services.logging_config import get_logger, log_event
 
 
@@ -62,6 +69,7 @@ async def fetch_comments(client: httpx.AsyncClient, avid: int, max_comments=None
     page_size = 20
     limit = max_comments or MAX_COMMENTS
     wait = delay if delay is not None else REQUEST_DELAY
+    termination_reason = "source_exhausted"
     while len(all_comments) < limit:
         try:
             resp = await client.get('https://api.bilibili.com/x/v2/reply',
@@ -69,13 +77,25 @@ async def fetch_comments(client: httpx.AsyncClient, avid: int, max_comments=None
                 headers=_headers())
         except Exception as e:
             log_event(logger, "ERROR", "bilibili.fetch_page_failed", "评论分页请求失败", batch_index=page, count=len(all_comments), exception=e)
+            termination_reason = "request_failed"
             break
         if resp.status_code != 200:
             log_event(logger, "WARNING", "bilibili.fetch_page_failed", "评论分页接口返回异常状态", batch_index=page, count=len(all_comments), status_code=resp.status_code)
+            termination_reason = "http_error"
             break
-        j = resp.json()
+        try:
+            j = resp.json()
+        except Exception as exc:
+            log_event(logger, "WARNING", "bilibili.fetch_page_rejected", "评论分页接口响应格式无效", batch_index=page, count=len(all_comments), exception=exc)
+            termination_reason = "invalid_response"
+            break
+        if not isinstance(j, dict):
+            log_event(logger, "WARNING", "bilibili.fetch_page_rejected", "评论分页接口响应格式无效", batch_index=page, count=len(all_comments))
+            termination_reason = "invalid_response"
+            break
         if j.get('code') != 0:
             log_event(logger, "WARNING", "bilibili.fetch_page_rejected", "评论分页接口返回业务错误", batch_index=page, count=len(all_comments))
+            termination_reason = "platform_error"
             break
         replies = j.get('data',{}).get('replies')
         if replies is None or not replies: break
@@ -95,11 +115,27 @@ async def fetch_comments(client: httpx.AsyncClient, avid: int, max_comments=None
             progress_callback(len(all_comments))
         log_event(logger, "INFO", "bilibili.fetch_page_completed", "评论分页抓取已完成", batch_index=page, count=len(all_comments))
         if len(all_comments) >= limit:
+            termination_reason = "target_reached"
             break
         page += 1
         await asyncio.sleep(wait + random.uniform(0, 0.5))
-        if page > 50: break
-    return all_comments
+        if page > 50:
+            termination_reason = "page_limit"
+            break
+
+    if termination_reason == "target_reached":
+        collection_status = COMMENT_COLLECTION_COMPLETED
+    elif all_comments:
+        collection_status = COMMENT_COLLECTION_PARTIAL
+    else:
+        collection_status = COMMENT_COLLECTION_FAILED
+    return CommentCollectionResult(
+        comments=all_comments,
+        target_count=limit,
+        collection_status=collection_status,
+        termination_reason=termination_reason,
+        error_summary=safe_comment_collection_error(termination_reason, len(all_comments)),
+    )
 
 def _map_gender(sex):
     return {'男':'男','女':'女'}.get(sex,'保密')

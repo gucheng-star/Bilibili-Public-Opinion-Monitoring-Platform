@@ -51,6 +51,11 @@ class Analysis(Base):
     mode = Column(String(10), default="nlp")
     total_comments = Column(Integer, default=0)
     processed_comments = Column(Integer, default=0)
+    comment_target_count = Column(Integer, nullable=False, default=0, server_default="0")
+    comment_fetched_count = Column(Integer, nullable=False, default=0, server_default="0")
+    comment_collection_status = Column(String(20), nullable=False, default="pending", server_default="pending")
+    comment_termination_reason = Column(String(40))
+    comment_error_summary = Column(Text)
     sentiment_llm_schema_version = Column(
         Integer, nullable=False, default=LLM_SENTIMENT_SCHEMA_NONE, server_default="0",
     )
@@ -356,6 +361,16 @@ def _pending_column_migrations(eng):
             migrations.append(("analyses", "ALTER TABLE analyses ADD COLUMN mode VARCHAR(10) DEFAULT 'nlp'"))
         if "processed_comments" not in cols:
             migrations.append(("analyses", "ALTER TABLE analyses ADD COLUMN processed_comments INTEGER DEFAULT 0"))
+        if "comment_target_count" not in cols:
+            migrations.append(("analyses", "ALTER TABLE analyses ADD COLUMN comment_target_count INTEGER NOT NULL DEFAULT 0"))
+        if "comment_fetched_count" not in cols:
+            migrations.append(("analyses", "ALTER TABLE analyses ADD COLUMN comment_fetched_count INTEGER NOT NULL DEFAULT 0"))
+        if "comment_collection_status" not in cols:
+            migrations.append(("analyses", "ALTER TABLE analyses ADD COLUMN comment_collection_status VARCHAR(20) NOT NULL DEFAULT 'pending'"))
+        if "comment_termination_reason" not in cols:
+            migrations.append(("analyses", "ALTER TABLE analyses ADD COLUMN comment_termination_reason VARCHAR(40)"))
+        if "comment_error_summary" not in cols:
+            migrations.append(("analyses", "ALTER TABLE analyses ADD COLUMN comment_error_summary TEXT"))
         if "sentiment_llm_schema_version" not in cols:
             migrations.append((
                 "analyses",
@@ -537,8 +552,43 @@ def _migrate(eng):
             _migrate_danmaku_attempts(connection)
         for _table, sql in migrations:
             connection.execute(text(sql))
+        analysis_columns = (
+            {column["name"] for column in inspect(connection).get_columns("analyses")}
+            if "analyses" in tables else set()
+        )
+        if migrations and {"total_comments", "comment_target_count", "comment_fetched_count", "comment_collection_status"} <= analysis_columns:
+            _backfill_comment_collection_contract(connection)
         if needs_version_backfill:
             _migrate_llm_sentiment_versions(connection, tables)
+
+
+def _backfill_comment_collection_contract(connection) -> None:
+    """Give historical records an honest, stable collection contract."""
+    from sqlalchemy import text
+
+    connection.execute(text("""
+        UPDATE analyses
+        SET comment_target_count = total_comments,
+            comment_fetched_count = total_comments,
+            comment_collection_status = CASE
+                WHEN status IN ('done', 'analyzing') THEN 'completed'
+                WHEN status IN ('error', 'interrupted') THEN 'failed'
+                WHEN status = 'fetching' THEN 'fetching'
+                ELSE 'pending'
+            END,
+            comment_termination_reason = CASE
+                WHEN status IN ('done', 'analyzing') THEN 'legacy_record'
+                WHEN status IN ('error', 'interrupted') THEN 'legacy_failure'
+                ELSE NULL
+            END,
+            comment_error_summary = CASE
+                WHEN status IN ('error', 'interrupted') THEN '历史评论采集未完成，可重新采集'
+                ELSE NULL
+            END
+        WHERE comment_target_count = 0
+          AND comment_fetched_count = 0
+          AND comment_collection_status = 'pending'
+    """))
 
 
 def _migrate_danmaku_attempts(connection) -> None:
@@ -675,7 +725,10 @@ def _validate_schema(eng) -> None:
     """Reject incomplete schema or invalid versioned sentiment state at startup."""
     from sqlalchemy import inspect
     required_columns = {
-        "analyses": {"sentiment_llm_schema_version"},
+        "analyses": {
+            "sentiment_llm_schema_version", "comment_target_count", "comment_fetched_count",
+            "comment_collection_status", "comment_termination_reason", "comment_error_summary",
+        },
         "comments": {"sentiment_llm_schema_version"},
         "sentiment_results": {"sentiment_llm_schema_version"},
         "analysis_groups": {"id", "name", "description", "created_at", "updated_at"},

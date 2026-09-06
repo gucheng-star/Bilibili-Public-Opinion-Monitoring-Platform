@@ -1,7 +1,13 @@
 import unittest
 from unittest.mock import AsyncMock, patch
 
+from api import routes
 from services.bilibili import fetch_comments, get_video_info
+from services.comment_collection import (
+    COMMENT_COLLECTION_COMPLETED,
+    COMMENT_COLLECTION_FAILED,
+    COMMENT_COLLECTION_PARTIAL,
+)
 
 
 def make_reply(rpid: int, root: int = 0, parent: int = 0):
@@ -69,6 +75,17 @@ class BilibiliProgressTests(unittest.IsolatedAsyncioTestCase):
         ])
         self.assertEqual(info["comment_count"], 2)
 
+    async def test_public_video_info_exposes_real_parts_without_cid(self):
+        internal = await get_video_info(VideoInfoClient(), "BV1TEST00000")
+
+        public = routes._public_video_info(internal)
+
+        self.assertEqual(public["pages"], [
+            {"page": 1, "part": "上", "duration": 600},
+            {"page": 2, "part": "下", "duration": 60},
+        ])
+        self.assertNotIn("cid", str(public))
+
     async def test_reports_real_comment_count_after_each_page(self):
         client = FakeClient([
             [make_reply(1), make_reply(2)],
@@ -88,6 +105,67 @@ class BilibiliProgressTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual([comment["rpid"] for comment in comments], [1, 2, 3])
         self.assertEqual(progress, [2, 3])
+        self.assertEqual(comments.collection_status, COMMENT_COLLECTION_COMPLETED)
+        self.assertEqual(comments.target_count, 3)
+        self.assertEqual(comments.fetched_count, 3)
+        self.assertIsNone(comments.error_summary)
+
+    async def test_keeps_partial_result_and_uses_safe_error_summary(self):
+        class ErrorClient:
+            def __init__(self):
+                self.calls = 0
+
+            async def get(self, *_args, **_kwargs):
+                self.calls += 1
+                if self.calls == 1:
+                    return FakeResponse([make_reply(1)])
+                raise RuntimeError("Cookie: SESSDATA=private-api-key")
+
+        with patch("services.bilibili.asyncio.sleep", new=AsyncMock()), patch("services.bilibili.random.uniform", return_value=0):
+            result = await fetch_comments(ErrorClient(), avid=123, max_comments=3, delay=0)
+
+        self.assertEqual(result.collection_status, COMMENT_COLLECTION_PARTIAL)
+        self.assertEqual(result.termination_reason, "request_failed")
+        self.assertEqual(result.fetched_count, 1)
+        self.assertNotIn("SESSDATA", result.error_summary)
+        self.assertNotIn("private-api-key", result.error_summary)
+
+    async def test_first_page_failure_has_retryable_safe_summary(self):
+        class ErrorClient:
+            async def get(self, *_args, **_kwargs):
+                raise RuntimeError("Authorization: Bearer secret")
+
+        result = await fetch_comments(ErrorClient(), avid=123, max_comments=3, delay=0)
+
+        self.assertEqual(result.collection_status, COMMENT_COLLECTION_FAILED)
+        self.assertEqual(result.fetched_count, 0)
+        self.assertEqual(result.error_summary, "评论获取失败，可重新采集")
+
+    async def test_source_exhaustion_before_target_is_partial_not_complete(self):
+        with patch("services.bilibili.asyncio.sleep", new=AsyncMock()), patch("services.bilibili.random.uniform", return_value=0):
+            result = await fetch_comments(FakeClient([[make_reply(1)], []]), avid=123, max_comments=3, delay=0)
+
+        self.assertEqual(result.collection_status, COMMENT_COLLECTION_PARTIAL)
+        self.assertEqual(result.termination_reason, "source_exhausted")
+        self.assertEqual(result.error_summary, "评论获取未完成，已保存部分结果，可重新采集")
+
+    async def test_invalid_platform_payload_is_failed_without_exposing_details(self):
+        class InvalidResponse:
+            status_code = 200
+
+            @staticmethod
+            def json():
+                raise ValueError("Authorization: Bearer secret")
+
+        class InvalidClient:
+            async def get(self, *_args, **_kwargs):
+                return InvalidResponse()
+
+        result = await fetch_comments(InvalidClient(), avid=123, max_comments=3, delay=0)
+
+        self.assertEqual(result.collection_status, COMMENT_COLLECTION_FAILED)
+        self.assertEqual(result.termination_reason, "invalid_response")
+        self.assertNotIn("secret", result.error_summary)
 
     async def test_preserves_root_and_parent_relationships(self):
         client = FakeClient([[
