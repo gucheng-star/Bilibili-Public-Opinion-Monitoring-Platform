@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import SettingsPanel from '../components/SettingsPanel';
 import type { SettingsResponse } from '../types';
+import { getThemePreference, setThemePreference, type ThemePreference } from '../theme';
 import './SettingsPage.css';
 
 export interface SettingsPageProps {
@@ -9,6 +10,18 @@ export interface SettingsPageProps {
   desktopMode?: boolean;
   onCheckUpdate?: () => void;
   onLogout: () => Promise<void>;
+}
+
+const themeChoices: Array<{ value: ThemePreference; label: string; description: string }> = [
+  { value: 'light', label: '浅色', description: '始终使用浅色界面' },
+  { value: 'dark', label: '暗色', description: '始终使用暗色界面' },
+  { value: 'system', label: '跟随系统', description: '随系统外观自动切换' },
+];
+
+function ThemeChoiceIcon({ theme }: { theme: ThemePreference }) {
+  if (theme === 'light') return <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" /></svg>;
+  if (theme === 'dark') return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.7 15.4A8.6 8.6 0 1 1 8.6 3.3 6.8 6.8 0 0 0 20.7 15.4Z" /></svg>;
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2" /><path d="M8 21h8M12 17v4" /></svg>;
 }
 
 export default function SettingsPage({
@@ -19,6 +32,7 @@ export default function SettingsPage({
 }: SettingsPageProps) {
   const [logoutBusy, setLogoutBusy] = useState(false);
   const [logoutError, setLogoutError] = useState<string | null>(null);
+  const [themePreference, setThemePreferenceState] = useState<ThemePreference>(getThemePreference);
 
   const handleLogout = async () => {
     setLogoutBusy(true);
@@ -30,6 +44,11 @@ export default function SettingsPage({
     } finally {
       setLogoutBusy(false);
     }
+  };
+
+  const chooseTheme = (preference: ThemePreference) => {
+    setThemePreferenceState(preference);
+    setThemePreference(preference);
   };
 
   return (
@@ -47,6 +66,20 @@ export default function SettingsPage({
           <p>管理账号、应用与智能分析模型配置。所有设置和敏感信息仅保留在本机。</p>
         </div>
       </div>
+
+      <section className="settings-page__appearance" aria-labelledby="appearance-theme-title">
+        <div className="settings-page__appearance-copy">
+          <span className="settings-page__appearance-eyebrow">界面外观</span>
+          <h2 id="appearance-theme-title">外观主题</h2>
+          <p>选择应用启动时的默认外观，立即生效。</p>
+        </div>
+        <div className="settings-page__theme-choices" role="radiogroup" aria-label="默认外观主题">
+          {themeChoices.map(choice => <button key={choice.value} type="button" role="radio" aria-checked={themePreference === choice.value} className={`settings-page__theme-choice settings-page__theme-choice--${choice.value}${themePreference === choice.value ? ' is-active' : ''}`} onClick={() => chooseTheme(choice.value)} title={choice.description}>
+            <ThemeChoiceIcon theme={choice.value} />
+            <span>{choice.label}</span>
+          </button>)}
+        </div>
+      </section>
 
       <SettingsPanel
         onSettingsChanged={onSettingsChanged}

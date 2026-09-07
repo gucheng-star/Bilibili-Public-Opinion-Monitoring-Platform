@@ -291,6 +291,39 @@ def get_danmaku_sampling_for_analysis(analysis_id: int, part_index: int | None =
         db.close()
 
 
+@router.get("/{danmaku_analysis_id}/samples")
+def get_danmaku_samples(danmaku_analysis_id: int, offset: int = 0, limit: int = 30):
+    """Return a bounded, flat page of locally retained sampled danmaku."""
+    if offset < 0:
+        raise HTTPException(400, "分页偏移量无效")
+    if not 1 <= limit <= 100:
+        raise HTTPException(400, "每页数量必须在 1 到 100 之间")
+    db = SessionLocal()
+    try:
+        task = db.get(DanmakuAnalysis, danmaku_analysis_id)
+        if not task:
+            raise HTTPException(404, "弹幕抽样任务不存在")
+        query = (
+            db.query(DanmakuSample)
+            .filter_by(danmaku_analysis_id=task.id)
+            .order_by(DanmakuSample.progress_ms.asc(), DanmakuSample.id.asc())
+        )
+        samples = query.offset(offset).limit(limit).all()
+        return {
+            "danmaku_analysis_id": task.id,
+            "total": query.count(),
+            "items": [{
+                "id": sample.id,
+                "content": sample.content,
+                "progress_ms": sample.progress_ms,
+                "segment_index": sample.segment_index,
+                "sentiment_label": sample.sentiment_label,
+            } for sample in samples],
+        }
+    finally:
+        db.close()
+
+
 @router.get("/{danmaku_analysis_id}")
 def get_danmaku_sampling(danmaku_analysis_id: int):
     """Read persisted progress without starting network work."""

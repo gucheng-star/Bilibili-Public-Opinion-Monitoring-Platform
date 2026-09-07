@@ -6,6 +6,9 @@ import App from './App.tsx'
 import { initializeDesktopRuntime, isDesktopRuntime } from './services/desktop.ts'
 import AppErrorBoundary from './components/AppErrorBoundary.tsx'
 import { initializeDevDiagnostics, installGlobalErrorHandlers, reportDiagnosticError } from './services/devDiagnostics.ts'
+import { initializeTheme } from './theme.ts'
+
+initializeTheme()
 
 if (import.meta.env.DEV) {
   installGlobalErrorHandlers()

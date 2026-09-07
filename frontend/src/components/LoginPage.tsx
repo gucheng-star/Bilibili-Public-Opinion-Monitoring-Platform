@@ -106,7 +106,6 @@ export default function LoginPage({ onLogin }: Props) {
       </section>
       <section className="login-access" aria-label="登录">
       <div className="login-theme-control">
-        <span>界面外观</span>
         <ThemeToggle />
       </div>
       {step === 'welcome' ? (

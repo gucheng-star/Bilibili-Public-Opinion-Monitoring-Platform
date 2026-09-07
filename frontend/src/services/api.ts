@@ -3,6 +3,7 @@ import type {
   AnalysisMode,
   AnalysisResult,
   AnalysisGroup,
+  DanmakuSamplePage,
   DanmakuTask,
   GroupAISummary,
   GroupAnalysisResult,
@@ -99,6 +100,10 @@ export function getDanmakuSamplingForAnalysis(analysisId: number) {
 
 export function getDanmakuTimeline(danmakuAnalysisId: number) {
   return req<DanmakuTask>('/danmaku/' + danmakuAnalysisId);
+}
+
+export function getDanmakuSamples(danmakuAnalysisId: number, offset = 0, limit = 30) {
+  return req<DanmakuSamplePage>(`/danmaku/${danmakuAnalysisId}/samples?offset=${offset}&limit=${limit}`);
 }
 
 export function getFilteredKeywords(analysisId: number, filters: FilterState) {

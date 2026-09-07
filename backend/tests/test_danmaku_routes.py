@@ -103,6 +103,42 @@ class DanmakuRouteTests(unittest.IsolatedAsyncioTestCase):
         finally:
             session.close()
 
+    def test_sample_listing_returns_flat_rows_in_playback_order(self):
+        session = self.sessions()
+        task = DanmakuAnalysis(
+            analysis_id=self.analysis_id, bv="BV1TEST00000", avid=123, cid=456,
+            video_duration_seconds=60, sample_limit=2, segment_count=1, status="done",
+            kept_count=2,
+        )
+        session.add(task)
+        session.flush()
+        session.add_all([
+            DanmakuSample(
+                danmaku_analysis_id=task.id, content="稍后出现", progress_ms=2_000,
+                segment_index=0, sentiment_label="negative", sentiment_score=0.8,
+            ),
+            DanmakuSample(
+                danmaku_analysis_id=task.id, content="先出现", progress_ms=1_000,
+                segment_index=0, sentiment_label="positive", sentiment_score=0.9,
+            ),
+        ])
+        session.commit()
+        task_id = task.id
+        session.close()
+
+        with patch.object(danmaku_routes, "SessionLocal", self.sessions):
+            response = danmaku_routes.get_danmaku_samples(task_id, offset=0, limit=30)
+
+        self.assertEqual(response["total"], 2)
+        self.assertEqual([item["content"] for item in response["items"]], ["先出现", "稍后出现"])
+        self.assertEqual(response["items"][0], {
+            "id": response["items"][0]["id"],
+            "content": "先出现",
+            "progress_ms": 1_000,
+            "segment_index": 0,
+            "sentiment_label": "positive",
+        })
+
     async def test_each_selected_part_has_an_independent_task_for_the_same_source_video(self):
         first = BackgroundTasks()
         second = BackgroundTasks()

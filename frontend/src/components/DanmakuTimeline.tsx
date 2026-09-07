@@ -8,7 +8,9 @@ interface Props {
   task: DanmakuTask | null;
   timeline: DanmakuTimelineData | null;
   loadingTask: boolean;
+  startingTask: boolean;
   error: string | null;
+  openingDialog: boolean;
   onOpenStart: () => void;
 }
 
@@ -35,7 +37,7 @@ function coverageText(coverage: DanmakuTimelineBucket['coverage']): string {
   }
 }
 
-export default function DanmakuTimeline({ task, timeline, loadingTask, error, onOpenStart }: Props) {
+export default function DanmakuTimeline({ task, timeline, loadingTask, startingTask, error, openingDialog, onOpenStart }: Props) {
   const chartRef = useRef<ReactECharts | null>(null);
   const tooltipTheme = chartTooltip();
   const textColor = chartTextColor();
@@ -108,17 +110,18 @@ export default function DanmakuTimeline({ task, timeline, loadingTask, error, on
         </div>}
       </header>
 
-      {!task && !loadingTask && (
+      {!task && !loadingTask && !startingTask && (
         <div className="danmaku-timeline__empty">
           <div className="danmaku-timeline__empty-copy">
             <strong>尚未开始分时段抽样</strong>
           <p>系统会顺序请求本分 P 的 6 分钟片段，只保留普通弹幕并在本机进行 NLP 三分类。不会调用大模型。</p>
           </div>
-          <button type="button" className="btn btn-primary" onClick={onOpenStart}>开始分时段抽样</button>
+          <button type="button" className="btn btn-primary" onClick={onOpenStart} disabled={openingDialog}>{openingDialog ? '正在重新获取...' : '开始分时段抽样'}</button>
         </div>
       )}
 
-      {loadingTask && !task && <div className="danmaku-timeline__loading">正在读取已保存的弹幕抽样记录…</div>}
+      {startingTask && <div className="danmaku-timeline__loading" role="status">弹幕抽样任务正在创建，稍后将在此显示实时进度…</div>}
+      {loadingTask && !task && !startingTask && <div className="danmaku-timeline__loading">正在读取已保存的弹幕抽样记录…</div>}
 
       {error && !task && <div className="danmaku-timeline__failure" role="alert"><div><strong>{error}</strong><p>请检查本机网络和登录状态后再次开始。</p></div></div>}
 
@@ -143,7 +146,7 @@ export default function DanmakuTimeline({ task, timeline, loadingTask, error, on
           {(task.status === 'error' || task.status === 'partial') && (
             <div className="danmaku-timeline__failure" role="alert">
               <div><strong>{task.status === 'partial' ? '部分片段获取失败，可重试' : task.error_msg || '弹幕获取失败，可重试'}</strong><p>此前的抽样尝试会保留在本机；再次开始会创建新的尝试，不会覆盖已有记录。</p></div>
-              <button type="button" className="btn btn-primary" onClick={onOpenStart}>重新尝试</button>
+              <button type="button" className="btn btn-primary" onClick={onOpenStart} disabled={openingDialog}>{openingDialog ? '正在重新获取...' : '重新采集弹幕'}</button>
             </div>
           )}
 

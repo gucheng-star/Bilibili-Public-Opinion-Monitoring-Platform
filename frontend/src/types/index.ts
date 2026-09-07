@@ -113,6 +113,21 @@ export interface DanmakuTimeline {
   buckets: DanmakuTimelineBucket[];
 }
 
+/** A flat, locally retained sampled danmaku row. */
+export interface DanmakuSample {
+  id: number;
+  content: string;
+  progress_ms: number;
+  segment_index: number;
+  sentiment_label: SentimentLabel | null;
+}
+
+export interface DanmakuSamplePage {
+  danmaku_analysis_id: number;
+  total: number;
+  items: DanmakuSample[];
+}
+
 /** Keyword item */
 export interface KeywordItem {
   word: string;

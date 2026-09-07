@@ -112,15 +112,12 @@
   top: 1.5rem;
   right: 1.5rem;
   z-index: 2;
-  display: inline-flex;
-  align-items: center;
-  gap: .65rem;
-  color: var(--text-muted);
-  font-size: .6875rem;
 }
 
 .login-theme-control .theme-toggle {
-  background: color-mix(in srgb, var(--bg-card) 68%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border-strong) 82%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-card) 76%, transparent);
   backdrop-filter: blur(12px);
 }
 

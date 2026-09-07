@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
+import { getResolvedTheme, setTemporaryTheme, subscribeToThemeChange } from '../theme';
 
 interface ViewTransitionHandle {
   ready: Promise<void>;
@@ -12,31 +13,14 @@ type ViewTransitionDocument = Document & {
 
 export default function ThemeToggle() {
   const [dark, setDark] = useState(() => {
-    if (typeof document !== 'undefined') {
-      const saved = localStorage.getItem('theme');
-      if (saved === 'dark' || saved === 'light') return saved === 'dark';
-      return document.documentElement.dataset.theme === 'dark' ||
-        (!document.documentElement.dataset.theme &&
-         window.matchMedia('(prefers-color-scheme: dark)').matches);
-    }
-    return false;
+    return getResolvedTheme() === 'dark';
   });
   const buttonRef = useRef<HTMLButtonElement>(null);
   const animatingRef = useRef(false);
   const [transitioning, setTransitioning] = useState(false);
 
   useEffect(() => {
-    document.documentElement.dataset.theme = dark ? 'dark' : 'light';
-  }, [dark]);
-
-  useEffect(() => {
-    const mq = window.matchMedia('(prefers-color-scheme: dark)');
-    const handler = (e: MediaQueryListEvent) => {
-      const saved = localStorage.getItem('theme');
-      if (!saved) setDark(e.matches);
-    };
-    mq.addEventListener('change', handler);
-    return () => mq.removeEventListener('change', handler);
+    return subscribeToThemeChange(() => setDark(getResolvedTheme() === 'dark'));
   }, []);
 
   const toggle = async () => {
@@ -54,8 +38,7 @@ export default function ThemeToggle() {
     );
     const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const applyTheme = () => {
-      document.documentElement.dataset.theme = goingDark ? 'dark' : 'light';
-      localStorage.setItem('theme', goingDark ? 'dark' : 'light');
+      setTemporaryTheme(goingDark ? 'dark' : 'light');
       flushSync(() => setDark(goingDark));
     };
 
@@ -106,8 +89,8 @@ export default function ThemeToggle() {
       className="header-icon-action theme-toggle"
       onClick={toggle}
       disabled={transitioning}
-      aria-label={dark ? '切换为浅色模式' : '切换为深色模式'}
-      title={dark ? '切换为浅色模式' : '切换为深色模式'}
+      aria-label={dark ? '临时切换为浅色模式' : '临时切换为深色模式'}
+      title={dark ? '临时切换为浅色模式' : '临时切换为深色模式'}
     >
       {dark ? (
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
