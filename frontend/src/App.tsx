@@ -103,6 +103,8 @@ function App() {
   const [reanalyzeModal, setReanalyzeModal] = useState(false);
   const [updateInfo, setUpdateInfo] = useState<{ version?: string; notes?: string; notesUrl?: string } | null>(null);
   const [updateBusy, setUpdateBusy] = useState(false);
+  const [updateChecking, setUpdateChecking] = useState(false);
+  const updateCheckingRef = useRef(false);
   const [closeRequest, setCloseRequest] = useState<{ requestId?: string } | null>(null);
   const currentDiagnosticFilters = selectedGroupId === null ? filters : groupFilters[selectedGroupId] || EMPTY_FILTERS;
   const analysisCommentsId = /^\/analysis\/(\d+)\/comments$/.exec(location.pathname)?.[1];
@@ -328,7 +330,9 @@ function App() {
   const showToast = (msg: string) => { setToast(msg); setTimeout(()=>setToast(null), 4000); };
 
   const checkUpdate = useCallback(async (manual = false) => {
-    if (!isDesktopRuntime()) return;
+    if (!isDesktopRuntime() || updateCheckingRef.current) return;
+    updateCheckingRef.current = true;
+    setUpdateChecking(true);
     try {
       const update = await checkForUpdates();
       if (update.enabled === false && update.message) throw new Error(update.message);
@@ -336,6 +340,9 @@ function App() {
       else if (manual) showToast('当前已是最新版本');
     } catch (e) {
       if (manual) showToast(e instanceof Error ? e.message : '检查更新失败');
+    } finally {
+      updateCheckingRef.current = false;
+      setUpdateChecking(false);
     }
   }, []);
 
@@ -820,6 +827,7 @@ function App() {
             onSettingsChanged={settings => setHasApiKey(settings.llm.sentiment.has_api_key)}
             desktopMode={isDesktopRuntime()}
             onCheckUpdate={() => { void checkUpdate(true); }}
+            updateChecking={updateChecking}
             onLogout={handleLogout}
           />
         )} />

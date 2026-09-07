@@ -4,17 +4,19 @@ mod portable;
 #[path = "bin/updater.rs"]
 mod updater;
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use portable::{
     sha256_file, validate_mcp_database_path, version_is_newer, BackendHandshake, EmbeddedComponent,
     PortableManifest, PortablePaths, DEFAULT_MANIFEST_URL, UPDATE_PUBLIC_KEY_B64,
 };
 use rand::RngCore;
-use reqwest::{blocking::Client, redirect::Policy};
+use reqwest::{blocking::Client, redirect::Policy, Certificate};
 use serde::Serialize;
 use std::{
     env,
+    error::Error as StdError,
     ffi::OsString,
-    fs,
+    fs::{self, OpenOptions},
     io::{Read, Write},
     os::windows::{
         ffi::{OsStrExt, OsStringExt},
@@ -24,7 +26,7 @@ use std::{
     process::{Child, Command},
     sync::Mutex,
     thread,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tauri::{
     menu::{Menu, MenuItem},
@@ -66,6 +68,7 @@ const EMBEDDED_AGENT_MCP: &[u8] = include_bytes!(concat!(
 ));
 const MCP_STDIO_ARGUMENT: &str = "--mcp-stdio";
 const UPDATE_READY_WAIT: Duration = Duration::from_secs(5);
+static UPDATE_LOG_LOCK: Mutex<()> = Mutex::new(());
 
 struct AppState {
     paths: PortablePaths,
@@ -264,6 +267,32 @@ struct DownloadedUpdate {
     sha256: String,
 }
 
+#[derive(Debug)]
+struct UpdateFailure {
+    category: &'static str,
+    user_message: String,
+    http_status: Option<u16>,
+}
+
+impl UpdateFailure {
+    fn new(category: &'static str, user_message: impl Into<String>) -> Self {
+        Self {
+            category,
+            user_message: user_message.into(),
+            http_status: None,
+        }
+    }
+
+    fn with_status(mut self, status: u16) -> Self {
+        self.http_status = Some(status);
+        self
+    }
+
+    fn background_join() -> Self {
+        Self::new("internal", "更新后台任务异常结束，请重试或重启应用")
+    }
+}
+
 impl AppState {
     fn start(paths: PortablePaths, app_version: String) -> anyhow::Result<Self> {
         let token = random_hex(32);
@@ -305,16 +334,7 @@ impl AppState {
     }
 
     fn has_active_tasks(&self) -> bool {
-        let client = Client::builder().timeout(Duration::from_secs(2)).build();
-        let Ok(client) = client else { return true };
-        client
-            .get(format!("{}/api/runtime/activity", self.api_base))
-            .header(LOCAL_TOKEN_HEADER, &self.token)
-            .send()
-            .ok()
-            .and_then(|response| response.json::<serde_json::Value>().ok())
-            .and_then(|body| body.get("active").and_then(|value| value.as_bool()))
-            .unwrap_or(true)
+        has_active_tasks(&self.api_base, &self.token)
     }
 
     fn prepare_exit(&self) {
@@ -337,22 +357,6 @@ impl AppState {
             }
         }
     }
-
-    fn fetch_manifest(&self) -> anyhow::Result<PortableManifest> {
-        if UPDATE_PUBLIC_KEY_B64.trim().is_empty() {
-            anyhow::bail!("此测试构建未嵌入便携更新公钥，已禁用在线更新");
-        }
-        let manifest_url = std::env::var("BILI_PORTABLE_UPDATE_MANIFEST_URL")
-            .unwrap_or_else(|_| DEFAULT_MANIFEST_URL.to_owned());
-        let client = secure_update_client()?;
-        let manifest: PortableManifest = client
-            .get(manifest_url)
-            .send()?
-            .error_for_status()?
-            .json()?;
-        manifest.verify_signature(UPDATE_PUBLIC_KEY_B64)?;
-        Ok(manifest)
-    }
 }
 
 #[tauri::command]
@@ -369,85 +373,51 @@ fn frontend_api_base(origin: &str) -> String {
 }
 
 #[tauri::command]
-fn check_for_updates(state: State<'_, AppState>) -> Result<UpdateCheck, String> {
-    match state.fetch_manifest() {
-        Ok(manifest) => Ok(UpdateCheck {
-            enabled: true,
-            available: version_is_newer(&manifest.version, &state.app_version),
-            version: Some(manifest.version),
-            notes_url: Some(manifest.notes_url),
-            message: None,
-        }),
+async fn check_for_updates(app: AppHandle) -> Result<UpdateCheck, String> {
+    let (app_version, data_dir) = {
+        let state = app.state::<AppState>();
+        (state.app_version.clone(), state.paths.data_dir.clone())
+    };
+    let result = run_update_task(move || {
+        logged_update_task(&data_dir, "check", || {
+            let manifest = fetch_manifest(UPDATE_TIMEOUT)?;
+            Ok(UpdateCheck {
+                enabled: true,
+                available: version_is_newer(&manifest.version, &app_version),
+                version: Some(manifest.version),
+                notes_url: Some(manifest.notes_url),
+                message: None,
+            })
+        })
+    })
+    .await;
+    match result {
+        Ok(update) => Ok(update),
         Err(error) => Ok(UpdateCheck {
             enabled: false,
             available: false,
             version: None,
             notes_url: None,
-            message: Some(error.to_string()),
+            message: Some(error.user_message),
         }),
     }
 }
 
 #[tauri::command]
-fn download_update(state: State<'_, AppState>) -> Result<DownloadedUpdate, String> {
-    let manifest = state.fetch_manifest().map_err(|error| error.to_string())?;
-    if !version_is_newer(&manifest.version, &state.app_version) {
-        return Err("当前已是最新版本".into());
-    }
-    if !manifest.asset.name.to_ascii_lowercase().ends_with(".exe") {
-        return Err("已签名更新清单的程序文件名无效".into());
-    }
-    let final_path = state.paths.update_cache_dir.join("BiliOpinionMonitor.exe");
-    let part_path = state
-        .paths
-        .update_cache_dir
-        .join("BiliOpinionMonitor.exe.part");
-    let client = secure_update_client().map_err(|error| error.to_string())?;
-    let mut response = client
-        .get(&manifest.asset.url)
-        .send()
-        .and_then(|response| response.error_for_status())
-        .map_err(|error| format!("下载更新失败：{error}"))?;
-    if response
-        .content_length()
-        .is_some_and(|length| length != manifest.asset.size)
-    {
-        return Err("更新包大小与已签名清单不一致".into());
-    }
-    let mut output = fs::File::create(&part_path).map_err(|error| error.to_string())?;
-    let mut total = 0_u64;
-    let mut buffer = [0_u8; 64 * 1024];
-    loop {
-        let count = response
-            .read(&mut buffer)
-            .map_err(|error| error.to_string())?;
-        if count == 0 {
-            break;
-        }
-        total += count as u64;
-        if total > manifest.asset.size {
-            let _ = fs::remove_file(&part_path);
-            return Err("更新包超过已签名的文件大小".into());
-        }
-        output
-            .write_all(&buffer[..count])
-            .map_err(|error| error.to_string())?;
-    }
-    output.flush().map_err(|error| error.to_string())?;
-    if total != manifest.asset.size
-        || sha256_file(&part_path).map_err(|error| error.to_string())? != manifest.asset.sha256
-    {
-        let _ = fs::remove_file(&part_path);
-        return Err("更新包校验失败，文件已删除".into());
-    }
-    validate_update_executable(&part_path).map_err(|error| error.to_string())?;
-    let _ = fs::remove_file(&final_path);
-    fs::rename(&part_path, &final_path).map_err(|error| error.to_string())?;
-    let downloaded = DownloadedUpdate {
-        version: manifest.version,
-        executable_path: final_path,
-        sha256: manifest.asset.sha256,
+async fn download_update(app: AppHandle) -> Result<DownloadedUpdate, String> {
+    let (paths, app_version) = {
+        let state = app.state::<AppState>();
+        (state.paths.clone(), state.app_version.clone())
     };
+    let data_dir = paths.data_dir.clone();
+    let downloaded = run_update_task(move || {
+        logged_update_task(&data_dir, "download", || {
+            download_update_blocking(&paths, &app_version)
+        })
+    })
+    .await
+    .map_err(|error| error.user_message)?;
+    let state = app.state::<AppState>();
     *state
         .downloaded_update
         .lock()
@@ -456,31 +426,231 @@ fn download_update(state: State<'_, AppState>) -> Result<DownloadedUpdate, Strin
 }
 
 #[tauri::command]
-fn install_update(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
-    if state.has_active_tasks() {
-        return Err("当前仍有抓取或分析任务，完成或停止后再安装更新".into());
+async fn install_update(app: AppHandle) -> Result<(), String> {
+    let (paths, api_base, token, downloaded) = {
+        let state = app.state::<AppState>();
+        let downloaded = state
+            .downloaded_update
+            .lock()
+            .map_err(|_| "更新状态锁定失败")?
+            .clone()
+            .ok_or("请先完整下载并校验更新包")?;
+        (
+            state.paths.clone(),
+            state.api_base.clone(),
+            state.token.clone(),
+            downloaded,
+        )
+    };
+    let data_dir = paths.data_dir.clone();
+    run_update_task(move || {
+        logged_update_task(&data_dir, "install", || {
+            install_update_blocking(&paths, &api_base, &token, downloaded)
+        })
+    })
+    .await
+    .map_err(|error| error.user_message)?;
+    app.exit(0);
+    Ok(())
+}
+
+async fn run_update_task<T, F>(task: F) -> Result<T, UpdateFailure>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, UpdateFailure> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(task)
+        .await
+        .map_err(|_| UpdateFailure::background_join())?
+}
+
+fn fetch_manifest(timeout: Duration) -> Result<PortableManifest, UpdateFailure> {
+    if UPDATE_PUBLIC_KEY_B64.trim().is_empty() {
+        return Err(UpdateFailure::new(
+            "configuration",
+            "当前版本未配置在线更新，请从项目发布页手动下载",
+        ));
     }
-    let downloaded = state
-        .downloaded_update
-        .lock()
-        .map_err(|_| "更新状态锁定失败")?
-        .clone()
-        .ok_or("请先完整下载并校验更新包")?;
-    let installed_updater = state
-        .paths
+    let manifest_url = std::env::var("BILI_PORTABLE_UPDATE_MANIFEST_URL")
+        .unwrap_or_else(|_| DEFAULT_MANIFEST_URL.to_owned());
+    fetch_manifest_from_url(&manifest_url, UPDATE_PUBLIC_KEY_B64, timeout)
+}
+
+fn fetch_manifest_from_url(
+    manifest_url: &str,
+    public_key_b64: &str,
+    timeout: Duration,
+) -> Result<PortableManifest, UpdateFailure> {
+    let client = secure_update_client(timeout)
+        .map_err(|_| UpdateFailure::new("internal", "无法初始化更新网络组件，请重启应用后重试"))?;
+    let response = client
+        .get(manifest_url)
+        .send()
+        .map_err(|error| classify_request_error(&error, "检查"))?;
+    if response.status().is_redirection() {
+        return Err(
+            UpdateFailure::new("redirect", "更新服务返回了不安全的跳转，已停止更新")
+                .with_status(response.status().as_u16()),
+        );
+    }
+    let response = response
+        .error_for_status()
+        .map_err(|error| classify_request_error(&error, "检查"))?;
+    let manifest: PortableManifest = response
+        .json()
+        .map_err(|error| classify_request_error(&error, "检查"))?;
+    manifest
+        .verify_signature(public_key_b64)
+        .map_err(classify_manifest_error)?;
+    Ok(manifest)
+}
+
+fn download_update_blocking(
+    paths: &PortablePaths,
+    app_version: &str,
+) -> Result<DownloadedUpdate, UpdateFailure> {
+    let manifest = fetch_manifest(UPDATE_TIMEOUT)?;
+    if !version_is_newer(&manifest.version, app_version) {
+        return Err(UpdateFailure::new("not_available", "当前已是最新版本"));
+    }
+    if !manifest.asset.name.to_ascii_lowercase().ends_with(".exe") {
+        return Err(UpdateFailure::new(
+            "manifest",
+            "已签名更新清单的程序文件名无效",
+        ));
+    }
+    let final_path = paths.update_cache_dir.join("BiliOpinionMonitor.exe");
+    let part_path = paths.update_cache_dir.join("BiliOpinionMonitor.exe.part");
+    let client = secure_update_client(UPDATE_TIMEOUT)
+        .map_err(|_| UpdateFailure::new("internal", "无法初始化更新网络组件，请重启应用后重试"))?;
+    let response = client
+        .get(&manifest.asset.url)
+        .send()
+        .map_err(|error| classify_request_error(&error, "下载"))?;
+    if response.status().is_redirection() {
+        return Err(
+            UpdateFailure::new("redirect", "更新下载返回了不安全的跳转，已停止更新")
+                .with_status(response.status().as_u16()),
+        );
+    }
+    let mut response = response
+        .error_for_status()
+        .map_err(|error| classify_request_error(&error, "下载"))?;
+    if response
+        .content_length()
+        .is_some_and(|length| length != manifest.asset.size)
+    {
+        return Err(UpdateFailure::new(
+            "asset_validation",
+            "更新包大小与已签名清单不一致",
+        ));
+    }
+    let mut output = fs::File::create(&part_path).map_err(|_| {
+        UpdateFailure::new(
+            "storage",
+            "无法写入更新缓存，请检查程序目录权限或安全软件设置",
+        )
+    })?;
+    let mut total = 0_u64;
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let count = match response.read(&mut buffer) {
+            Ok(count) => count,
+            Err(error) => {
+                let _ = fs::remove_file(&part_path);
+                let message = if error.kind() == std::io::ErrorKind::TimedOut {
+                    "读取更新包超时，请检查网络或代理后重试"
+                } else {
+                    "读取更新包时网络连接中断，请重试"
+                };
+                return Err(UpdateFailure::new("network_read", message));
+            }
+        };
+        if count == 0 {
+            break;
+        }
+        total += count as u64;
+        if total > manifest.asset.size {
+            let _ = fs::remove_file(&part_path);
+            return Err(UpdateFailure::new(
+                "asset_validation",
+                "更新包超过已签名的文件大小",
+            ));
+        }
+        if output.write_all(&buffer[..count]).is_err() {
+            let _ = fs::remove_file(&part_path);
+            return Err(UpdateFailure::new(
+                "storage",
+                "写入更新缓存失败，请检查磁盘空间或目录权限",
+            ));
+        }
+    }
+    output
+        .flush()
+        .map_err(|_| UpdateFailure::new("storage", "写入更新缓存失败，请检查磁盘空间或目录权限"))?;
+    let digest = sha256_file(&part_path)
+        .map_err(|_| UpdateFailure::new("asset_validation", "无法校验更新包，文件已删除"))?;
+    if total != manifest.asset.size || digest != manifest.asset.sha256 {
+        let _ = fs::remove_file(&part_path);
+        return Err(UpdateFailure::new(
+            "asset_validation",
+            "更新包校验失败，文件已删除",
+        ));
+    }
+    if validate_update_executable(&part_path).is_err() {
+        let _ = fs::remove_file(&part_path);
+        return Err(UpdateFailure::new(
+            "asset_validation",
+            "更新文件不是有效的 Windows 程序，已删除",
+        ));
+    }
+    let _ = fs::remove_file(&final_path);
+    fs::rename(&part_path, &final_path).map_err(|_| {
+        UpdateFailure::new(
+            "storage",
+            "无法保存已校验的更新包，请检查目录权限或安全软件设置",
+        )
+    })?;
+    Ok(DownloadedUpdate {
+        version: manifest.version,
+        executable_path: final_path,
+        sha256: manifest.asset.sha256,
+    })
+}
+
+fn install_update_blocking(
+    paths: &PortablePaths,
+    api_base: &str,
+    token: &str,
+    downloaded: DownloadedUpdate,
+) -> Result<(), UpdateFailure> {
+    if has_active_tasks(api_base, token) {
+        return Err(UpdateFailure::new(
+            "active_tasks",
+            "当前仍有抓取或分析任务，完成或停止后再安装更新",
+        ));
+    }
+    let installed_updater = paths
         .update_runner_dir
         .join("BiliOpinionMonitor-update-runner.exe");
-    let current_executable =
-        std::env::current_exe().map_err(|error| format!("无法定位当前程序：{error}"))?;
-    fs::copy(&current_executable, &installed_updater)
-        .map_err(|error| format!("无法准备更新器：{error}"))?;
+    let current_executable = std::env::current_exe()
+        .map_err(|_| UpdateFailure::new("storage", "无法定位当前程序，请重启应用后重试"))?;
+    fs::copy(&current_executable, &installed_updater).map_err(|_| {
+        UpdateFailure::new(
+            "storage",
+            "无法准备更新器，请检查程序目录权限或安全软件设置",
+        )
+    })?;
     let ready_event = format!("Local\\BiliOpinionUpdateReady-{}", random_hex(16));
-    let ready_event_wide =
-        wide_nul(std::ffi::OsStr::new(&ready_event)).map_err(|error| error.to_string())?;
+    let ready_event_wide = wide_nul(std::ffi::OsStr::new(&ready_event))
+        .map_err(|_| UpdateFailure::new("install_coordination", "无法建立更新协调信号"))?;
     // SAFETY: the event name is NUL-terminated and uses an unguessable suffix.
     let ready_handle = unsafe { CreateEventW(std::ptr::null(), 1, 0, ready_event_wide.as_ptr()) };
     if ready_handle.is_null() {
-        return Err("无法建立更新协调信号".into());
+        return Err(UpdateFailure::new(
+            "install_coordination",
+            "无法建立更新协调信号",
+        ));
     }
     Command::new(installed_updater)
         .arg(updater::RUNNER_ARGUMENT)
@@ -489,7 +659,7 @@ fn install_update(app: AppHandle, state: State<'_, AppState>) -> Result<(), Stri
         .arg("--target-exe")
         .arg(&current_executable)
         .arg("--data-dir")
-        .arg(&state.paths.data_dir)
+        .arg(&paths.data_dir)
         .arg("--parent-pid")
         .arg(std::process::id().to_string())
         .arg("--expected-version")
@@ -499,21 +669,171 @@ fn install_update(app: AppHandle, state: State<'_, AppState>) -> Result<(), Stri
         .arg("--ready-event")
         .arg(&ready_event)
         .spawn()
-        .map_err(|error| {
+        .map_err(|_| {
             // SAFETY: this branch still owns the event handle.
             unsafe { CloseHandle(ready_handle) };
-            format!("无法启动更新器：{error}")
+            UpdateFailure::new("install_coordination", "无法启动更新器，请检查安全软件设置")
         })?;
-    // The runner signals only after it holds the exclusive lock.  Keeping GUI
+    // The runner signals only after it holds the exclusive lock. Keeping GUI
     // alive until then removes the check/exit/acquire race with a new MCP run.
     let ready = unsafe { WaitForSingleObject(ready_handle, UPDATE_READY_WAIT.as_millis() as u32) };
     unsafe { CloseHandle(ready_handle) };
     if ready != WAIT_OBJECT_0 {
-        return Err("更新器未能取得安装协调锁；可能仍有 MCP 会话正在运行".into());
+        return Err(UpdateFailure::new(
+            "install_coordination",
+            "更新器未能取得安装协调锁；可能仍有 MCP 会话正在运行",
+        ));
     }
-    app.exit(0);
     Ok(())
 }
+
+fn has_active_tasks(api_base: &str, token: &str) -> bool {
+    let client = Client::builder().timeout(Duration::from_secs(2)).build();
+    let Ok(client) = client else { return true };
+    client
+        .get(format!("{api_base}/api/runtime/activity"))
+        .header(LOCAL_TOKEN_HEADER, token)
+        .send()
+        .ok()
+        .and_then(|response| response.json::<serde_json::Value>().ok())
+        .and_then(|body| body.get("active").and_then(|value| value.as_bool()))
+        .unwrap_or(true)
+}
+
+fn classify_request_error(error: &reqwest::Error, action: &str) -> UpdateFailure {
+    let source_has = |needle: &str| {
+        let mut current: Option<&(dyn StdError + 'static)> = Some(error);
+        while let Some(item) = current {
+            if item.to_string().to_ascii_lowercase().contains(needle) {
+                return true;
+            }
+            current = item.source();
+        }
+        false
+    };
+    if source_has("certificate") || source_has("tls") || source_has("ssl") {
+        return UpdateFailure::new(
+            "tls",
+            "无法验证更新服务的 HTTPS 证书，请检查系统时间或网络代理",
+        );
+    }
+    if error.is_timeout() {
+        return UpdateFailure::new(
+            "timeout",
+            format!("{action}更新服务超时，请检查网络或代理后重试"),
+        );
+    }
+    if error.is_redirect() {
+        return UpdateFailure::new("redirect", "更新服务跳转异常，已停止更新");
+    }
+    if error.is_connect() {
+        return UpdateFailure::new("connection", "无法连接更新服务，请检查网络或代理设置");
+    }
+    if let Some(status) = error.status() {
+        return UpdateFailure::new(
+            "http_status",
+            format!(
+                "更新服务返回异常状态（HTTP {}），请稍后重试",
+                status.as_u16()
+            ),
+        )
+        .with_status(status.as_u16());
+    }
+    if error.is_decode() {
+        return UpdateFailure::new("manifest", "更新清单格式无效，已停止更新");
+    }
+    UpdateFailure::new("network", format!("{action}更新时发生网络错误，请稍后重试"))
+}
+
+fn classify_manifest_error(error: anyhow::Error) -> UpdateFailure {
+    let summary = error.to_string();
+    if summary.contains("公钥") {
+        return UpdateFailure::new(
+            "configuration",
+            "当前版本的更新验证配置无效，请从项目发布页手动下载",
+        );
+    }
+    if summary.contains("签名") {
+        return UpdateFailure::new("signature", "更新清单签名校验失败，已停止更新");
+    }
+    if summary.contains("HTTPS") {
+        return UpdateFailure::new("manifest_security", "更新清单包含非 HTTPS 地址，已停止更新");
+    }
+    UpdateFailure::new("manifest", "更新清单内容无效，已停止更新")
+}
+
+fn logged_update_task<T, F>(
+    data_dir: &Path,
+    task: &'static str,
+    action: F,
+) -> Result<T, UpdateFailure>
+where
+    F: FnOnce() -> Result<T, UpdateFailure>,
+{
+    let started_at = unix_timestamp_ms();
+    let started = Instant::now();
+    let result = action();
+    write_update_log(data_dir, task, started_at, started.elapsed(), &result);
+    result
+}
+
+fn write_update_log<T>(
+    data_dir: &Path,
+    task: &'static str,
+    started_at: u128,
+    duration: Duration,
+    result: &Result<T, UpdateFailure>,
+) {
+    let (result_name, category, status, summary) = match result {
+        Ok(_) => ("success", None, None, None),
+        Err(error) => (
+            "failure",
+            Some(error.category),
+            error.http_status,
+            Some(error.user_message.as_str()),
+        ),
+    };
+    let record = serde_json::json!({
+        "timestamp": unix_timestamp_ms(),
+        "task": task,
+        "started_at_unix_ms": started_at,
+        "finished_at_unix_ms": unix_timestamp_ms(),
+        "duration_ms": duration.as_millis(),
+        "result": result_name,
+        "category": category,
+        "http_status": status,
+        "summary": summary,
+    });
+    let Ok(_guard) = UPDATE_LOG_LOCK.lock() else {
+        return;
+    };
+    let logs_dir = data_dir.join("logs");
+    if fs::create_dir_all(&logs_dir).is_err() {
+        return;
+    }
+    let Ok(mut file) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(logs_dir.join("update.log"))
+    else {
+        return;
+    };
+    if serde_json::to_writer(&mut file, &record).is_ok() {
+        let _ = file.write_all(b"\n");
+    }
+}
+
+fn unix_timestamp_ms() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_millis())
+}
+
+/*
+ * The three commands above intentionally hand every blocking network, file,
+ * hash, and Win32 wait operation to Tauri's blocking executor. Keep the
+ * command bodies async even when changing their return contract.
+ */
 
 /// Frontend contract: a native close request dispatches
 /// `bili:close-requested` with `{ requestId }`. The UI must call this command
@@ -546,6 +866,13 @@ fn resolve_close_request(
 }
 
 fn main() {
+    if portable_update_self_test_requested() {
+        if let Err(error) = run_portable_update_self_test() {
+            eprintln!("更新测试失败：{}", error.user_message);
+            std::process::exit(1);
+        }
+        return;
+    }
     match parse_start_mode() {
         Ok(StartMode::UpdateRunner) => {
             if updater::run_update_runner().is_err() {
@@ -575,7 +902,7 @@ fn main() {
         }))
         .setup(|app| {
             let paths = PortablePaths::discover()?;
-            let state = AppState::start(paths.clone(), env!("CARGO_PKG_VERSION").to_owned())?;
+            let state = AppState::start(paths.clone(), update_current_version())?;
             app.manage(state);
             build_main_window(app, &paths)?;
             build_tray(app)?;
@@ -604,6 +931,32 @@ fn main() {
             eprintln!("桌面程序启动失败：{error}");
         }
     }
+}
+
+/// The release-check script compiles this branch only into its throwaway test
+/// executable.  Production packages neither recognize the argument nor carry
+/// the test CA, so this cannot become an alternate update entry point.
+fn portable_update_self_test_requested() -> bool {
+    option_env!("BILI_PORTABLE_UPDATE_TEST_CA_PEM_BASE64").is_some()
+        && env::args_os()
+            .skip(1)
+            .eq([OsString::from("--portable-update-self-test")])
+}
+
+fn run_portable_update_self_test() -> Result<(), UpdateFailure> {
+    let paths = PortablePaths::discover()
+        .map_err(|_| UpdateFailure::new("storage", "无法初始化测试程序目录"))?;
+    let state = AppState::start(paths.clone(), update_current_version())
+        .map_err(|_| UpdateFailure::new("internal", "无法启动测试后端"))?;
+    let data_dir = paths.data_dir.clone();
+    let downloaded = logged_update_task(&data_dir, "download", || {
+        download_update_blocking(&paths, &state.app_version)
+    })?;
+    let install = logged_update_task(&data_dir, "install", || {
+        install_update_blocking(&paths, &state.api_base, &state.token, downloaded)
+    });
+    state.stop_child();
+    install
 }
 
 fn parse_start_mode() -> anyhow::Result<StartMode> {
@@ -967,8 +1320,8 @@ fn validate_update_executable(path: &PathBuf) -> anyhow::Result<()> {
 /// GitHub release assets redirect to a CDN. Redirects are allowed only when
 /// every destination remains HTTPS and the chain has at most five hops.
 /// Signature, exact byte count, and SHA-256 remain the content trust root.
-fn secure_update_client() -> anyhow::Result<Client> {
-    Ok(Client::builder()
+fn secure_update_client(timeout: Duration) -> anyhow::Result<Client> {
+    let mut builder = Client::builder()
         .redirect(Policy::custom(|attempt| {
             if attempt.url().scheme() == "https" && attempt.previous().len() < 5 {
                 attempt.follow()
@@ -976,8 +1329,21 @@ fn secure_update_client() -> anyhow::Result<Client> {
                 attempt.stop()
             }
         }))
-        .timeout(UPDATE_TIMEOUT)
-        .build()?)
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(timeout);
+    if let Some(encoded_certificate) = option_env!("BILI_PORTABLE_UPDATE_TEST_CA_PEM_BASE64") {
+        let certificate = STANDARD
+            .decode(encoded_certificate)
+            .map_err(|_| anyhow::anyhow!("测试更新证书配置无效"))?;
+        builder = builder.add_root_certificate(Certificate::from_pem(&certificate)?);
+    }
+    Ok(builder.build()?)
+}
+
+fn update_current_version() -> String {
+    option_env!("BILI_PORTABLE_UPDATE_TEST_CURRENT_VERSION")
+        .unwrap_or(env!("CARGO_PKG_VERSION"))
+        .to_owned()
 }
 
 fn write_healthy_marker(app: &tauri::App, paths: &PortablePaths) -> anyhow::Result<()> {
@@ -1010,15 +1376,32 @@ fn random_hex(bytes: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        frontend_api_base, is_valid_std_handle, mcp_environment, mcp_start_failure_message,
-        parse_start_mode_from, McpStartupStage, PortablePaths, StartMode, MCP_STDIO_ARGUMENT,
+        classify_manifest_error, fetch_manifest_from_url, frontend_api_base, is_valid_std_handle,
+        logged_update_task, mcp_environment, mcp_start_failure_message, parse_start_mode_from,
+        McpStartupStage, PortablePaths, StartMode, UpdateFailure, MCP_STDIO_ARGUMENT,
     };
     use std::ffi::OsString;
     use std::{
         env, fs,
+        io::{Read, Write},
+        net::TcpListener,
         path::Path,
-        time::{SystemTime, UNIX_EPOCH},
+        thread,
+        time::{Duration, SystemTime, UNIX_EPOCH},
     };
+
+    fn serve_once(response: &'static str, delay: Duration) -> (String, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0_u8; 1024];
+            let _ = stream.read(&mut request);
+            thread::sleep(delay);
+            let _ = stream.write_all(response.as_bytes());
+        });
+        (format!("http://{address}/latest-portable.json"), server)
+    }
 
     #[test]
     fn desktop_csp_allows_locally_generated_qr_data_images_only() {
@@ -1044,6 +1427,99 @@ mod tests {
             frontend_api_base("http://127.0.0.1:49152/"),
             "http://127.0.0.1:49152/api"
         );
+    }
+
+    #[test]
+    fn update_commands_keep_blocking_work_off_the_tauri_command_thread() {
+        let source = include_str!("main.rs");
+        let production = source.split("#[cfg(test)]").next().unwrap();
+        for signature in [
+            "async fn check_for_updates(app: AppHandle)",
+            "async fn download_update(app: AppHandle)",
+            "async fn install_update(app: AppHandle)",
+        ] {
+            assert!(
+                production.contains(signature),
+                "missing async command: {signature}"
+            );
+        }
+        assert!(production.contains("tauri::async_runtime::spawn_blocking"));
+    }
+
+    #[test]
+    fn update_test_trust_is_compile_time_only() {
+        let source = include_str!("main.rs");
+        let production = source.split("#[cfg(test)]").next().unwrap();
+        assert!(production.contains("option_env!(\"BILI_PORTABLE_UPDATE_TEST_CA_PEM_BASE64\")"));
+        assert!(production.contains("option_env!(\"BILI_PORTABLE_UPDATE_TEST_CURRENT_VERSION\")"));
+        assert!(!production.contains("danger_accept_invalid_certs"));
+    }
+
+    #[test]
+    fn update_manifest_rejects_unsafe_redirects_and_service_failures() {
+        let (redirect_url, redirect_server) = serve_once(
+            "HTTP/1.1 302 Found\r\nLocation: http://invalid.example/manifest\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            Duration::ZERO,
+        );
+        let redirect =
+            fetch_manifest_from_url(&redirect_url, "unused", Duration::from_secs(1)).unwrap_err();
+        redirect_server.join().unwrap();
+        assert_eq!(redirect.category, "redirect");
+        assert_eq!(redirect.http_status, Some(302));
+
+        let (status_url, status_server) = serve_once(
+            "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            Duration::ZERO,
+        );
+        let status =
+            fetch_manifest_from_url(&status_url, "unused", Duration::from_secs(1)).unwrap_err();
+        status_server.join().unwrap();
+        assert_eq!(status.category, "http_status");
+        assert_eq!(status.http_status, Some(503));
+        assert!(!status.user_message.contains(&status_url));
+    }
+
+    #[test]
+    fn update_manifest_timeout_and_signature_errors_are_safe_for_users() {
+        let (slow_url, slow_server) = serve_once(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}",
+            Duration::from_millis(120),
+        );
+        let timeout =
+            fetch_manifest_from_url(&slow_url, "unused", Duration::from_millis(20)).unwrap_err();
+        slow_server.join().unwrap();
+        assert_eq!(timeout.category, "timeout");
+        assert!(!timeout.user_message.contains(&slow_url));
+
+        let failure = classify_manifest_error(anyhow::anyhow!("更新清单签名校验失败: secret"));
+        assert_eq!(failure.category, "signature");
+        assert_eq!(failure.user_message, "更新清单签名校验失败，已停止更新");
+    }
+
+    #[test]
+    fn update_diagnostics_are_structured_and_contain_only_safe_summary() {
+        let root = env::temp_dir().join(format!(
+            "bili-opinion-update-log-test-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let result: Result<(), UpdateFailure> = logged_update_task(&root, "check", || {
+            Err(UpdateFailure::new(
+                "connection",
+                "无法连接更新服务，请检查网络或代理设置",
+            ))
+        });
+        assert!(result.is_err());
+        let log = fs::read_to_string(root.join("logs").join("update.log")).unwrap();
+        let record: serde_json::Value = serde_json::from_str(log.trim()).unwrap();
+        assert_eq!(record["task"], "check");
+        assert_eq!(record["category"], "connection");
+        assert!(record["duration_ms"].is_number());
+        assert!(!log.contains("api-key-and-cookie-sentinel"));
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

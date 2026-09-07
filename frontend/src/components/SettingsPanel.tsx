@@ -7,6 +7,7 @@ interface Props {
   onSettingsChanged: (settings: SettingsResponse) => void;
   desktopMode?: boolean;
   onCheckUpdate?: () => void;
+  updateChecking?: boolean;
 }
 
 interface EditorState {
@@ -189,7 +190,7 @@ function LLMTaskEditor({ task, title, description, saved, onSaved }: {
   );
 }
 
-export default function SettingsPanel({ onSettingsChanged, desktopMode = false, onCheckUpdate }: Props) {
+export default function SettingsPanel({ onSettingsChanged, desktopMode = false, onCheckUpdate, updateChecking = false }: Props) {
   const [settings, setSettings] = useState<SettingsResponse | null>(null);
   useEffect(() => { getSettings().then(setSettings).catch(() => {}); }, []);
   const handleSaved = (next: SettingsResponse) => { setSettings(next); onSettingsChanged(next); };
@@ -209,7 +210,9 @@ export default function SettingsPanel({ onSettingsChanged, desktopMode = false, 
           <label className="text-xs text-secondary mb-1" style={{ display: 'block' }}>便携版更新</label>
           <p className="text-xs text-muted">检查 GitHub Release 中是否有可用的新版本；更新会保留本机数据与配置。</p>
         </div>
-        <button type="button" className="btn btn-ghost" onClick={onCheckUpdate}>检查更新</button>
+        <button type="button" className="btn btn-ghost" onClick={onCheckUpdate} disabled={updateChecking}>
+          {updateChecking ? '正在检查…' : '检查更新'}
+        </button>
       </section>}
     </div>
   );

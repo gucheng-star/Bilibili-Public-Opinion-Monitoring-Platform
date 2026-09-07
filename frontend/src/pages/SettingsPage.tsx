@@ -9,6 +9,7 @@ export interface SettingsPageProps {
   onSettingsChanged: (settings: SettingsResponse) => void;
   desktopMode?: boolean;
   onCheckUpdate?: () => void;
+  updateChecking?: boolean;
   onLogout: () => Promise<void>;
 }
 
@@ -28,6 +29,7 @@ export default function SettingsPage({
   onSettingsChanged,
   desktopMode = false,
   onCheckUpdate,
+  updateChecking = false,
   onLogout,
 }: SettingsPageProps) {
   const [logoutBusy, setLogoutBusy] = useState(false);
@@ -85,6 +87,7 @@ export default function SettingsPage({
         onSettingsChanged={onSettingsChanged}
         desktopMode={desktopMode}
         onCheckUpdate={onCheckUpdate}
+        updateChecking={updateChecking}
       />
 
       <section className="settings-page__danger-zone" aria-labelledby="settings-logout-title">
