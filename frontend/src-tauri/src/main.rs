@@ -11,6 +11,7 @@ use portable::{
 };
 use rand::RngCore;
 use reqwest::{blocking::Client, redirect::Policy, Certificate};
+use rfd::FileDialog;
 use serde::Serialize;
 use std::{
     env,
@@ -370,6 +371,46 @@ fn runtime_config(state: State<'_, AppState>) -> RuntimeConfig {
 
 fn frontend_api_base(origin: &str) -> String {
     format!("{}/api", origin.trim_end_matches('/'))
+}
+
+#[tauri::command]
+async fn save_csv_file(suggested_name: String, csv: String) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let suggested_name = csv_suggested_file_name(&suggested_name);
+        let Some(path) = FileDialog::new()
+            .add_filter("CSV 文件", &["csv"])
+            .set_file_name(&suggested_name)
+            .save_file()
+        else {
+            return Ok(None);
+        };
+        let path = if path
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("csv"))
+        {
+            path
+        } else {
+            path.with_extension("csv")
+        };
+        fs::write(&path, csv)
+            .map_err(|_| "无法写入所选位置，请检查文件权限或是否被占用".to_owned())?;
+        Ok(Some(path.to_string_lossy().into_owned()))
+    })
+    .await
+    .map_err(|_| "保存任务异常结束，请重试".to_owned())?
+}
+
+fn csv_suggested_file_name(value: &str) -> String {
+    let name = Path::new(value)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or("bili-comments.csv");
+    if name.to_ascii_lowercase().ends_with(".csv") {
+        name.to_owned()
+    } else {
+        format!("{name}.csv")
+    }
 }
 
 #[tauri::command]
@@ -911,6 +952,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             runtime_config,
+            save_csv_file,
             check_for_updates,
             download_update,
             install_update,
@@ -1444,6 +1486,16 @@ mod tests {
             );
         }
         assert!(production.contains("tauri::async_runtime::spawn_blocking"));
+    }
+
+    #[test]
+    fn csv_save_command_keeps_the_native_dialog_and_write_off_the_tauri_thread() {
+        let source = include_str!("main.rs");
+        let production = source.split("#[cfg(test)]").next().unwrap();
+        assert!(production.contains("async fn save_csv_file"));
+        assert!(production.contains("FileDialog::new()"));
+        assert!(production.contains("tauri::async_runtime::spawn_blocking(move ||"));
+        assert!(production.contains("fs::write(&path, csv)"));
     }
 
     #[test]

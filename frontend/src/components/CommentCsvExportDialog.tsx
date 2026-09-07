@@ -8,6 +8,7 @@ import {
   type CommentCsvOptions,
   type CommentCsvSource,
 } from '../utils/commentCsvExport';
+import { saveCsvFile, type SavedFile } from '../utils/fileSave';
 
 interface Props {
   comments: readonly CommentData[];
@@ -15,6 +16,7 @@ interface Props {
   defaultSource?: CommentCsvSource;
   sources?: readonly CommentCsvSource[];
   onClose: () => void;
+  onSaved: (file: SavedFile) => void;
 }
 
 const OPTIONAL_COLUMNS: ReadonlyArray<{ key: CommentCsvOptionalColumn; label: string }> = [
@@ -39,8 +41,10 @@ function fileTimestamp(date: Date): string {
   return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
 }
 
-export default function CommentCsvExportDialog({ comments, allComments, defaultSource, sources, onClose }: Props) {
+export default function CommentCsvExportDialog({ comments, allComments, defaultSource, sources, onClose, onSaved }: Props) {
   const [options, setOptions] = useState<CommentCsvOptions>({ ...DEFAULT_COMMENT_CSV_OPTIONS });
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
   const exportedAt = useRef(new Date());
   const dialogRef = useRef<HTMLDivElement>(null);
   const prepared = useMemo(() => prepareCommentCsv({
@@ -60,21 +64,28 @@ export default function CommentCsvExportDialog({ comments, allComments, defaultS
     setOptions(current => ({ ...current, [key]: checked }));
   };
 
-  const download = () => {
-    const blob = new Blob([data.csv], { type: 'text/csv;charset=utf-8' });
-    const objectUrl = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = objectUrl;
-    link.download = `bili-comments-${fileTimestamp(exportedAt.current)}.csv`;
-    document.body.append(link);
-    link.click();
-    link.remove();
-    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
-    onClose();
+  const requestClose = () => {
+    if (!saving) onClose();
+  };
+
+  const download = async () => {
+    if (saving) return;
+    setSaving(true);
+    setSaveError('');
+    try {
+      const saved = await saveCsvFile(data.csv, `bili-comments-${fileTimestamp(exportedAt.current)}.csv`);
+      if (!saved) return;
+      onSaved(saved);
+      onClose();
+    } catch {
+      setSaveError('保存失败，请检查目标位置权限、可用空间及文件占用后重试。');
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
-    <div className="comment-csv-dialog" role="presentation" onMouseDown={onClose}>
+    <div className="comment-csv-dialog" role="presentation" onMouseDown={requestClose}>
       <div
         ref={dialogRef}
         className="comment-csv-dialog__panel"
@@ -84,14 +95,14 @@ export default function CommentCsvExportDialog({ comments, allComments, defaultS
         aria-describedby="comment-csv-dialog-description"
         tabIndex={-1}
         onMouseDown={event => event.stopPropagation()}
-        onKeyDown={event => { if (event.key === 'Escape') onClose(); }}
+        onKeyDown={event => { if (event.key === 'Escape') requestClose(); }}
       >
         <div className="comment-csv-dialog__header">
           <div>
             <h2 id="comment-csv-dialog-title">导出评论数据</h2>
             <p id="comment-csv-dialog-description">当前筛选与搜索后共 {comments.length.toLocaleString()} 条评论。导出为 UTF-8 CSV，适用于 Excel / WPS。</p>
           </div>
-          <button type="button" className="comment-csv-dialog__close ui-secondary-action" onClick={onClose} aria-label="关闭导出评论数据弹窗">关闭</button>
+          <button type="button" className="comment-csv-dialog__close ui-secondary-action" onClick={requestClose} disabled={saving} aria-label="关闭导出评论数据弹窗">关闭</button>
         </div>
 
         <div className="comment-csv-dialog__body">
@@ -106,6 +117,7 @@ export default function CommentCsvExportDialog({ comments, allComments, defaultS
             ))}
           </fieldset>
           <p className="comment-csv-dialog__privacy">文件仅在本机生成；如勾选用户名或 IP 属地，可能包含公开评论资料，分享时请自行判断范围。</p>
+          {saveError && <p className="comment-csv-dialog__error" role="alert">{saveError}</p>}
 
           <section className="comment-csv-dialog__preview" aria-labelledby="comment-csv-preview-title">
             <div className="comment-csv-dialog__preview-heading">
@@ -124,8 +136,10 @@ export default function CommentCsvExportDialog({ comments, allComments, defaultS
         </div>
 
         <div className="comment-csv-dialog__actions">
-          <button type="button" className="btn btn-ghost" onClick={onClose}>取消</button>
-          <button type="button" className="ui-secondary-action comment-csv-dialog__download" onClick={download}>导出 {comments.length.toLocaleString()} 条</button>
+          <button type="button" className="btn btn-ghost" onClick={requestClose} disabled={saving}>取消</button>
+          <button type="button" className="ui-secondary-action comment-csv-dialog__download" onClick={() => { void download(); }} disabled={saving}>
+            {saving ? '正在保存…' : `导出 ${comments.length.toLocaleString()} 条`}
+          </button>
         </div>
       </div>
     </div>

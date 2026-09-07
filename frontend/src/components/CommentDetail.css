@@ -223,6 +223,7 @@
 .comment-csv-dialog__option input { flex: 0 0 auto; margin: .1rem 0 0; accent-color: var(--accent); }
 .comment-csv-dialog__option--wide { grid-column: 1 / -1; }
 .comment-csv-dialog__privacy { margin: 1rem 0 0; padding: .65rem .75rem; border: 1px solid color-mix(in srgb, var(--yellow) 20%, transparent); border-radius: var(--radius-sm); color: var(--yellow); background: var(--yellow-soft); font-size: .75rem; line-height: 1.55; }
+.comment-csv-dialog__error { margin: .75rem 0 0; padding: .6rem .75rem; color: var(--red); background: var(--red-soft); border: 1px solid color-mix(in srgb, var(--red) 35%, transparent); border-radius: var(--radius-sm); font-size: .75rem; line-height: 1.5; }
 
 .comment-csv-dialog__preview { margin-top: 1rem; }
 .comment-csv-dialog__preview-heading { display: flex; align-items: center; justify-content: space-between; gap: .75rem; margin-bottom: .55rem; }
