@@ -108,20 +108,18 @@ jobs:
         with:
           name: B站舆论监测平台 v${{ steps.package.outputs.version }}
           body: |
-            ## 0.2.2 更新
+            ## 0.2.3 更新
 
-            - 新增评论明细 CSV 导出，可按当前筛选结果保存数据。
-            - 改进评论情绪标签展示与导出预处理。
-            - 词云统一使用前端渲染，移除遗留的后端 PNG 词云接口及相关打包依赖。
-            - 补充产品使用说明、界面预览与本地优先隐私政策。
+            - 新增角色化 AI 简评：可按舆情观察、公关与风险处置、视频创作者或新闻编辑视角生成快速或标准报告。
+            - 新增分 P 分时段弹幕抽样、情绪时间轴和弹幕明细；结果清楚标记已抽样、未采样、失败与部分覆盖区间。
+            - 评论采集改为先确认视频信息、数量和请求间隔；部分完成结果可继续查看或重新采集。
+            - 新增浅色、暗色与跟随系统主题设置，并修复检查更新可能无响应的问题。
 
-            ## 下载与使用
+            ## 升级提示
 
-            下载 `BiliOpinionMonitor-${{ steps.package.outputs.version }}-windows-x64.exe` 后，可直接双击运行，无需安装 Python、Node.js 或 Rust。
+            请下载 `BiliOpinionMonitor-${{ steps.package.outputs.version }}-windows-x64.exe` 覆盖旧程序文件；不要删除或覆盖同级 `data/` 目录，其中保存本机数据库、登录信息、模型设置和日志。
 
-            首次启动会在 EXE 同级创建 `data/` 目录，用于保存数据库、登录信息、模型设置和日志。更新前请备份该目录，且不要在更新时删除或覆盖它。
-
-            当前为 0.x 预正式阶段，可能触发 Windows SmartScreen 提示。请只从本仓库 Release 页面下载，并可使用随发布生成的 `latest-portable.json` 核对文件大小与 SHA-256。
+            本版本仍为 0.x 预发布版本。请只从本仓库 Release 页面下载，并使用随发布生成的 `latest-portable.json` 核对文件大小与 SHA-256。
           generate_release_notes: true
           prerelease: false
           make_latest: true
