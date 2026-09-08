@@ -440,11 +440,10 @@ def _ai_summary_role_migration_required(eng) -> bool:
 
 def _schema_change_required(eng) -> bool:
     """Check before create_all so every mutating upgrade is backed up first."""
-    source = Path(DB_PATH)
-    if not source.exists():
-        return False
     from sqlalchemy import inspect
     existing = set(inspect(eng).get_table_names())
+    if not existing:
+        return False
     required = {
         "analysis_groups", "analysis_group_items", "analysis_group_summaries",
         "danmaku_analyses", "danmaku_samples",
