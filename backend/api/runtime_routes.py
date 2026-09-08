@@ -281,7 +281,7 @@ def health():
     """
     return {
         "ok": True,
-        "version": os.getenv("BILI_APP_VERSION", "0.2.3"),
+        "version": os.getenv("BILI_APP_VERSION", "0.2.4"),
         "desktop": bool(os.getenv("BILI_LOCAL_TOKEN")),
     }
 
