@@ -5,6 +5,7 @@ import './index.css'
 import App from './App.tsx'
 import { initializeDesktopRuntime, isDesktopRuntime } from './services/desktop.ts'
 import AppErrorBoundary from './components/AppErrorBoundary.tsx'
+import { NoticeProvider } from './components/NoticeProvider.tsx'
 import { initializeDevDiagnostics, installGlobalErrorHandlers, reportDiagnosticError } from './services/devDiagnostics.ts'
 import { initializeTheme } from './theme.ts'
 
@@ -27,7 +28,9 @@ void initializeDesktopRuntime()
       <StrictMode>
         <HashRouter>
           <AppErrorBoundary>
-            <App />
+            <NoticeProvider>
+              <App />
+            </NoticeProvider>
           </AppErrorBoundary>
         </HashRouter>
       </StrictMode>,

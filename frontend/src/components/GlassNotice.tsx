@@ -5,12 +5,14 @@ interface Props {
   title: string;
   children: ReactNode;
   onClear: () => void;
+  tone?: 'success' | 'error';
+  leaving?: boolean;
 }
 
 /** A reusable, non-blocking notice with an explicit clear action. */
-export default function GlassNotice({ title, children, onClear }: Props) {
+export default function GlassNotice({ title, children, onClear, tone = 'success', leaving = false }: Props) {
   return (
-    <aside className="glass-notice" role="status" aria-live="polite">
+    <aside className={`glass-notice glass-notice--${tone}${leaving ? ' glass-notice--leaving' : ''}`} role="status" aria-live="polite">
       <div className="glass-notice__content">
         <strong>{title}</strong>
         <p>{children}</p>

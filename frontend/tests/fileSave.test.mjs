@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { saveCsvFile } from '../src/utils/fileSave.ts';
+import { saveCsvFile, saveFile, savePngDataUrl } from '../src/utils/fileSave.ts';
 
 const originalWindow = globalThis.window;
 
@@ -41,6 +41,53 @@ test('取消另存为不会把取消动作显示为导出失败', async () => {
   };
   try {
     assert.equal(await saveCsvFile('内容', '评论.csv'), null);
+  } finally {
+    restoreWindow();
+  }
+});
+
+test('图片导出复用同一另存为窗口并保留 PNG 类型', async () => {
+  const writes = [];
+  globalThis.window = {
+    showSaveFilePicker: async options => {
+      assert.equal(options.suggestedName, '主情绪.png');
+      assert.deepEqual(options.types[0].accept, { 'image/png': ['.png'] });
+      return {
+        name: '主情绪.png',
+        createWritable: async () => ({
+          write: async data => { writes.push(await data.text()); },
+          close: async () => { writes.push('closed'); },
+        }),
+      };
+    },
+  };
+  try {
+    const result = await saveFile(new Blob(['PNG']), {
+      suggestedName: '主情绪.png',
+      extension: 'png',
+      mimeType: 'image/png',
+      description: 'PNG 图片',
+    });
+    assert.deepEqual(result, { path: undefined });
+    assert.deepEqual(writes, ['PNG', 'closed']);
+  } finally {
+    restoreWindow();
+  }
+});
+
+test('图表 PNG data URL 会被转换为图片文件保存', async () => {
+  const writes = [];
+  globalThis.window = {
+    showSaveFilePicker: async () => ({
+      createWritable: async () => ({
+        write: async data => { writes.push(await data.text()); },
+        close: async () => { writes.push('closed'); },
+      }),
+    }),
+  };
+  try {
+    await savePngDataUrl('data:image/png;base64,UE5H', '图表.png');
+    assert.deepEqual(writes, ['PNG', 'closed']);
   } finally {
     restoreWindow();
   }

@@ -29,10 +29,13 @@ export default function HeatTimeline({ timeline, hourlyDistribution, peakHour, p
       <h3 className="text-xs font-semibold text-secondary" style={{letterSpacing:'.05em'}}>
         热度趋势 {peakHour && <span className="ml-2 text-xs text-muted" style={{fontWeight:400}}>峰值: {peakHour} ({peakCount} 条)</span>}
       </h3>
-      <DownloadChartButton echartRefs={[timeChartRef, hourChartRef]} label="下载" />
+      <DownloadChartButton echartRef={timeChartRef} suggestedName="热度趋势.png" />
     </div>
     <ReactECharts ref={timeChartRef} option={timeOption} style={{ height: 200 }} />
-    <h4 className="text-xs text-muted mt-3 mb-1">24小时分布</h4>
+    <div className="flex items-center justify-between mt-3 mb-1">
+      <h4 className="text-xs text-muted">24小时分布</h4>
+      <DownloadChartButton echartRef={hourChartRef} suggestedName="24小时分布.png" />
+    </div>
     <ReactECharts ref={hourChartRef} option={hourOption} style={{ height: 160 }} />
   </div>;
 }

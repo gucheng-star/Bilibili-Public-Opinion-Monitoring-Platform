@@ -72,13 +72,36 @@ export default function SentimentChart({
     const styleData = styles.map(([key, name, color]) => ({ value: llmV2.style[key], name, itemStyle:{ color } })).filter(item => item.value > 0);
     const emotionRose = emotionTransition.type === 'rose';
     const styleRose = styleTransition.type === 'rose';
-    const radiusMap: Record<DistributionChartType, [string, string]> = { donut:['48%','72%'], pie:['0%','72%'], rose:['20%','78%'] };
-    const emotionOption = { animationDurationUpdate:emotionTransition.animationDurationUpdate, animationEasingUpdate:'cubicInOut', tooltip:{ trigger:'item', formatter:'{b}: {c} ({d}%)', backgroundColor:tt.backgroundColor, borderColor:tt.borderColor, textStyle:tt.textStyle }, legend:{ bottom:2, textStyle:{ color:tc, fontSize:9 } }, series:[{ type:'pie', radius:radiusMap[emotionTransition.type], center:['50%','41%'], roseType:emotionRose?'radius':undefined, itemStyle:{ borderRadius:8 }, label:{ color:tc, fontSize:11, formatter:'{b}\n{d}%' }, data:emotionRose ? emotionData.sort((a,b)=>b.value-a.value) : emotionData }] };
-    const styleOption = { animationDurationUpdate:styleTransition.animationDurationUpdate, animationEasingUpdate:'cubicInOut', tooltip:{ trigger:'item', formatter:'{b}: {c} ({d}%)', backgroundColor:tt.backgroundColor, borderColor:tt.borderColor, textStyle:tt.textStyle }, legend:{ bottom:2, textStyle:{ color:tc, fontSize:9 } }, series:[{ type:'pie', radius:radiusMap[styleTransition.type], center:['50%','41%'], roseType:styleRose?'radius':undefined, itemStyle:{ borderRadius:8 }, label:{ color:tc, fontSize:11, formatter:'{b}\n{d}%' }, data:styleRose ? styleData.sort((a,b)=>b.value-a.value) : styleData }] };
+    const radiusMap: Record<DistributionChartType, [string, string]> = { donut:['44%','64%'], pie:['0%','64%'], rose:['18%','70%'] };
+    const legend = { bottom:0, itemWidth:10, itemHeight:6, itemGap:4, textStyle:{ color:tc, fontSize:8 } };
+    const emotionOption = { animationDurationUpdate:emotionTransition.animationDurationUpdate, animationEasingUpdate:'cubicInOut', tooltip:{ trigger:'item', formatter:'{b}: {c} ({d}%)', backgroundColor:tt.backgroundColor, borderColor:tt.borderColor, textStyle:tt.textStyle }, legend, series:[{ type:'pie', radius:radiusMap[emotionTransition.type], center:['50%','38%'], roseType:emotionRose?'radius':undefined, itemStyle:{ borderRadius:8 }, label:{ color:tc, fontSize:11, formatter:'{b}\n{d}%' }, data:emotionRose ? emotionData.sort((a,b)=>b.value-a.value) : emotionData }] };
+    const styleOption = { animationDurationUpdate:styleTransition.animationDurationUpdate, animationEasingUpdate:'cubicInOut', tooltip:{ trigger:'item', formatter:'{b}: {c} ({d}%)', backgroundColor:tt.backgroundColor, borderColor:tt.borderColor, textStyle:tt.textStyle }, legend, series:[{ type:'pie', radius:radiusMap[styleTransition.type], center:['50%','38%'], roseType:styleRose?'radius':undefined, itemStyle:{ borderRadius:8 }, label:{ color:tc, fontSize:11, formatter:'{b}\n{d}%' }, data:styleRose ? styleData.sort((a,b)=>b.value-a.value) : styleData }] };
     const toggleEmotion = (next: DistributionChartType) => () => emotionTransition.selectType(next, chartRef.current?.getEchartsInstance());
     const toggleStyle = (next: DistributionChartType) => () => styleTransition.selectType(next, styleRef.current?.getEchartsInstance());
     const controls = (type: DistributionChartType, toggle: (next: DistributionChartType) => () => void) => <div className="segmented"><button className={type==='donut'?'active':''} onClick={toggle('donut')}>环形</button><button className={type==='pie'?'active':''} onClick={toggle('pie')}>饼图</button><button className={type==='rose'?'active':''} onClick={toggle('rose')}>玫瑰</button></div>;
-    return <div className="card distribution-chart-card"><div className="distribution-chart-header"><h3 className="text-xs font-semibold text-secondary" style={{letterSpacing:'.05em'}}>情绪与表达风格（大模型）</h3><div className="distribution-chart-header__controls"><FilterSelect ariaLabel="情感分析模式" value={mode} options={MODE_OPTIONS} onChange={onModeChange} /></div><DownloadChartButton echartRefs={[chartRef, styleRef]} label="下载双图" /></div>{hasReanalysisError && <div className="sentiment-v2-retry" role="status"><span>{reanalysis?.errorText || '部分评论尚未完成'}</span>{reanalysis?.onRetry && <button type="button" className="btn btn-primary" onClick={reanalysis.onRetry}>继续补齐剩余评论</button>}</div>}<div className="sentiment-v2-layout"><div><div className="sentiment-v2-subheader"><h4>主情绪</h4>{controls(emotionTransition.type, toggleEmotion)}</div><ReactECharts ref={chartRef} option={emotionOption} style={{height:260,width:'100%'}}/></div><div><div className="sentiment-v2-subheader"><h4>表达风格</h4>{controls(styleTransition.type, toggleStyle)}</div><ReactECharts ref={styleRef} option={styleOption} style={{height:260,width:'100%'}}/></div></div></div>;
+    return <div className="card distribution-chart-card">
+      <div className="distribution-chart-header">
+        <h3 className="text-xs font-semibold text-secondary" style={{ letterSpacing: '.05em' }}>情绪与表达风格（大模型）</h3>
+        <div className="distribution-chart-header__controls"><FilterSelect ariaLabel="情感分析模式" value={mode} options={MODE_OPTIONS} onChange={onModeChange} /></div>
+      </div>
+      {hasReanalysisError && <div className="sentiment-v2-retry" role="status"><span>{reanalysis?.errorText || '部分评论尚未完成'}</span>{reanalysis?.onRetry && <button type="button" className="btn btn-primary" onClick={reanalysis.onRetry}>继续补齐剩余评论</button>}</div>}
+      <div className="sentiment-v2-layout">
+        <div>
+          <div className="sentiment-v2-subheader">
+            <div className="sentiment-v2-title-controls"><h4>主情绪</h4>{controls(emotionTransition.type, toggleEmotion)}</div>
+            <DownloadChartButton echartRef={chartRef} suggestedName="主情绪分布.png" />
+          </div>
+          <ReactECharts ref={chartRef} option={emotionOption} style={{ height: 260, width: '100%' }} />
+        </div>
+        <div>
+          <div className="sentiment-v2-subheader">
+            <div className="sentiment-v2-title-controls"><h4>表达风格</h4>{controls(styleTransition.type, toggleStyle)}</div>
+            <DownloadChartButton echartRef={styleRef} suggestedName="表达风格分布.png" />
+          </div>
+          <ReactECharts ref={styleRef} option={styleOption} style={{ height: 260, width: '100%' }} />
+        </div>
+      </div>
+    </div>;
   }
 
   const radiusMap: Record<DistributionChartType, [string, string]> = { donut:['45%','70%'], pie:['0%','68%'], rose:['20%','74%'] };
@@ -141,7 +164,7 @@ export default function SentimentChart({
             <FilterSelect ariaLabel="情感分析模式" value={mode} options={MODE_OPTIONS} onChange={onModeChange} />
           </div>
         )}
-        {!isReanalyzing && !hasReanalysisError && <DownloadChartButton echartRefs={chartRef} />}
+        {!isReanalyzing && !hasReanalysisError && <DownloadChartButton echartRef={chartRef} suggestedName="情感分布.png" />}
       </div>
       {isReanalyzing || hasReanalysisError ? (
         <AnalysisProgress

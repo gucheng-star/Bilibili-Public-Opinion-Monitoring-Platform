@@ -88,7 +88,7 @@ export default function RegionMap({ data }: Props) {
   return <div className="card region-distribution-card">
     <div className="flex items-center justify-between mb-2 region-distribution__header">
       <h3 className="text-xs font-semibold text-secondary" style={{letterSpacing:'.05em'}}>地域分布 ({mapData.length} 个省级地区)</h3>
-      <DownloadChartButton echartRefs={chartRef} />
+      <DownloadChartButton echartRef={chartRef} suggestedName="地域分布.png" />
     </div>
     <div className="region-distribution__body">
       <div className="region-distribution__map">

@@ -374,11 +374,19 @@ fn frontend_api_base(origin: &str) -> String {
 }
 
 #[tauri::command]
-async fn save_csv_file(suggested_name: String, csv: String) -> Result<Option<String>, String> {
+async fn save_export_file(
+    suggested_name: String,
+    extension: String,
+    content_base64: String,
+) -> Result<Option<String>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let suggested_name = csv_suggested_file_name(&suggested_name);
+        let (extension, filter_name) = export_file_type(&extension)?;
+        let content = STANDARD
+            .decode(content_base64)
+            .map_err(|_| "导出内容无效，请重试".to_owned())?;
+        let suggested_name = export_suggested_file_name(&suggested_name, extension);
         let Some(path) = FileDialog::new()
-            .add_filter("CSV 文件", &["csv"])
+            .add_filter(filter_name, &[extension])
             .set_file_name(&suggested_name)
             .save_file()
         else {
@@ -386,13 +394,13 @@ async fn save_csv_file(suggested_name: String, csv: String) -> Result<Option<Str
         };
         let path = if path
             .extension()
-            .is_some_and(|extension| extension.eq_ignore_ascii_case("csv"))
+            .is_some_and(|current| current.eq_ignore_ascii_case(extension))
         {
             path
         } else {
-            path.with_extension("csv")
+            path.with_extension(extension)
         };
-        fs::write(&path, csv)
+        fs::write(&path, content)
             .map_err(|_| "无法写入所选位置，请检查文件权限或是否被占用".to_owned())?;
         Ok(Some(path.to_string_lossy().into_owned()))
     })
@@ -400,16 +408,27 @@ async fn save_csv_file(suggested_name: String, csv: String) -> Result<Option<Str
     .map_err(|_| "保存任务异常结束，请重试".to_owned())?
 }
 
-fn csv_suggested_file_name(value: &str) -> String {
+fn export_file_type(value: &str) -> Result<(&'static str, &'static str), String> {
+    match value.to_ascii_lowercase().as_str() {
+        "csv" => Ok(("csv", "CSV 文件")),
+        "png" => Ok(("png", "PNG 图片")),
+        _ => Err("不支持的导出文件类型".to_owned()),
+    }
+}
+
+fn export_suggested_file_name(value: &str, extension: &str) -> String {
     let name = Path::new(value)
         .file_name()
         .and_then(|name| name.to_str())
         .filter(|name| !name.trim().is_empty())
-        .unwrap_or("bili-comments.csv");
-    if name.to_ascii_lowercase().ends_with(".csv") {
+        .unwrap_or("bili-export");
+    if name
+        .rsplit_once('.')
+        .is_some_and(|(_, current)| current.eq_ignore_ascii_case(extension))
+    {
         name.to_owned()
     } else {
-        format!("{name}.csv")
+        format!("{name}.{extension}")
     }
 }
 
@@ -952,7 +971,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             runtime_config,
-            save_csv_file,
+            save_export_file,
             check_for_updates,
             download_update,
             install_update,
@@ -1418,9 +1437,10 @@ fn random_hex(bytes: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_manifest_error, fetch_manifest_from_url, frontend_api_base, is_valid_std_handle,
-        logged_update_task, mcp_environment, mcp_start_failure_message, parse_start_mode_from,
-        McpStartupStage, PortablePaths, StartMode, UpdateFailure, MCP_STDIO_ARGUMENT,
+        classify_manifest_error, export_file_type, export_suggested_file_name,
+        fetch_manifest_from_url, frontend_api_base, is_valid_std_handle, logged_update_task,
+        mcp_environment, mcp_start_failure_message, parse_start_mode_from, McpStartupStage,
+        PortablePaths, StartMode, UpdateFailure, MCP_STDIO_ARGUMENT,
     };
     use std::ffi::OsString;
     use std::{
@@ -1489,13 +1509,28 @@ mod tests {
     }
 
     #[test]
-    fn csv_save_command_keeps_the_native_dialog_and_write_off_the_tauri_thread() {
+    fn export_save_command_keeps_the_native_dialog_and_write_off_the_tauri_thread() {
         let source = include_str!("main.rs");
         let production = source.split("#[cfg(test)]").next().unwrap();
-        assert!(production.contains("async fn save_csv_file"));
+        assert!(production.contains("async fn save_export_file"));
         assert!(production.contains("FileDialog::new()"));
         assert!(production.contains("tauri::async_runtime::spawn_blocking(move ||"));
-        assert!(production.contains("fs::write(&path, csv)"));
+        assert!(production.contains(".decode(content_base64)"));
+        assert!(production.contains("fs::write(&path, content)"));
+    }
+
+    #[test]
+    fn export_file_type_and_suggested_name_are_restricted_to_safe_formats() {
+        assert_eq!(export_file_type("PNG").unwrap(), ("png", "PNG 图片"));
+        assert!(export_file_type("exe").is_err());
+        assert_eq!(
+            export_suggested_file_name("C:\\临时\\评论", "csv"),
+            "评论.csv"
+        );
+        assert_eq!(
+            export_suggested_file_name("图表.jpg", "png"),
+            "图表.jpg.png"
+        );
     }
 
     #[test]

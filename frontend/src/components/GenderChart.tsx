@@ -47,7 +47,7 @@ export default function GenderChart({ male, female, unknown }: Props) {
           <button className={type==='rose'?'active':''} onClick={toggle('rose')}>玫瑰</button>
         </div>
       </div>
-      <DownloadChartButton echartRefs={chartRef} />
+      <DownloadChartButton echartRef={chartRef} suggestedName="性别分布.png" />
     </div>
     <ReactECharts ref={chartRef} option={option} style={{height:260,width:'100%'}}/>
   </div>;

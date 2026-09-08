@@ -293,7 +293,7 @@ function WordCloudCard({ keywords, className, status = 'ready', scopeKey = 'defa
             aria-controls="wordcloud-style-drawer"
             onClick={() => styleDrawerOpen ? closeStyleDrawer() : setStyleDrawerOpen(true)}
           >样式设置</button>
-          <DownloadChartButton echartRefs={chartRef} />
+          <DownloadChartButton echartRef={chartRef} suggestedName="评论词云.png" />
         </div>}
       </div>
       {keywords.length > 0 && <StyleDrawer open={styleDrawerOpen} onClose={closeStyleDrawer}>

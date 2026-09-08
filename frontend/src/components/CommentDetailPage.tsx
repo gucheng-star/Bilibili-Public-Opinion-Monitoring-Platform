@@ -9,11 +9,10 @@ import {
 } from '../utils/commentQuery';
 import { COMMENT_PAGE_SIZE, buildCommentTree, commentKey } from '../utils/commentTree';
 import type { CommentCsvSource } from '../utils/commentCsvExport';
-import type { SavedFile } from '../utils/fileSave';
 import CommentCsvExportDialog from './CommentCsvExportDialog';
 import CommentTable from './CommentTable';
 import FilterBar from './FilterBar';
-import GlassNotice from './GlassNotice';
+import { useNotice } from './NoticeContext';
 import './CommentDetail.css';
 
 interface ShellProps {
@@ -46,7 +45,7 @@ function CommentDetailShell({
   const [page, setPage] = useState(1);
   const [hydrated, setHydrated] = useState(false);
   const [csvDialogOpen, setCsvDialogOpen] = useState(false);
-  const [savedFile, setSavedFile] = useState<SavedFile | null>(null);
+  const { clearNotice, showNotice } = useNotice();
 
   const filtersRef = useRef(filters);
   filtersRef.current = filters;
@@ -172,7 +171,7 @@ function CommentDetailShell({
           <p className="comment-detail__stats" role="status">
             命中 {searched.length.toLocaleString()} 条 · {rootCount.toLocaleString()} 个根评论 · {replyCount.toLocaleString()} 条回复
           </p>
-          <button type="button" className="ui-secondary-action comment-detail__export" onClick={() => { setSavedFile(null); setCsvDialogOpen(true); }} disabled={!searched.length}>导出 CSV</button>
+          <button type="button" className="ui-secondary-action comment-detail__export" onClick={() => { clearNotice(); setCsvDialogOpen(true); }} disabled={!searched.length}>导出 CSV</button>
         </div>
       </div>
       {csvDialogOpen && <CommentCsvExportDialog
@@ -181,11 +180,11 @@ function CommentDetailShell({
         defaultSource={defaultCsvSource}
         sources={sources?.map(source => ({ analysisId: source.analysis_id, bv: source.bv, videoTitle: source.video_title }))}
         onClose={() => setCsvDialogOpen(false)}
-        onSaved={setSavedFile}
+        onSaved={savedFile => showNotice({
+          title: 'CSV 导出完成',
+          message: savedFile.path ? `保存成功：${savedFile.path}` : '保存成功。',
+        })}
       />}
-      {savedFile && !csvDialogOpen && <GlassNotice title="CSV 导出完成" onClear={() => setSavedFile(null)}>
-        {savedFile.path ? `保存成功：${savedFile.path}` : '保存成功。'}
-      </GlassNotice>}
       {searched.length === 0 ? (
         <div className="app-state comment-detail__empty flex flex-col items-center justify-center py-16 text-muted">
           <p className="text-sm mb-3">{q ? '没有匹配该搜索的评论' : '当前筛选没有命中评论'}</p>

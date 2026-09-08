@@ -1,84 +1,58 @@
+import type { RefObject } from 'react';
 import ReactECharts from 'echarts-for-react';
-import { useCallback, useMemo } from 'react';
+import { useCallback, useState } from 'react';
+import { useNotice } from './NoticeContext';
+import { savePngDataUrl } from '../utils/fileSave';
 
 interface Props {
-  /** 单个或多个 ECharts 实例 ref */
-  echartRefs: React.RefObject<ReactECharts | null> | React.RefObject<ReactECharts | null>[];
+  /** One ECharts instance maps to exactly one PNG file. */
+  echartRef: RefObject<ReactECharts | null>;
   label?: string;
+  suggestedName?: string;
 }
 
-/**
- * 图表下载按钮：取 ECharts 实例的截图并触发下载为 PNG。
- */
-export default function DownloadChartButton({ echartRefs, label = '下载' }: Props) {
-  const refs = useMemo(
-    () => (Array.isArray(echartRefs) ? echartRefs : [echartRefs]),
-    [echartRefs],
-  );
+/** Exports a single chart through the shared save flow without compositing charts. */
+export default function DownloadChartButton({ echartRef, label = '导出图片', suggestedName }: Props) {
+  const [saving, setSaving] = useState(false);
+  const { showNotice } = useNotice();
 
   const handleDownload = useCallback(async () => {
-    const dataUrls: string[] = [];
-    for (const ref of refs) {
-      const instance = ref.current?.getEchartsInstance();
-      if (!instance) continue;
-      const url = instance.getDataURL({ type: 'png', pixelRatio: 2, backgroundColor: 'transparent' });
-      dataUrls.push(url);
-    }
-    if (!dataUrls.length) return;
-
-    // 单图直接下载
-    if (dataUrls.length === 1) {
-      const link = document.createElement('a');
-      link.download = `chart_${Date.now()}.png`;
-      link.href = dataUrls[0];
-      link.click();
+    if (saving) return;
+    const instance = echartRef.current?.getEchartsInstance();
+    if (!instance) {
+      showNotice({ title: '图片导出失败', message: '图表尚未准备完成，请稍后重试。', tone: 'error' });
       return;
     }
 
-    // 多图合并为一张
-    const loadImg = (src: string): Promise<HTMLImageElement> =>
-      new Promise((resolve, reject) => {
-        const img = new Image();
-        img.onload = () => resolve(img);
-        img.onerror = reject;
-        img.src = src;
+    setSaving(true);
+    try {
+      const dataUrl = instance.getDataURL({ type: 'png', pixelRatio: 2, backgroundColor: 'transparent' });
+      const saved = await savePngDataUrl(dataUrl, suggestedName || `chart-${Date.now()}.png`);
+      if (!saved) return;
+      showNotice({
+        title: 'PNG 导出完成',
+        message: saved.path ? `保存成功：${saved.path}` : '保存成功。',
+        tone: 'success',
       });
-
-    const imgs = await Promise.all(dataUrls.map(u => loadImg(u)));
-    const maxW = Math.max(...imgs.map(i => i.width));
-    const totalH = imgs.reduce((s, i) => s + i.height + 8, -8);
-
-    const canvas = document.createElement('canvas');
-    canvas.width = maxW;
-    canvas.height = totalH;
-    const ctx = canvas.getContext('2d')!;
-    ctx.fillStyle = getComputedStyle(document.body).getPropertyValue('--bg').trim() || '#fff';
-    ctx.fillRect(0, 0, maxW, totalH);
-
-    let y = 0;
-    for (const img of imgs) {
-      ctx.drawImage(img, 0, y, img.width, img.height);
-      y += img.height + 8;
+    } catch {
+      showNotice({ title: '图片导出失败', message: '保存失败，请检查目标位置权限、可用空间及文件占用后重试。', tone: 'error' });
+    } finally {
+      setSaving(false);
     }
+  }, [echartRef, saving, showNotice, suggestedName]);
 
-    const link = document.createElement('a');
-    link.download = `chart_${Date.now()}.png`;
-    link.href = canvas.toDataURL('image/png');
-    link.click();
-  }, [refs]);
-
-  return (
-    <button
+  return <button
       type="button"
       className="ui-secondary-action chart-download-button"
-      onClick={handleDownload}
+      onClick={() => { void handleDownload(); }}
       title={label}
+      disabled={saving}
       style={{
         padding: '.25rem .5rem',
         fontSize: '.6875rem',
         fontWeight: 500,
         borderRadius: '.375rem',
-        cursor: 'pointer',
+        cursor: saving ? 'wait' : 'pointer',
         lineHeight: 1.5,
         display: 'inline-flex',
         alignItems: 'center',
@@ -90,7 +64,6 @@ export default function DownloadChartButton({ echartRefs, label = '下载' }: Pr
         <polyline points="7 10 12 15 17 10"/>
         <line x1="12" y1="15" x2="12" y2="3"/>
       </svg>
-      {label}
-    </button>
-  );
+      {saving ? '正在保存…' : label}
+    </button>;
 }
