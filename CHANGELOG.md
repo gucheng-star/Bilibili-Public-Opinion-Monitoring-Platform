@@ -5,6 +5,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-09-08
+
+### Added
+- 评论 CSV 与各图表 PNG 导出统一使用本地保存流程；桌面版可选择保存位置，并提供一致的结果提示。
+
+### Fixed
+- 修复旧版弹幕单次采集数据库的迁移检测，确保升级前会正确备份并重建可重试结构。
+
 ## [0.2.3] - 2026-09-07
 
 ### Added
