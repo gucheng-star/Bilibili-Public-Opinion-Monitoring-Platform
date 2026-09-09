@@ -20,20 +20,35 @@ MAX_COMMENT_CHARS = 240
 MAX_RESPONSE_CHARS = 12_000
 MAX_OFFSET = 100_000
 MAX_ANALYSIS_COMMENTS = 10_000
+MAX_EVENT_COMMENTS = 10_000
+MAX_EVENT_MEMBERS = 50
 QUERY_TIMEOUT_SECONDS = 5.0
 QUERY_PROGRESS_STEPS = 1_000
 SUPPORTED_SCHEMA_SIGNATURE = 1
+SERVICE_VERSION = "0.1.0"
+SNAPSHOT_ID: str | None = None
+AVAILABLE_TOOLS = (
+    "bili_list_analyses",
+    "bili_get_analysis_overview",
+    "bili_search_comments",
+    "bili_get_data_source_info",
+    "bili_list_events",
+    "bili_get_event_overview",
+    "bili_search_event_comments",
+)
 
 _WINDOWS_DRIVE_FIXED = 3
 _WINDOWS_DRIVE_REMOVABLE = 2
 _SIDECAR_SUFFIXES = ("-wal", "-shm", "-journal")
 
 ALLOWED_READ_COLUMNS = {
-    "analyses": {"id", "bv", "video_title", "status", "mode", "total_comments", "created_at", "sentiment_llm_schema_version"},
+    "analyses": {"id", "bv", "video_title", "status", "mode", "total_comments", "created_at", "sentiment_llm_schema_version", "comment_collection_status"},
     "comments": {
         "id", "analysis_id", "content", "likes", "ip_location", "post_time",
         "sentiment_label", "sentiment_llm_label", "sentiment_llm_style", "sentiment_llm_schema_version", "root_rpid", "parent_rpid",
     },
+    "analysis_groups": {"id", "name", "created_at", "updated_at"},
+    "analysis_group_items": {"id", "group_id", "analysis_id", "position"},
 }
 
 REQUIRED_SCHEMA = {
@@ -60,6 +75,25 @@ REQUIRED_SCHEMA = {
         "sentiment_llm_schema_version": {"INTEGER"},
         "root_rpid": {"INTEGER"},
         "parent_rpid": {"INTEGER"},
+    },
+}
+
+REQUIRED_EVENT_SCHEMA = {
+    "analyses": {
+        "id": {"INTEGER"},
+        "comment_collection_status": {"TEXT"},
+    },
+    "analysis_groups": {
+        "id": {"INTEGER"},
+        "name": {"TEXT"},
+        "created_at": {"TEXT", "NUMERIC"},
+        "updated_at": {"TEXT", "NUMERIC"},
+    },
+    "analysis_group_items": {
+        "id": {"INTEGER"},
+        "group_id": {"INTEGER"},
+        "analysis_id": {"INTEGER"},
+        "position": {"INTEGER"},
     },
 }
 
@@ -138,7 +172,7 @@ class ReadOnlyService:
                 return False
         return False
 
-    def _connect(self) -> sqlite3.Connection:
+    def _connect(self, require_event_schema: bool = False) -> sqlite3.Connection:
         connection: sqlite3.Connection | None = None
         try:
             connection = sqlite3.connect(
@@ -155,6 +189,8 @@ class ReadOnlyService:
             if connection.execute("PRAGMA query_only").fetchone()[0] != 1:
                 raise AgentReadOnlyError("数据库只读保护未生效，已拒绝继续读取。", "readonly_unavailable")
             self._validate_schema(connection)
+            if require_event_schema:
+                self._validate_event_schema(connection)
             connection.set_authorizer(self._authorize)
             connection.execute("BEGIN DEFERRED")
             deadline = time.monotonic() + QUERY_TIMEOUT_SECONDS
@@ -188,14 +224,28 @@ class ReadOnlyService:
     @classmethod
     def _validate_schema(cls, connection: sqlite3.Connection) -> None:
         """Validate the fixed stage-A schema signature without mutating it."""
-        for table, required_columns in REQUIRED_SCHEMA.items():
+        cls._validate_required_schema(connection, REQUIRED_SCHEMA, "只读 Schema")
+
+    @classmethod
+    def _validate_event_schema(cls, connection: sqlite3.Connection) -> None:
+        """Validate event tables only when a new R1 event operation needs them."""
+        cls._validate_required_schema(connection, REQUIRED_EVENT_SCHEMA, "只读事件 Schema")
+
+    @classmethod
+    def _validate_required_schema(
+        cls,
+        connection: sqlite3.Connection,
+        required_schema: dict[str, dict[str, set[str]]],
+        schema_name: str,
+    ) -> None:
+        for table, required_columns in required_schema.items():
             table_row = connection.execute(
                 "SELECT type FROM sqlite_schema WHERE name=? COLLATE BINARY",
                 (table,),
             ).fetchone()
             if table_row is None or table_row["type"] != "table":
                 raise AgentReadOnlyError(
-                    f"数据库不符合支持的只读 Schema v{SUPPORTED_SCHEMA_SIGNATURE}。",
+                    f"数据库不符合支持的{schema_name} v{SUPPORTED_SCHEMA_SIGNATURE}。",
                     "unsupported_database_schema",
                 )
             columns = {
@@ -207,7 +257,7 @@ class ReadOnlyService:
                 for name, allowed_affinities in required_columns.items()
             ) or columns.get("id", (None, 0))[1] != 1:
                 raise AgentReadOnlyError(
-                    f"数据库不符合支持的只读 Schema v{SUPPORTED_SCHEMA_SIGNATURE}。",
+                    f"数据库不符合支持的{schema_name} v{SUPPORTED_SCHEMA_SIGNATURE}。",
                     "unsupported_database_schema",
                 )
 
@@ -232,7 +282,12 @@ class ReadOnlyService:
     def _authorize(action: int, argument1: str | None, argument2: str | None, _database: str | None, _source: str | None) -> int:
         if action == sqlite3.SQLITE_READ:
             columns = ALLOWED_READ_COLUMNS.get(argument1 or "")
-            return sqlite3.SQLITE_OK if columns is not None and (argument2 or "") in columns else sqlite3.SQLITE_DENY
+            # SQLite reports an empty column name for aggregate table reads
+            # (for example COUNT(id) on an empty event table).  It conveys no
+            # sensitive column and remains constrained to an allowlisted table.
+            return sqlite3.SQLITE_OK if columns is not None and (
+                argument2 in {None, ""} or argument2 in columns
+            ) else sqlite3.SQLITE_DENY
         if action in {sqlite3.SQLITE_SELECT, sqlite3.SQLITE_FUNCTION, sqlite3.SQLITE_TRANSACTION}:
             return sqlite3.SQLITE_OK
         return sqlite3.SQLITE_DENY
@@ -411,3 +466,308 @@ class ReadOnlyService:
             raise
         except sqlite3.Error as exc:
             raise self._database_read_error(exc, "检索评论") from exc
+
+    @staticmethod
+    def _event_id(value: int) -> int:
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise AgentReadOnlyError("event_id 必须是正整数。", "invalid_event_id")
+        return value
+
+    @staticmethod
+    def _source_analysis_id(value: int | None) -> int | None:
+        if value is None:
+            return None
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise AgentReadOnlyError("source_analysis_id 必须是正整数。", "invalid_source_analysis_id")
+        return value
+
+    @staticmethod
+    def _schema_version(value: Any) -> int:
+        return value if value in {0, 1, 2} else 0
+
+    def _event(self, connection: sqlite3.Connection, event_id: int) -> sqlite3.Row:
+        row = connection.execute(
+            "SELECT id,name FROM analysis_groups WHERE id=?",
+            (event_id,),
+        ).fetchone()
+        if row is None:
+            raise AgentReadOnlyError("未找到指定的舆情事件。", "event_not_found")
+        return row
+
+    def _event_members(self, connection: sqlite3.Connection, event_id: int) -> list[dict[str, Any]]:
+        rows = connection.execute(
+            "SELECT i.analysis_id,i.position,a.bv,a.video_title,a.status,a.comment_collection_status "
+            "FROM analysis_group_items i "
+            "LEFT JOIN analyses a ON a.id=i.analysis_id "
+            "WHERE i.group_id=? ORDER BY i.position ASC,i.id ASC LIMIT ?",
+            (event_id, MAX_EVENT_MEMBERS + 1),
+        ).fetchall()
+        if len(rows) > MAX_EVENT_MEMBERS:
+            raise AgentReadOnlyError(
+                f"该舆情事件超过只读查询的 {MAX_EVENT_MEMBERS} 个来源上限。",
+                "event_too_large",
+            )
+        values: list[dict[str, Any]] = []
+        for row in rows:
+            status = str(row["status"] or "missing") if row["bv"] is not None else "missing"
+            collection_status = (
+                str(row["comment_collection_status"] or "missing")[:40]
+                if row["bv"] is not None else "missing"
+            )
+            values.append({
+                "analysis_id": int(row["analysis_id"]),
+                "bv": str(row["bv"]) if row["bv"] is not None else None,
+                "video_title": str(row["video_title"]) if row["video_title"] is not None else None,
+                "position": max(0, int(row["position"] or 0)),
+                "status": status[:40],
+                "comment_collection_status": collection_status,
+                "is_available": status == "done" and collection_status == "completed",
+            })
+        return values
+
+    def _event_comments(self, connection: sqlite3.Connection, event_id: int) -> list[dict[str, Any]]:
+        rows = connection.execute(
+            "SELECT c.id,c.analysis_id,a.bv AS source_bv,c.content,c.likes,c.post_time,"
+            "c.sentiment_label,c.sentiment_llm_label,c.sentiment_llm_style,"
+            "c.sentiment_llm_schema_version,c.root_rpid,c.parent_rpid "
+            "FROM analysis_group_items i "
+            "JOIN analyses a ON a.id=i.analysis_id "
+            "JOIN comments c ON c.analysis_id=a.id "
+            "WHERE i.group_id=? AND a.status='done' AND a.comment_collection_status='completed' "
+            "ORDER BY i.position ASC,c.id ASC LIMIT ?",
+            (event_id, MAX_EVENT_COMMENTS + 1),
+        ).fetchall()
+        if len(rows) > MAX_EVENT_COMMENTS:
+            raise AgentReadOnlyError(
+                f"该舆情事件超过内部预览的 {MAX_EVENT_COMMENTS} 条评论读取上限。",
+                "event_too_large",
+            )
+        return [{
+            "id": row["id"],
+            "source_analysis_id": row["analysis_id"],
+            "source_bv": str(row["source_bv"]) if row["source_bv"] is not None else None,
+            "content": row["content"] or "",
+            "likes": row["likes"] or 0,
+            "post_time": row["post_time"],
+            "sentiment_label": row["sentiment_label"] or "",
+            "sentiment_llm_label": row["sentiment_llm_label"] or "",
+            "sentiment_llm_style": row["sentiment_llm_style"] or "",
+            "sentiment_llm_schema_version": self._schema_version(row["sentiment_llm_schema_version"]),
+            "root_rpid": row["root_rpid"],
+            "parent_rpid": row["parent_rpid"],
+        } for row in rows]
+
+    @staticmethod
+    def _event_llm_coverage(comments: list[dict[str, Any]]) -> dict[str, Any]:
+        covered = sum(ReadOnlyService._v2_llm_ready([comment]) for comment in comments)
+        total = len(comments)
+        return {
+            "total_comments": total,
+            "covered_comments": covered,
+            "pending_or_legacy_comments": total - covered,
+            "coverage": covered / total if total else 1.0,
+            "fully_covered": covered == total,
+        }
+
+    @staticmethod
+    def _event_limitations(
+        members: list[dict[str, Any]],
+        comments: list[dict[str, Any]],
+        mode: str,
+        sentiment_denominator: int,
+    ) -> list[str]:
+        limitations = ["精确重复仅在同一来源视频内按非空正文计算。"]
+        unavailable = sum(not member["is_available"] for member in members)
+        if unavailable:
+            limitations.append(f"有 {unavailable} 个事件成员缺失、未完成或评论采集未完成，未将其视为零评论来源。")
+        if mode == "llm":
+            coverage = ReadOnlyService._event_llm_coverage(comments)
+            if not coverage["fully_covered"]:
+                limitations.append("LLM 仅统计具备完整 V2 情绪和表达风格标签的评论，未回退为 NLP。")
+        elif sentiment_denominator != len(comments):
+            limitations.append("部分评论缺少合法 NLP 情绪标签，未计入情绪分母。")
+        return limitations
+
+    def get_data_source_info(self) -> dict[str, Any]:
+        """Describe the manual static-copy source without trusting its file timestamps."""
+        compatibility = "compatible"
+        limitations = ["当前未提供可信快照清单；snapshot_created_at 为 null，未使用文件 mtime。"]
+        with closing(self._connect()):
+            pass
+        try:
+            with closing(self._connect(require_event_schema=True)):
+                pass
+        except AgentReadOnlyError as exc:
+            if exc.code != "unsupported_database_schema":
+                raise
+            compatibility = "event_schema_missing"
+            limitations.append("事件表缺失或不兼容；事件工具会明确拒绝调用。")
+        return {
+            "mcp_contract_version": 2,
+            "service_version": SERVICE_VERSION,
+            "snapshot_id": SNAPSHOT_ID,
+            "snapshot_created_at": None,
+            "snapshot_time_source": "unknown",
+            "schema_compatibility": compatibility,
+            "available_tools": list(AVAILABLE_TOOLS),
+            "data_scope": "用户明确指定的静态 SQLite 副本中的已保存分析、事件成员与评论。",
+            "limitations": limitations,
+        }
+
+    def list_events(self, limit: int = 20, offset: int = 0) -> dict[str, Any]:
+        limit, offset = self._paging(limit, offset)
+        try:
+            with closing(self._connect(require_event_schema=True)) as db:
+                total = db.execute("SELECT COUNT(id) FROM analysis_groups").fetchone()[0]
+                rows = db.execute(
+                    "SELECT page.id,page.name,page.created_at,page.updated_at,"
+                    "COUNT(DISTINCT i.id) AS source_count,MIN(c.post_time) AS earliest_comment_at,MAX(c.post_time) AS latest_comment_at "
+                    "FROM (SELECT id,name,created_at,updated_at FROM analysis_groups "
+                    "ORDER BY updated_at DESC,id DESC LIMIT ? OFFSET ?) page "
+                    "LEFT JOIN analysis_group_items i ON i.group_id=page.id "
+                    "LEFT JOIN comments c ON c.analysis_id=i.analysis_id "
+                    "GROUP BY page.id,page.name,page.created_at,page.updated_at "
+                    "ORDER BY page.updated_at DESC,page.id DESC",
+                    (limit, offset),
+                ).fetchall()
+                values = [{
+                    "event_id": int(row["id"]),
+                    "name": str(row["name"] or "")[:200],
+                    "source_count": int(row["source_count"] or 0),
+                    "created_at": self._iso(row["created_at"]),
+                    "updated_at": self._iso(row["updated_at"]),
+                    "earliest_comment_at": self._iso(row["earliest_comment_at"]),
+                    "latest_comment_at": self._iso(row["latest_comment_at"]),
+                } for row in rows]
+                return {
+                    "mcp_contract_version": 2,
+                    "snapshot_id": SNAPSHOT_ID,
+                    "items": values,
+                    "total_count": int(total),
+                    "has_more": offset + len(values) < total,
+                    "limit": limit,
+                    "offset": offset,
+                    "limitations": ["当前未提供可信快照清单；snapshot_id 为 null。"],
+                }
+        except AgentReadOnlyError:
+            raise
+        except sqlite3.Error as exc:
+            raise self._database_read_error(exc, "读取舆情事件") from exc
+
+    def get_event_overview(self, event_id: int, mode: str = "nlp") -> dict[str, Any]:
+        event_id, mode = self._event_id(event_id), self._mode(mode)
+        try:
+            with closing(self._connect(require_event_schema=True)) as db:
+                event = self._event(db, event_id)
+                members = self._event_members(db, event_id)
+                comments = annotate_exact_duplicates(self._event_comments(db, event_id), scope_field="source_analysis_id")
+                coverage = self._event_llm_coverage(comments)
+                eligible = [comment for comment in comments if mode != "llm" or self._v2_llm_ready([comment])]
+                labels, field = (
+                    (V2_EMOTION_LABELS, "sentiment_llm_label") if mode == "llm"
+                    else (NLP_LABELS, "sentiment_label")
+                )
+                counts = {label: sum(comment[field] == label for comment in eligible) for label in labels}
+                denominator = sum(counts.values())
+                styles = (
+                    {label: sum(comment["sentiment_llm_style"] == label for comment in eligible) for label in V2_STYLE_LABELS}
+                    if mode == "llm" else None
+                )
+                source_rows = []
+                raw_total, matched_total = len(comments), len(eligible)
+                for member in members:
+                    source_comments = [comment for comment in comments if comment["source_analysis_id"] == member["analysis_id"]]
+                    source_matched = [comment for comment in eligible if comment["source_analysis_id"] == member["analysis_id"]]
+                    source_covered = sum(self._v2_llm_ready([comment]) for comment in source_comments)
+                    source_rows.append({
+                        "analysis_id": member["analysis_id"], "bv": member["bv"],
+                        "raw_count": len(source_comments), "matched_count": len(source_matched),
+                        "raw_share": len(source_comments) / raw_total if raw_total else 0.0,
+                        "matched_share": len(source_matched) / matched_total if matched_total else 0.0,
+                        "llm_covered_count": source_covered, "llm_total_count": len(source_comments),
+                        "llm_coverage": source_covered / len(source_comments) if source_comments else 1.0,
+                    })
+                times = [comment["post_time"] for comment in comments if comment.get("post_time")]
+                limitations = self._event_limitations(members, comments, mode, denominator)
+                return {
+                    "mcp_contract_version": 2, "snapshot_id": SNAPSHOT_ID,
+                    "event_id": event_id, "name": str(event["name"] or "")[:200], "mode": mode,
+                    "members": members, "source_distribution": source_rows,
+                    "raw_comment_count": raw_total, "sentiment_distribution": counts,
+                    "style_distribution": styles, "sentiment_denominator": denominator,
+                    "llm_coverage": coverage,
+                    "time_range": {"earliest": self._iso(min(times)) if times else None, "latest": self._iso(max(times)) if times else None},
+                    "duplicate_statistics": build_duplicate_statistics(comments),
+                    "data_complete": (
+                        all(member["is_available"] for member in members)
+                        and denominator == len(eligible)
+                        and (mode != "llm" or coverage["fully_covered"])
+                    ),
+                    "limitations": limitations,
+                }
+        except AgentReadOnlyError:
+            raise
+        except sqlite3.Error as exc:
+            raise self._database_read_error(exc, "读取舆情事件概览") from exc
+
+    def search_event_comments(
+        self,
+        event_id: int,
+        mode: str = "nlp",
+        source_analysis_id: int | None = None,
+        keyword: str | None = None,
+        sentiment: str | None = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        event_id, mode = self._event_id(event_id), self._mode(mode)
+        source_analysis_id = self._source_analysis_id(source_analysis_id)
+        keyword, (limit, offset) = self._keyword(keyword), self._paging(limit, offset)
+        allowed = set(V2_EMOTION_LABELS if mode == "llm" else NLP_LABELS)
+        sentiment = str(sentiment or "").strip()
+        if sentiment and sentiment not in allowed:
+            raise AgentReadOnlyError("sentiment 与当前分析模式不匹配。", "invalid_sentiment")
+        try:
+            with closing(self._connect(require_event_schema=True)) as db:
+                self._event(db, event_id)
+                members = self._event_members(db, event_id)
+                if source_analysis_id is not None and source_analysis_id not in {member["analysis_id"] for member in members}:
+                    raise AgentReadOnlyError("指定来源不属于该舆情事件。", "source_not_in_event")
+                comments = annotate_exact_duplicates(self._event_comments(db, event_id), scope_field="source_analysis_id")
+                coverage = self._event_llm_coverage(comments)
+                field = "sentiment_llm_label" if mode == "llm" else "sentiment_label"
+                matched = [
+                    comment for comment in comments
+                    if (mode != "llm" or self._v2_llm_ready([comment]))
+                    and (source_analysis_id is None or comment["source_analysis_id"] == source_analysis_id)
+                    and (not keyword or keyword in comment["content"])
+                    and (not sentiment or comment[field] == sentiment)
+                ]
+                output, used = [], 0
+                for comment in matched[offset:offset + limit]:
+                    content = comment["content"][:MAX_COMMENT_CHARS]
+                    if used + len(content) > MAX_RESPONSE_CHARS:
+                        break
+                    used += len(content)
+                    output.append({
+                        "source_analysis_id": comment["source_analysis_id"], "source_bv": comment["source_bv"],
+                        "content": content, "post_time": self._iso(comment["post_time"]),
+                        "likes": max(0, int(comment["likes"] or 0)), "sentiment": comment[field] or "unclassified",
+                        "style": comment["sentiment_llm_style"] if mode == "llm" else None,
+                        "llm_schema_version": comment["sentiment_llm_schema_version"],
+                        "is_exact_duplicate": bool(comment["is_exact_duplicate"]),
+                        "has_context": bool(comment["root_rpid"] or comment["parent_rpid"]),
+                    })
+                limitations = ["评论正文单条最多返回 240 字符，单次响应正文合计最多 12000 字符。"]
+                limitations.extend(self._event_limitations(members, comments, mode, sum(comment[field] in allowed for comment in matched)))
+                return {
+                    "mcp_contract_version": 2, "snapshot_id": SNAPSHOT_ID,
+                    "event_id": event_id, "mode": mode, "source_analysis_id": source_analysis_id,
+                    "matched_count": len(matched), "returned_count": len(output),
+                    "has_more": offset + len(output) < len(matched), "llm_coverage": coverage,
+                    "comments": output, "limitations": limitations,
+                }
+        except AgentReadOnlyError:
+            raise
+        except sqlite3.Error as exc:
+            raise self._database_read_error(exc, "检索舆情事件评论") from exc

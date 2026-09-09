@@ -23,6 +23,10 @@ from agent_mcp.contracts import (  # noqa: E402
     AnalysisListOutput,
     AnalysisOverviewOutput,
     CommentSearchOutput,
+    DataSourceInfoOutput,
+    EventCommentSearchOutput,
+    EventListOutput,
+    EventOverviewOutput,
 )
 from agent_mcp.read_only_service import AgentReadOnlyError, ReadOnlyService  # noqa: E402
 
@@ -40,6 +44,10 @@ class SafeToolInputMiddleware:
         "bili_list_analyses": {"limit", "offset", "status"},
         "bili_get_analysis_overview": {"analysis_id", "mode"},
         "bili_search_comments": {"analysis_id", "mode", "keyword", "sentiment", "limit", "offset"},
+        "bili_get_data_source_info": set(),
+        "bili_list_events": {"limit", "offset"},
+        "bili_get_event_overview": {"event_id", "mode"},
+        "bili_search_event_comments": {"event_id", "mode", "source_analysis_id", "keyword", "sentiment", "limit", "offset"},
     }
 
     @staticmethod
@@ -48,8 +56,15 @@ class SafeToolInputMiddleware:
 
     @staticmethod
     def _valid(arguments: dict[str, Any], name: str) -> bool:
-        if name != "bili_list_analyses":
-            value = arguments.get("analysis_id")
+        identifier = "analysis_id" if name in {"bili_get_analysis_overview", "bili_search_comments"} else (
+            "event_id" if name in {"bili_get_event_overview", "bili_search_event_comments"} else None
+        )
+        if identifier:
+            value = arguments.get(identifier)
+            if type(value) is not int or value <= 0:
+                return False
+        if "source_analysis_id" in arguments and arguments["source_analysis_id"] is not None:
+            value = arguments["source_analysis_id"]
             if type(value) is not int or value <= 0:
                 return False
         if "limit" in arguments:
@@ -104,7 +119,8 @@ mcp = MCPServer(
     "B站舆论监测只读校验",
     version="0.1.0",
     instructions=(
-        "阶段 A 只读技术校验：仅可读取用户明确指定的 SQLite 数据库副本。"
+        "本地只读技术校验：先发现数据源与 ID，再读概览，最后以小分页读取有限证据。"
+        "快照时间未知时不以文件 mtime 代替；NLP 与 LLM V2 标签口径不同。"
         "不会抓取视频、调用大模型、修改业务数据或监听网络端口。"
     ),
     log_level="WARNING",
@@ -218,6 +234,89 @@ def bili_search_comments(
         )
     )
     text = f"匹配 {payload.matched_count} 条评论，本页安全返回 {payload.returned_count} 条证据。"
+    if payload.has_more:
+        text += " 后续仍有匹配项，可增加 offset 继续读取。"
+    return _result(text, payload)
+
+
+@mcp.tool(
+    title="读取数据源信息",
+    description="确认本地静态副本、事件 Schema 与快照可信时间状态；先调用它再发现分析或事件 ID。",
+    annotations=READ_ONLY_ANNOTATIONS,
+)
+def bili_get_data_source_info() -> Annotated[CallToolResult, DataSourceInfoOutput]:
+    """读取数据源能力边界；R2 前不会把数据库文件 mtime 伪装成快照时间。"""
+    payload = DataSourceInfoOutput.model_validate(_call(lambda service: service.get_data_source_info()))
+    text = f"MCP 契约 v{payload.mcp_contract_version}，事件 Schema 状态为 {payload.schema_compatibility}。"
+    return _result(text, payload)
+
+
+@mcp.tool(
+    title="列出舆情事件",
+    description="分页列出静态副本中的用户维护事件及来源数；随后用事件 ID 读取概览。",
+    annotations=READ_ONLY_ANNOTATIONS,
+)
+def bili_list_events(
+    limit: Annotated[int, Field(ge=1, le=50, description="每页事件数，范围 1 至 50")] = 20,
+    offset: Annotated[int, Field(ge=0, le=100_000, description="从第几条事件开始，范围 0 至 100000")] = 0,
+) -> Annotated[CallToolResult, EventListOutput]:
+    """列出事件；无可信快照清单时 snapshot_id 为 null。"""
+    payload = EventListOutput.model_validate(_call(lambda service: service.list_events(limit=limit, offset=offset)))
+    text = f"共有 {payload.total_count} 个舆情事件，本页返回 {len(payload.items)} 个。"
+    if payload.has_more:
+        text += " 后续仍有事件，可增加 offset 继续读取。"
+    return _result(text, payload)
+
+
+@mcp.tool(
+    title="读取舆情事件概览",
+    description="读取事件成员、来源占比、情绪、LLM V2 覆盖与同来源精确重复统计；不会启动分析。",
+    annotations=READ_ONLY_ANNOTATIONS,
+)
+def bili_get_event_overview(
+    event_id: Annotated[int, Field(gt=0, description="舆情事件的正整数 ID")],
+    mode: Mode = "nlp",
+) -> Annotated[CallToolResult, EventOverviewOutput]:
+    """读取事件概览；LLM 模式只统计完整 V2 标签的覆盖部分且明确报告限制。"""
+    payload = EventOverviewOutput.model_validate(
+        _call(lambda service: service.get_event_overview(event_id=event_id, mode=mode))
+    )
+    text = (
+        f"事件 {payload.event_id}（{payload.name}）按 {payload.mode.upper()} 口径统计；"
+        f"情绪分母为 {payload.sentiment_denominator}。"
+    )
+    if not payload.data_complete:
+        text += " 数据存在完整性或标签覆盖限制，请查看 limitations。"
+    return _result(text, payload)
+
+
+@mcp.tool(
+    title="检索舆情事件评论证据",
+    description="在一个事件内按来源、原文包含关系或情绪检索有限证据；不返回用户名、UID 或评论 ID。",
+    annotations=READ_ONLY_ANNOTATIONS,
+)
+def bili_search_event_comments(
+    event_id: Annotated[int, Field(gt=0, description="舆情事件的正整数 ID")],
+    mode: Mode = "nlp",
+    source_analysis_id: Annotated[int | None, Field(gt=0, description="可选来源分析 ID；空值表示全部来源")] = None,
+    keyword: Annotated[str | None, Field(max_length=100, description="可选原文关键词；空值表示不限")] = None,
+    sentiment: Annotated[str | None, Field(max_length=30, description="可选情绪标签，必须符合当前 mode")] = None,
+    limit: Annotated[int, Field(ge=1, le=50, description="每页评论数，范围 1 至 50")] = 20,
+    offset: Annotated[int, Field(ge=0, le=100_000, description="从第几条匹配评论开始，范围 0 至 100000")] = 0,
+) -> Annotated[CallToolResult, EventCommentSearchOutput]:
+    """检索事件证据；LLM 模式不以 NLP 标签替代未覆盖评论。"""
+    payload = EventCommentSearchOutput.model_validate(
+        _call(lambda service: service.search_event_comments(
+            event_id=event_id,
+            mode=mode,
+            source_analysis_id=source_analysis_id,
+            keyword=keyword,
+            sentiment=sentiment,
+            limit=limit,
+            offset=offset,
+        ))
+    )
+    text = f"匹配 {payload.matched_count} 条事件评论，本页安全返回 {payload.returned_count} 条证据。"
     if payload.has_more:
         text += " 后续仍有匹配项，可增加 offset 继续读取。"
     return _result(text, payload)

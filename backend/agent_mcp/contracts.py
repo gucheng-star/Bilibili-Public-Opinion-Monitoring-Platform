@@ -140,3 +140,128 @@ class CommentSearchOutput(StrictModel):
     has_more: bool
     comments: list[CommentEvidence]
     limitations: list[str]
+
+
+class DataSourceInfoOutput(StrictModel):
+    """Metadata for the static SQLite input; R2 will add trusted manifests."""
+
+    mcp_contract_version: Literal[2] = Field(description="当前只读 MCP 输出契约版本")
+    service_version: str = Field(description="本地 MCP 服务版本")
+    snapshot_id: str | None = Field(description="可信快照标识；无清单的手动副本为 null")
+    snapshot_created_at: str | None = Field(description="可信快照 UTC 创建时间；未知时为 null")
+    snapshot_time_source: Literal["unknown"] = Field(description="R2 前不信任文件 mtime，创建时间来源为未知")
+    schema_compatibility: Literal["compatible", "event_schema_missing"]
+    available_tools: list[str]
+    data_scope: str
+    limitations: list[str]
+
+
+class EventListItem(StrictModel):
+    event_id: int = Field(gt=0)
+    name: str = Field(max_length=200)
+    source_count: int = Field(ge=0)
+    created_at: str | None
+    updated_at: str | None
+    earliest_comment_at: str | None
+    latest_comment_at: str | None
+
+
+class EventListOutput(StrictModel):
+    mcp_contract_version: Literal[2] = Field(description="当前只读 MCP 输出契约版本")
+    snapshot_id: str | None
+    items: list[EventListItem]
+    total_count: int = Field(ge=0)
+    has_more: bool
+    limit: int = Field(ge=1, le=50)
+    offset: int = Field(ge=0, le=100_000)
+    limitations: list[str]
+
+
+class EventMember(StrictModel):
+    analysis_id: int = Field(gt=0)
+    bv: str | None
+    video_title: str | None
+    position: int = Field(ge=0)
+    status: str
+    comment_collection_status: str
+    is_available: bool
+
+
+class EventSourceDistribution(StrictModel):
+    analysis_id: int = Field(gt=0)
+    bv: str | None
+    raw_count: int = Field(ge=0)
+    matched_count: int = Field(ge=0)
+    raw_share: float = Field(ge=0, le=1)
+    matched_share: float = Field(ge=0, le=1)
+    llm_covered_count: int = Field(ge=0)
+    llm_total_count: int = Field(ge=0)
+    llm_coverage: float = Field(ge=0, le=1)
+
+
+class EventLLMCoverage(StrictModel):
+    total_comments: int = Field(ge=0)
+    covered_comments: int = Field(ge=0)
+    pending_or_legacy_comments: int = Field(ge=0)
+    coverage: float = Field(ge=0, le=1)
+    fully_covered: bool
+
+
+class EventOverviewOutput(StrictModel):
+    mcp_contract_version: Literal[2] = Field(description="当前只读 MCP 输出契约版本")
+    snapshot_id: str | None
+    event_id: int = Field(gt=0)
+    name: str = Field(max_length=200)
+    mode: Literal["nlp", "llm"]
+    members: list[EventMember]
+    source_distribution: list[EventSourceDistribution]
+    raw_comment_count: int = Field(ge=0)
+    sentiment_distribution: NLPSentimentDistribution | LLMSentimentDistribution
+    style_distribution: LLMStyleDistribution | None
+    sentiment_denominator: int = Field(ge=0)
+    llm_coverage: EventLLMCoverage
+    time_range: TimeRange
+    duplicate_statistics: DuplicateStatistics
+    data_complete: bool
+    limitations: list[str]
+
+    @model_validator(mode="after")
+    def distribution_matches_mode(self) -> "EventOverviewOutput":
+        if self.mode == "nlp" and (
+            not isinstance(self.sentiment_distribution, NLPSentimentDistribution)
+            or self.style_distribution is not None
+        ):
+            raise ValueError("NLP 事件概览必须使用三分类情绪分布且不返回表达风格。")
+        if self.mode == "llm" and (
+            not isinstance(self.sentiment_distribution, LLMSentimentDistribution)
+            or not isinstance(self.style_distribution, LLMStyleDistribution)
+        ):
+            raise ValueError("LLM 事件概览必须使用 V2 情绪与表达风格分布。")
+        return self
+
+
+class EventCommentEvidence(StrictModel):
+    source_analysis_id: int = Field(gt=0)
+    source_bv: str | None
+    content: str = Field(max_length=240)
+    post_time: str | None
+    likes: int = Field(ge=0)
+    sentiment: str
+    style: Literal["plain", "sarcasm", "meme", "rhetorical", "hyperbole"] | None
+    llm_schema_version: Literal[0, 1, 2]
+    is_exact_duplicate: bool
+    has_context: bool
+
+
+class EventCommentSearchOutput(StrictModel):
+    mcp_contract_version: Literal[2] = Field(description="当前只读 MCP 输出契约版本")
+    snapshot_id: str | None
+    event_id: int = Field(gt=0)
+    mode: Literal["nlp", "llm"]
+    source_analysis_id: int | None
+    matched_count: int = Field(ge=0)
+    returned_count: int = Field(ge=0)
+    has_more: bool
+    llm_coverage: EventLLMCoverage
+    comments: list[EventCommentEvidence]
+    limitations: list[str]

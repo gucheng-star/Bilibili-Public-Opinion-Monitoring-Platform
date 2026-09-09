@@ -20,6 +20,10 @@ EXPECTED_TOOLS = {
     "bili_list_analyses",
     "bili_get_analysis_overview",
     "bili_search_comments",
+    "bili_get_data_source_info",
+    "bili_list_events",
+    "bili_get_event_overview",
+    "bili_search_event_comments",
 }
 SIDECAR_SUFFIXES = ("-wal", "-shm", "-journal")
 SESSION_PREFIX = "mcp-session-"
@@ -33,6 +37,10 @@ class SmokeCounts:
     list_calls: int = 0
     overview_calls: int = 0
     search_calls: int = 0
+    source_info_calls: int = 0
+    event_list_calls: int = 0
+    event_overview_calls: int = 0
+    event_search_calls: int = 0
     active_directories: int = 0
     residual_directories: int = 0
     sidecars: int = 0
@@ -66,6 +74,7 @@ def create_fixture(database_path: Path) -> None:
                 total_comments INTEGER,
                 created_at TEXT,
                 error_msg TEXT,
+                comment_collection_status TEXT NOT NULL DEFAULT 'completed',
                 sentiment_llm_schema_version INTEGER NOT NULL DEFAULT 0
             );
             CREATE TABLE comments (
@@ -85,6 +94,19 @@ def create_fixture(database_path: Path) -> None:
                 sentiment_llm_schema_version INTEGER NOT NULL DEFAULT 0,
                 post_time TEXT
             );
+            CREATE TABLE analysis_groups (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE analysis_group_items (
+                id INTEGER PRIMARY KEY,
+                group_id INTEGER NOT NULL,
+                analysis_id INTEGER NOT NULL,
+                position INTEGER NOT NULL
+            );
             """
         )
         connection.execute(
@@ -97,6 +119,14 @@ def create_fixture(database_path: Path) -> None:
                 (1, 1, 1, None, None, "", "", "", "fixture-keyword", 1, "positive", "", "2026-08-30T00:00:01"),
                 (2, 1, 2, None, None, "", "", "", "fixture-keyword", 0, "neutral", "", "2026-08-30T00:00:02"),
             ],
+        )
+        connection.execute(
+            "INSERT INTO analysis_groups (id,name,description,created_at,updated_at) VALUES (?,?,?,?,?)",
+            (1, "fixture event", "", "2026-08-30T00:00:00", "2026-08-30T00:00:00"),
+        )
+        connection.execute(
+            "INSERT INTO analysis_group_items (id,group_id,analysis_id,position) VALUES (?,?,?,?)",
+            (1, 1, 1, 0),
         )
         connection.commit()
     finally:
@@ -140,24 +170,43 @@ async def exercise_session(
         counts.tools = len(tools)
 
         listed = await client.call_tool("bili_list_analyses", {"limit": 1})
+        source = await client.call_tool("bili_get_data_source_info", {})
+        events = await client.call_tool("bili_list_events", {"limit": 1})
         overview = await client.call_tool("bili_get_analysis_overview", {"analysis_id": 1})
+        event_overview = await client.call_tool("bili_get_event_overview", {"event_id": 1})
         searched = await client.call_tool(
             "bili_search_comments",
             {"analysis_id": 1, "keyword": "fixture-keyword", "limit": 1},
         )
-        if listed.is_error or overview.is_error or searched.is_error:
+        event_searched = await client.call_tool(
+            "bili_search_event_comments",
+            {"event_id": 1, "keyword": "fixture-keyword", "limit": 1},
+        )
+        if any(result.is_error for result in (listed, source, events, overview, event_overview, searched, event_searched)):
             raise RuntimeError("Required MCP tool call failed")
         if listed.structured_content["total_count"] != 1:
             raise RuntimeError("Fixture list result did not match")
+        if source.structured_content["snapshot_created_at"] is not None:
+            raise RuntimeError("Fixture source result did not match")
+        if events.structured_content["total_count"] != 1:
+            raise RuntimeError("Fixture event list result did not match")
         if overview.structured_content["sentiment_denominator"] != 2:
             raise RuntimeError("Fixture overview result did not match")
+        if event_overview.structured_content["sentiment_denominator"] != 2:
+            raise RuntimeError("Fixture event overview result did not match")
         if searched.structured_content["returned_count"] != 1:
             raise RuntimeError("Fixture search result did not match")
+        if event_searched.structured_content["returned_count"] != 1:
+            raise RuntimeError("Fixture event search result did not match")
 
         counts.sessions += 1
         counts.list_calls += 1
+        counts.source_info_calls += 1
+        counts.event_list_calls += 1
         counts.overview_calls += 1
+        counts.event_overview_calls += 1
         counts.search_calls += 1
+        counts.event_search_calls += 1
         ready.set()
         await release.wait()
 
@@ -207,7 +256,9 @@ def print_result(prefix: str, counts: SmokeCounts, stream: object = sys.stdout) 
     print(
         f"{prefix}: sessions={counts.sessions} tools={counts.tools} "
         f"list_calls={counts.list_calls} overview_calls={counts.overview_calls} "
-        f"search_calls={counts.search_calls} active_directories={counts.active_directories} "
+        f"search_calls={counts.search_calls} source_info_calls={counts.source_info_calls} "
+        f"event_list_calls={counts.event_list_calls} event_overview_calls={counts.event_overview_calls} "
+        f"event_search_calls={counts.event_search_calls} active_directories={counts.active_directories} "
         f"residual_directories={counts.residual_directories} sidecars={counts.sidecars}",
         file=stream,
     )
