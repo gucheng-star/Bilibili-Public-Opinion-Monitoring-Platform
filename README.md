@@ -84,6 +84,18 @@
 
 > **请保护 `data/` 目录。** 删除它会永久删除本机数据库、登录信息、模型设置和分析记录；更新或移动程序前，请先备份整个目录。
 
+## AI 智能体 — 一行接入
+
+本次提交推送到公开仓库的 `master` 分支后，把这一行粘贴给你的本机 AI 编程 Agent：
+
+```text
+curl -fsSL https://raw.githubusercontent.com/gucheng-star/Bilibili-Public-Opinion-Monitoring-Platform/master/skills/bili-opinion/SKILL.md
+```
+
+Skill 会引导 Agent：从 [GitHub Releases](https://github.com/gucheng-star/Bilibili-Public-Opinion-Monitoring-Platform/releases) 下载 Windows 单 EXE、请你在“设置 → Agent / MCP”主动生成快照并复制 JSON、只在你明确授权后注册 `bili-opinion-readonly`，以及重连后验证和使用 7 个只读工具。
+
+注册只会处理这一项本机 Codex MCP 配置；不会抓取 B站、上传 `data/`、读取 Cookie/API Key，或改动其他 MCP。首次接入时，Agent 会向你索取设置页复制的 JSON；新快照或应用升级后，提供新的 JSON 并重新连接即可。
+
 ## 数据与隐私
 
 - B 站请求从你的电脑发出，使用当前网络出口 IP 和本机登录 Cookie；项目不提供中转服务器。

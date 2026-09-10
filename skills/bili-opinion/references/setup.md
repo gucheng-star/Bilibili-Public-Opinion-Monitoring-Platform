@@ -8,10 +8,10 @@
 
 ## 让 Agent 协助注册（推荐）
 
-用户先确保 Agent 能读取配套包中的完整 `skills/bili-opinion/` 目录，或在含该目录的仓库中启动 Agent；读不到 Skill 时必须停止注册。随后在桌面应用“设置 → Agent / MCP”生成快照并点击“复制 JSON 配置”，再把下列一行和完整 JSON 一起发送给**本机 Codex Agent**：
+`SKILL.md` 已包含一行远程读取后的首次接入流程；本参考只补充仓库或配套包可用时的详细步骤。用户在桌面应用“设置 → Agent / MCP”生成快照并点击“复制 JSON 配置”，再把下列一行和完整 JSON 一起发送给**本机 Codex Agent**：
 
 ```text
-请读取我随附的完整 `bili-opinion` Skill；若无法读取则停止并要求我提供，不得注册。现在我明确授权你把下方“复制 JSON 配置”注册到本机 Codex：仅新增或更新 `bili-opinion-readonly`，先做本地配置备份并严格校验 JSON，绝不改其他 MCP、上传数据库或密钥；重连后验证 `tools/list` 与 `bili_get_data_source_info`，再按 Skill 进行只读研判。JSON：<在此粘贴完整 JSON>
+请读取 `bili-opinion` Skill；若无法读取则停止并要求我提供，不得注册。现在我明确授权你把下方“复制 JSON 配置”注册到本机 Codex：仅新增或更新 `bili-opinion-readonly`，先做本地配置备份并严格校验 JSON，绝不改其他 MCP、上传数据库或密钥；重连后验证 `tools/list` 与 `bili_get_data_source_info`，再按 Skill 进行只读研判。JSON：<在此粘贴完整 JSON>
 ```
 
 此授权只覆盖该条目：Agent 应解析用户粘贴的 JSON，而不是猜测路径或暗中读取剪贴板。写入前必须拒绝任何不满足以下条件的输入：仅有 `mcpServers.bili-opinion-readonly` 条目；`command` 是存在的绝对 `.exe` 路径；`args` 精确为 `["--mcp-stdio"]`；`env` 仅含指向存在的绝对 `.sqlite3` 路径的 `BILI_MCP_DB_PATH`。通过校验后，先以 `codex mcp get bili-opinion-readonly --json` 检查现有条目，随后通过 `codex mcp add bili-opinion-readonly --env BILI_MCP_DB_PATH=<JSON中的路径> -- <JSON中的主EXE路径> --mcp-stdio` 注册。若同名条目不同，只有提示中包含“新增或更新”时，才可在备份后先执行 `codex mcp remove bili-opinion-readonly`、再替换这一个条目。当前会话未出现工具时需要新开或重新连接，不能靠修改其他 MCP 配置解决。

@@ -35,7 +35,7 @@ $relativeFiles = @(
     "skills/bili-opinion/references/workflows.md",
     "skills/bili-opinion/references/troubleshooting.md",
     "skills/bili-opinion/evals/evals.json",
-    "docs/mcp/README.md",
+    "README.md",
     "docs/mcp/contract.md"
 )
 foreach ($relative in $relativeFiles) {
