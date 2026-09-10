@@ -38,7 +38,11 @@ logs/
 .agents/
 .codex/
 .claude/
-skills/
+# Keep the public, installable Agent Skill tracked while leaving private local
+# agent tooling untracked.
+skills/*
+!skills/bili-opinion/
+!skills/bili-opinion/**
 PROJECT.md
 plan/
 docs/competition-materials/
