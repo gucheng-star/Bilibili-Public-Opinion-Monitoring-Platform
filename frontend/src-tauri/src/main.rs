@@ -12,7 +12,7 @@ use portable::{
 use rand::RngCore;
 use reqwest::{blocking::Client, redirect::Policy, Certificate};
 use rfd::FileDialog;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     env,
     error::Error as StdError,
@@ -24,7 +24,7 @@ use std::{
         io::AsRawHandle,
     },
     path::{Path, PathBuf},
-    process::{Child, Command},
+    process::{Child, Command, Stdio},
     sync::Mutex,
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -68,6 +68,8 @@ const EMBEDDED_AGENT_MCP: &[u8] = include_bytes!(concat!(
     "/resources/BiliOpinionAgentMcp.exe"
 ));
 const MCP_STDIO_ARGUMENT: &str = "--mcp-stdio";
+const MCP_BOOTSTRAP_ARGUMENT: &str = "--mcp-bootstrap";
+const BACKEND_SNAPSHOT_ARGUMENT: &str = "--create-agent-snapshot";
 const UPDATE_READY_WAIT: Duration = Duration::from_secs(5);
 static UPDATE_LOG_LOCK: Mutex<()> = Mutex::new(());
 
@@ -86,7 +88,39 @@ struct WindowsJob(HANDLE);
 enum StartMode {
     Gui,
     McpStdio,
+    McpBootstrap,
     UpdateRunner,
+}
+
+const BOOTSTRAP_RECORD_NAME: &str = "latest-bootstrap.json";
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BootstrapRecord {
+    schema: u8,
+    nonce: String,
+    snapshot: BootstrapSnapshot,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BootstrapSnapshot {
+    snapshot_id: String,
+    created_at: String,
+    database_path: PathBuf,
+    manifest_path: PathBuf,
+    database_sha256: String,
+    application_version: String,
+    mcp_contract_version: u32,
+    record_counts: BootstrapRecordCounts,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BootstrapRecordCounts {
+    analyses: u64,
+    comments: u64,
+    events: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -972,6 +1006,13 @@ fn main() {
             });
             std::process::exit(exit_code as i32);
         }
+        Ok(StartMode::McpBootstrap) => {
+            if let Err(message) = run_mcp_bootstrap() {
+                eprintln!("MCP 引导失败：{message}");
+                std::process::exit(1);
+            }
+            return;
+        }
         Ok(StartMode::Gui) => {}
         Err(_) => {
             eprintln!("启动参数无效");
@@ -1054,9 +1095,80 @@ fn parse_start_mode_from(arguments: Vec<OsString>) -> anyhow::Result<StartMode> 
     match arguments.as_slice() {
         [] => Ok(StartMode::Gui),
         [argument] if argument == MCP_STDIO_ARGUMENT => Ok(StartMode::McpStdio),
+        [argument] if argument == MCP_BOOTSTRAP_ARGUMENT => Ok(StartMode::McpBootstrap),
         [argument, ..] if argument == updater::RUNNER_ARGUMENT => Ok(StartMode::UpdateRunner),
-        _ => anyhow::bail!("只支持无参数 GUI、--mcp-stdio 或受限的内部更新器参数"),
+        _ => anyhow::bail!("只支持无参数 GUI、--mcp-stdio、--mcp-bootstrap 或受限的内部更新器参数"),
     }
+}
+
+/// Produce a local, validated config handoff for an Agent that the user has
+/// explicitly authorised. This is not an MCP tool and never alters a client
+/// configuration itself; the calling Agent remains responsible for adding only
+/// the named server after it has shown the user what will be written.
+fn run_mcp_bootstrap() -> anyhow::Result<()> {
+    let paths = PortablePaths::discover()?;
+    let _coordination_lock = paths.acquire_mcp_lock()?;
+    paths.clear_abandoned_backend_temp()?;
+    let app_version = update_current_version();
+    let backend = paths.materialize_embedded_backend(EMBEDDED_BACKEND, &app_version)?;
+    let nonce = random_hex(16);
+    let record_path = paths
+        .data_dir
+        .join("agent-snapshots")
+        .join(BOOTSTRAP_RECORD_NAME);
+    let status = Command::new(backend)
+        .arg(BACKEND_SNAPSHOT_ARGUMENT)
+        .current_dir(&paths.runtime_dir)
+        .env("BILI_DATA_DIR", &paths.data_dir)
+        .env("BILI_DB_PATH", paths.data_dir.join("database.sqlite3"))
+        .env("BILI_AUTH_PATH", paths.data_dir.join("auth.json"))
+        .env("BILI_SETTINGS_PATH", paths.data_dir.join("settings.json"))
+        .env("TEMP", &paths.backend_temp_dir)
+        .env("TMP", &paths.backend_temp_dir)
+        .env("TMPDIR", &paths.backend_temp_dir)
+        .env("BILI_APP_VERSION", &app_version)
+        .env("BILI_DESKTOP_MODE", "1")
+        .env("BILI_AGENT_BOOTSTRAP", "1")
+        .env("BILI_AGENT_BOOTSTRAP_NONCE", &nonce)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()?;
+    if !status.success() {
+        anyhow::bail!("无法创建本地只读快照。请先在桌面应用中完成至少一次分析后重试")
+    }
+    let record: BootstrapRecord = serde_json::from_slice(&fs::read(&record_path)?)
+        .map_err(|_| anyhow::anyhow!("快照引导记录无效"))?;
+    if record.schema != 1 || record.nonce != nonce {
+        anyhow::bail!("快照引导记录不属于当前请求")
+    }
+    let snapshot = record.snapshot;
+    let database_path = validate_mcp_database_path(&snapshot.database_path)?;
+    let snapshot_root = paths.data_dir.join("agent-snapshots");
+    if snapshot.database_path.parent().and_then(Path::parent) != Some(snapshot_root.as_path())
+        || snapshot.manifest_path.parent() != snapshot.database_path.parent()
+        || snapshot
+            .manifest_path
+            .file_name()
+            .map_or(true, |name| name != "manifest.json")
+    {
+        anyhow::bail!("快照引导返回了不受信任的位置")
+    }
+    if snapshot.snapshot_id.is_empty()
+        || snapshot.created_at.is_empty()
+        || snapshot.database_sha256.len() != 64
+        || snapshot.application_version.is_empty()
+        || snapshot.mcp_contract_version != 2
+    {
+        anyhow::bail!("快照引导记录不完整")
+    }
+    let _record_counts = (
+        snapshot.record_counts.analyses,
+        snapshot.record_counts.comments,
+        snapshot.record_counts.events,
+    );
+    let _ = database_path;
+    Ok(())
 }
 
 fn run_mcp_stdio() -> Result<u32, McpStartupFailure> {
@@ -1475,8 +1587,8 @@ mod tests {
         classify_manifest_error, current_desktop_executable_path, export_file_type,
         export_suggested_file_name, fetch_manifest_from_url, frontend_api_base,
         is_valid_std_handle, logged_update_task, mcp_environment, mcp_start_failure_message,
-        parse_start_mode_from, McpStartupStage, PortablePaths, StartMode, UpdateFailure,
-        MCP_STDIO_ARGUMENT,
+        parse_start_mode_from, BootstrapRecord, McpStartupStage, PortablePaths, StartMode,
+        UpdateFailure, MCP_BOOTSTRAP_ARGUMENT, MCP_STDIO_ARGUMENT,
     };
     use std::ffi::OsString;
     use std::{
@@ -1663,6 +1775,10 @@ mod tests {
             parse_start_mode_from(vec![OsString::from(MCP_STDIO_ARGUMENT)]),
             Ok(StartMode::McpStdio)
         ));
+        assert!(matches!(
+            parse_start_mode_from(vec![OsString::from(MCP_BOOTSTRAP_ARGUMENT)]),
+            Ok(StartMode::McpBootstrap)
+        ));
         assert!(
             parse_start_mode_from(vec![OsString::from("--mcp-stdio"), OsString::from("x")])
                 .is_err()
@@ -1717,6 +1833,30 @@ mod tests {
         assert!(is_valid_std_handle(
             1_usize as windows_sys::Win32::Foundation::HANDLE
         ));
+    }
+
+    #[test]
+    fn bootstrap_record_schema_is_strict_and_nonce_bound() {
+        let value = serde_json::json!({
+            "schema": 1,
+            "nonce": "a".repeat(32),
+            "snapshot": {
+                "snapshot_id": "snapshot",
+                "created_at": "2026-09-10T00:00:00Z",
+                "database_path": r"F:\Apps\data\agent-snapshots\snapshot\database.sqlite3",
+                "manifest_path": r"F:\Apps\data\agent-snapshots\snapshot\manifest.json",
+                "database_sha256": "a".repeat(64),
+                "application_version": "0.2.4",
+                "mcp_contract_version": 2,
+                "record_counts": {"analyses": 1, "comments": 2, "events": 3}
+            }
+        });
+        let parsed: BootstrapRecord = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(parsed.schema, 1);
+        assert_eq!(parsed.nonce, "a".repeat(32));
+        let mut invalid = value;
+        invalid["unexpected"] = serde_json::json!(true);
+        assert!(serde_json::from_value::<BootstrapRecord>(invalid).is_err());
     }
 
     #[test]
