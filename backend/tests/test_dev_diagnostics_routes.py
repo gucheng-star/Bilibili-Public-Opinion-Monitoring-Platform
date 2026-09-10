@@ -153,10 +153,15 @@ class DevDiagnosticsRoutesTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(missing.status_code, 403)
         self.assertEqual(tauri.status_code, 403)
 
-    async def test_post_requires_exact_origin_and_loopback_client(self):
+    async def test_post_allows_exact_origin_or_referer_from_loopback_client(self):
         payload = self._payload(self._event())
         async with self._client() as client:
             missing_origin = await client.post("/api/runtime/dev-diagnostics/events", json=payload)
+            via_referer = await client.post(
+                "/api/runtime/dev-diagnostics/events",
+                json=payload,
+                headers={"Referer": "http://127.0.0.1:5173/#/"},
+            )
             tauri = await client.post(
                 "/api/runtime/dev-diagnostics/events",
                 json=payload,
@@ -167,6 +172,7 @@ class DevDiagnosticsRoutesTests(unittest.IsolatedAsyncioTestCase):
                 "/api/runtime/dev-diagnostics/events", json=payload, headers=self._origin_headers(),
             )
         self.assertEqual(missing_origin.status_code, 403)
+        self.assertEqual(via_referer.status_code, 200)
         self.assertEqual(tauri.status_code, 403)
         self.assertEqual(non_loopback.status_code, 403)
 

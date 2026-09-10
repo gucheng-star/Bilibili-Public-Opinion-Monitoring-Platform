@@ -224,7 +224,7 @@ async def dev_diagnostics_session(request: Request):
 
 @router.post("/dev-diagnostics/events")
 async def dev_diagnostics_events(request: Request):
-    _require_dev_diagnostics(request, allow_referer=False)
+    _require_dev_diagnostics(request, allow_referer=True)
     if not dev_logging_ready():
         raise HTTPException(status_code=503, detail="开发诊断日志暂不可用，请稍后重试")
     content_length = request.headers.get("content-length")
