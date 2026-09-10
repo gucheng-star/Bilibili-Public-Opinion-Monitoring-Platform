@@ -21,6 +21,8 @@
 | 最终 EXE 大小 | `156315136` bytes |
 | 最终 EXE SHA-256 | `b36cc1c11de9f5f66289709b6e3a867d6d41987961199921f49994a840a91cac` |
 
+说明：上表记录的是 R3 验收当时的资料源输入和产物。后续仅文档/Skill 的接入优化会改变资料包输入，最新的资料包验证另见 [Agent 协助注册说明](agent-assisted-registration.md)。
+
 ## 已运行命令与结果
 
 | 工作目录 | 命令 | 结果 | 证据 |
@@ -56,7 +58,7 @@
 | 无 Skill 基线 | 临时仓库 Skill 镜像已移除，且提示未包含 `$bili-opinion`；`bili_get_data_source_info → bili_list_analyses(limit=1) → bili_get_analysis_overview(analysis_id=1, mode=nlp)` | 契约 v2、发现 7 工具、`snapshot_time_source=unknown`、情绪分母 2。 |
 | 显式加载 `bili-opinion` Skill | 先将公开 `skills/bili-opinion/SKILL.md` 的 SHA-256 一致副本临时放入官方仓库作用域 `.agents/skills/bili-opinion/`，以 `$bili-opinion` 触发；`bili_get_data_source_info → bili_list_events(limit=1) → bili_get_event_overview(event_id=1, mode=nlp) → bili_search_event_comments(event_id=1, limit=1)` | Codex 明确确认正在使用该 Skill；契约 v2、发现 7 工具、事件情绪分母 2、证据返回 1 条。测试后已删除镜像文件。 |
 
-Skill 路径中的调用顺序与实际轨迹一致：先数据源和 ID，再概览，最后小分页证据。该验收不等同于替用户永久配置客户端；用户日常使用仍应通过设置页复制出的条目手动合并配置。
+Skill 路径中的调用顺序与实际轨迹一致：先数据源和 ID，再概览，最后小分页证据。该验收不等同于替用户永久配置客户端；R3 验收时仍要求用户手动合并设置页复制的条目。后续的明确授权 Agent 协助注册说明另见 [Agent 协助注册说明](agent-assisted-registration.md)。
 
 ## 阶段状态
 

@@ -6,7 +6,19 @@
 2. 该数据库是本地敏感文件：不要上传、不要提交 Git、不要把整个 `data/` 目录交给模型。
 3. 只使用页面给出的版本化主 EXE 路径、`--mcp-stdio` 和 `BILI_MCP_DB_PATH`。不要传入前端 Token、Cookie 或 API Key。
 
-## Codex 手动注册
+## 让 Agent 协助注册（推荐）
+
+用户先确保 Agent 能读取配套包中的完整 `skills/bili-opinion/` 目录，或在含该目录的仓库中启动 Agent；读不到 Skill 时必须停止注册。随后在桌面应用“设置 → Agent / MCP”生成快照并点击“复制 JSON 配置”，再把下列一行和完整 JSON 一起发送给**本机 Codex Agent**：
+
+```text
+请读取我随附的完整 `bili-opinion` Skill；若无法读取则停止并要求我提供，不得注册。现在我明确授权你把下方“复制 JSON 配置”注册到本机 Codex：仅新增或更新 `bili-opinion-readonly`，先做本地配置备份并严格校验 JSON，绝不改其他 MCP、上传数据库或密钥；重连后验证 `tools/list` 与 `bili_get_data_source_info`，再按 Skill 进行只读研判。JSON：<在此粘贴完整 JSON>
+```
+
+此授权只覆盖该条目：Agent 应解析用户粘贴的 JSON，而不是猜测路径或暗中读取剪贴板。写入前必须拒绝任何不满足以下条件的输入：仅有 `mcpServers.bili-opinion-readonly` 条目；`command` 是存在的绝对 `.exe` 路径；`args` 精确为 `["--mcp-stdio"]`；`env` 仅含指向存在的绝对 `.sqlite3` 路径的 `BILI_MCP_DB_PATH`。通过校验后，先以 `codex mcp get bili-opinion-readonly --json` 检查现有条目，随后通过 `codex mcp add bili-opinion-readonly --env BILI_MCP_DB_PATH=<JSON中的路径> -- <JSON中的主EXE路径> --mcp-stdio` 注册。若同名条目不同，只有提示中包含“新增或更新”时，才可在备份后先执行 `codex mcp remove bili-opinion-readonly`、再替换这一个条目。当前会话未出现工具时需要新开或重新连接，不能靠修改其他 MCP 配置解决。
+
+桌面应用不参与写入客户端配置；它只生成一致快照和 JSON。该流程只适用于本机 Codex 配置，不能用于 ChatGPT 网页版，也不允许把 JSON、备份或数据库发给远端模型。
+
+## Codex 手动注册（备选）
 
 不要覆盖已有 MCP 配置。可通过 Codex 的 MCP 管理界面新增一个 **stdio** 服务器，或手动将下列条目合并进用户或受信任项目的 `config.toml`；必须把两个示例路径替换为桌面应用显示的实际绝对路径。
 
