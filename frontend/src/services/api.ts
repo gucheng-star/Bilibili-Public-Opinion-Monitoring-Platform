@@ -1,5 +1,6 @@
 import type {
   AISummary,
+  AgentSnapshotResponse,
   AnalysisMode,
   AnalysisResult,
   AnalysisGroup,
@@ -200,6 +201,11 @@ export function getLLMModels(task: LLMTask, config?: Partial<LLMTaskUpdate>) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ task, config }),
   });
+}
+
+/** Creates a local, static database backup only after the user explicitly requests it. */
+export function createAgentSnapshot() {
+  return req<AgentSnapshotResponse>('/agent-snapshots', { method: 'POST' });
 }
 
 export function getSummaries(analysisId: number) {

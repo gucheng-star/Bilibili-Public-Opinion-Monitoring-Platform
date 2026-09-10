@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { getLLMModels, getSettings, testLLM, updateSettings } from '../services/api';
-import type { LLMProvider, LLMTask, LLMTaskSettings, LLMTaskUpdate, SettingsResponse } from '../types';
+import { createAgentSnapshot, getLLMModels, getSettings, testLLM, updateSettings } from '../services/api';
+import { buildAgentMcpConfig, getDesktopMcpExecutablePath } from '../services/desktop';
+import type { AgentSnapshotResponse, LLMProvider, LLMTask, LLMTaskSettings, LLMTaskUpdate, SettingsResponse } from '../types';
 import FilterSelect, { type FilterSelectOption } from './FilterSelect';
 
 interface Props {
@@ -190,6 +191,132 @@ function LLMTaskEditor({ task, title, description, saved, onSaved }: {
   );
 }
 
+type AgentSnapshotMessage = { kind: 'ok' | 'error'; text: string };
+
+function formatUtc(value: string): string {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return `${new Intl.DateTimeFormat('zh-CN', {
+    dateStyle: 'medium', timeStyle: 'medium', hour12: false, timeZone: 'UTC',
+  }).format(parsed)} UTC`;
+}
+
+async function copyText(value: string): Promise<void> {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+  const textarea = document.createElement('textarea');
+  textarea.value = value;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  document.body.append(textarea);
+  textarea.select();
+  const copied = document.execCommand('copy');
+  textarea.remove();
+  if (!copied) throw new Error('浏览器未授予剪贴板权限，请手动复制配置。');
+}
+
+function AgentSnapshotSettings({ desktopMode }: Pick<Props, 'desktopMode'>) {
+  const [snapshot, setSnapshot] = useState<AgentSnapshotResponse | null>(null);
+  const [executablePath, setExecutablePath] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<AgentSnapshotMessage | null>(null);
+
+  const createSnapshot = async () => {
+    if (!desktopMode) {
+      setMessage({ kind: 'error', text: 'Agent 快照只能在桌面应用中生成；请从已安装的桌面程序打开此页。' });
+      return;
+    }
+    setBusy(true);
+    setMessage(null);
+    try {
+      const created = await createAgentSnapshot();
+      setSnapshot(created);
+      try {
+        const path = await getDesktopMcpExecutablePath();
+        setExecutablePath(path);
+        setMessage({ kind: 'ok', text: '已生成新的本地静态快照。复制配置后，请在 MCP 客户端中手动更新并重新连接。' });
+      } catch {
+        setExecutablePath(null);
+        setMessage({ kind: 'error', text: '快照已生成，但未能取得当前桌面程序路径；重启桌面应用后再复制配置。' });
+      }
+    } catch (error) {
+      setMessage({ kind: 'error', text: error instanceof Error ? error.message : '生成 Agent 快照失败，请稍后重试。' });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const copyConfig = async () => {
+    if (!snapshot || !executablePath) return;
+    try {
+      await copyText(buildAgentMcpConfig(executablePath, snapshot.database_path));
+      setMessage({ kind: 'ok', text: 'JSON 配置已复制。请按所用 MCP 客户端的格式合并；应用不会自动修改任何客户端配置。' });
+    } catch (error) {
+      setMessage({ kind: 'error', text: error instanceof Error ? error.message : '复制配置失败，请手动复制。' });
+    }
+  };
+
+  const copyGuide = async () => {
+    if (!snapshot || !executablePath) return;
+    const guide = [
+      '1. 将以下 JSON 中的 bili-opinion-readonly 服务条目合并到 MCP 客户端配置。',
+      '2. 保留 --mcp-stdio 和 BILI_MCP_DB_PATH；不要填写前端 Token、Cookie 或 API Key。',
+      '3. 保存客户端配置后重新连接，再分别验证 initialize、tools/list 和一次只读查询。',
+      '4. 生成新快照后，更新 BILI_MCP_DB_PATH 并重新连接；已有会话继续读取旧快照。',
+      '',
+      buildAgentMcpConfig(executablePath, snapshot.database_path),
+    ].join('\n');
+    try {
+      await copyText(guide);
+      setMessage({ kind: 'ok', text: '接入指引已复制。请自行检查和保存客户端配置。' });
+    } catch (error) {
+      setMessage({ kind: 'error', text: error instanceof Error ? error.message : '复制接入指引失败，请手动复制。' });
+    }
+  };
+
+  return (
+    <section className="agent-snapshot-settings" aria-labelledby="agent-snapshot-title">
+      <div className="agent-snapshot-settings__heading">
+        <div>
+          <span className="settings-eyebrow">AGENT / MCP</span>
+          <h3 id="agent-snapshot-title">生成只读 Agent 快照</h3>
+          <p>创建一份一致的本地 SQLite 静态副本，供新的只读 MCP 会话使用。生成新快照不会替换正在使用的旧快照。</p>
+        </div>
+        <button type="button" className="btn btn-primary" onClick={createSnapshot} disabled={busy || !desktopMode}>
+          {busy ? '正在生成…' : '生成 Agent 快照'}
+        </button>
+      </div>
+      {!desktopMode && <p className="agent-snapshot-settings__desktop-hint" role="status">当前为浏览器模式。Agent 快照需要桌面应用取得实际主程序路径后才能生成配置。</p>}
+      <p className="agent-snapshot-settings__privacy-note">
+        连接外部模型后，MCP 返回的统计数据，以及已移除工具级身份标识字段、经过长度截断的评论片段，可能会发送给该模型。Cookie、API Key 与 UID 不在 MCP 工具输出中；快照数据库仍是本地敏感文件。
+      </p>
+      {message && <p className={`agent-snapshot-settings__message ${message.kind}`} role="status">{message.text}</p>}
+      {snapshot && <div className="agent-snapshot-settings__details" aria-label="最新 Agent 快照信息">
+        <dl>
+          <div><dt>快照 ID</dt><dd><code>{snapshot.snapshot_id}</code></dd></div>
+          <div><dt>UTC 创建时间</dt><dd>{formatUtc(snapshot.created_at)}</dd></div>
+          <div><dt>数据范围</dt><dd>{snapshot.record_counts.analyses} 个分析 · {snapshot.record_counts.comments} 条评论 · {snapshot.record_counts.events} 个事件</dd></div>
+          <div><dt>数据库 SHA-256</dt><dd><code>{snapshot.database_sha256}</code></dd></div>
+          <div><dt>契约 / 应用版本</dt><dd>v{snapshot.mcp_contract_version} / {snapshot.application_version}</dd></div>
+          <div><dt>数据库</dt><dd className="agent-snapshot-settings__path"><code>{snapshot.database_path}</code></dd></div>
+          <div><dt>清单</dt><dd className="agent-snapshot-settings__path"><code>{snapshot.manifest_path}</code></dd></div>
+        </dl>
+        {executablePath && <div className="agent-snapshot-settings__connect">
+          <p><strong>当前桌面主程序</strong><code>{executablePath}</code></p>
+          <div className="agent-snapshot-settings__actions">
+            <button type="button" className="btn btn-ghost" onClick={copyConfig}>复制 JSON 配置</button>
+            <button type="button" className="btn btn-ghost" onClick={copyGuide}>复制接入指引</button>
+          </div>
+          <p className="agent-snapshot-settings__config-hint">仅复制供你手动粘贴：不会自动写入或覆盖任何 MCP 客户端配置。</p>
+        </div>}
+      </div>}
+    </section>
+  );
+}
+
 export default function SettingsPanel({ onSettingsChanged, desktopMode = false, onCheckUpdate, updateChecking = false }: Props) {
   const [settings, setSettings] = useState<SettingsResponse | null>(null);
   useEffect(() => { getSettings().then(setSettings).catch(() => {}); }, []);
@@ -205,6 +332,7 @@ export default function SettingsPanel({ onSettingsChanged, desktopMode = false, 
         <LLMTaskEditor task="sentiment" title="情绪分析模型" description="为评论生成十分类情感标签" saved={settings.llm.sentiment} onSaved={handleSaved} />
         <LLMTaskEditor task="summary" title="智能总结模型" description="归纳筛选后的统计与代表观点" saved={settings.llm.summary} onSaved={handleSaved} />
       </div>}
+      <AgentSnapshotSettings desktopMode={desktopMode} />
       {desktopMode && <section className="crawl-settings desktop-update-settings">
         <div>
           <label className="text-xs text-secondary mb-1" style={{ display: 'block' }}>便携版更新</label>

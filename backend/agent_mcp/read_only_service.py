@@ -1,12 +1,15 @@
 """Strictly read-only domain access for the local Agent MCP PoC."""
 from __future__ import annotations
 import ctypes
+import hashlib
+import json
 import os
 import sqlite3
 import stat
 import time
+import uuid
 from contextlib import closing
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -26,7 +29,10 @@ QUERY_TIMEOUT_SECONDS = 5.0
 QUERY_PROGRESS_STEPS = 1_000
 SUPPORTED_SCHEMA_SIGNATURE = 1
 SERVICE_VERSION = "0.1.0"
-SNAPSHOT_ID: str | None = None
+MANIFEST_SCHEMA_VERSION = 1
+_SNAPSHOT_DATABASE_NAME = "database.sqlite3"
+_SNAPSHOT_MANIFEST_NAME = "manifest.json"
+_MAX_MANIFEST_BYTES = 16 * 1024
 AVAILABLE_TOOLS = (
     "bili_list_analyses",
     "bili_get_analysis_overview",
@@ -107,6 +113,99 @@ class AgentReadOnlyError(Exception):
 class ReadOnlyService:
     def __init__(self, database_path: str | Path) -> None:
         self.database_path = self._validate_database_path(database_path)
+        self._snapshot = self._load_snapshot_manifest()
+
+    @property
+    def snapshot_id(self) -> str | None:
+        return self._snapshot["snapshot_id"] if self._snapshot else None
+
+    def _snapshot_limitations(self) -> list[str]:
+        if self._snapshot:
+            return ["数据源为用户主动生成的静态快照；新数据需要生成新快照并重新连接。"]
+        return ["当前未提供可信快照清单；snapshot_id 为 null。"]
+
+    def _load_snapshot_manifest(self) -> dict[str, Any] | None:
+        """Recognise only the directory layout emitted by AgentSnapshotService.
+
+        A normal user-supplied database remains a supported static copy.  Its
+        adjacent timestamps and arbitrary JSON files are deliberately ignored.
+        """
+        directory = self.database_path.parent
+        trusted_root_raw = os.getenv("BILI_AGENT_SNAPSHOT_ROOT", "").strip()
+        if not trusted_root_raw:
+            return None
+        trusted_root = Path(trusted_root_raw)
+        if (
+            self.database_path.name != _SNAPSHOT_DATABASE_NAME
+            or directory.parent.name != "agent-snapshots"
+            or directory.parent != trusted_root
+        ):
+            return None
+        try:
+            if not trusted_root.is_absolute() or self._has_reparse_component(trusted_root):
+                raise ValueError
+            snapshot_uuid = str(uuid.UUID(directory.name))
+        except (ValueError, AttributeError):
+            return None
+        manifest_path = directory / _SNAPSHOT_MANIFEST_NAME
+        try:
+            manifest_stat = os.lstat(manifest_path)
+            if (
+                not stat.S_ISREG(manifest_stat.st_mode)
+                or self._is_reparse_point(manifest_stat)
+                or manifest_stat.st_size < 2
+                or manifest_stat.st_size > _MAX_MANIFEST_BYTES
+            ):
+                raise ValueError
+            raw = manifest_path.read_bytes()
+            manifest = json.loads(raw.decode("utf-8"))
+            created_at = str(manifest["created_at"])
+            parsed_created_at = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+            record_counts = manifest["record_counts"]
+            database_schema = manifest["database_schema"]
+            digest = str(manifest["database_sha256"])
+            if (
+                set(manifest) != {
+                    "schema", "snapshot_id", "created_at", "application_version",
+                    "mcp_contract_version", "database_file", "database_sha256",
+                    "record_counts", "database_schema",
+                }
+                or manifest["schema"] != MANIFEST_SCHEMA_VERSION
+                or manifest["snapshot_id"] != snapshot_uuid
+                or snapshot_uuid != directory.name.casefold()
+                or parsed_created_at.tzinfo is None
+                or parsed_created_at.utcoffset() != timezone.utc.utcoffset(parsed_created_at)
+                or not created_at.endswith("Z")
+                or not isinstance(manifest["application_version"], str)
+                or not 1 <= len(manifest["application_version"]) <= 80
+                or manifest["mcp_contract_version"] != 2
+                or manifest["database_file"] != _SNAPSHOT_DATABASE_NAME
+                or len(digest) != 64
+                or any(character not in "0123456789abcdef" for character in digest)
+                or set(record_counts) != {"analyses", "comments", "events"}
+                or any(isinstance(value, bool) or not isinstance(value, int) or value < 0 for value in record_counts.values())
+                or database_schema.get("read_only_schema_signature") != SUPPORTED_SCHEMA_SIGNATURE
+                or isinstance(database_schema.get("sqlite_user_version"), bool)
+                or not isinstance(database_schema.get("sqlite_user_version"), int)
+                or self._sha256(self.database_path) != digest
+            ):
+                raise ValueError
+            return {
+                "snapshot_id": snapshot_uuid,
+                "created_at": created_at,
+                "record_counts": dict(record_counts),
+                "application_version": manifest["application_version"],
+            }
+        except (OSError, UnicodeDecodeError, ValueError, TypeError, AttributeError, KeyError, json.JSONDecodeError):
+            raise AgentReadOnlyError("Agent 快照清单无效或与数据库不匹配。", "invalid_snapshot_manifest") from None
+
+    @staticmethod
+    def _sha256(path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
 
     @classmethod
     def _validate_database_path(cls, database_path: str | Path) -> Path:
@@ -589,9 +688,20 @@ class ReadOnlyService:
         return limitations
 
     def get_data_source_info(self) -> dict[str, Any]:
-        """Describe the manual static-copy source without trusting its file timestamps."""
+        """Describe a verified Agent snapshot or a manual static copy."""
         compatibility = "compatible"
-        limitations = ["当前未提供可信快照清单；snapshot_created_at 为 null，未使用文件 mtime。"]
+        if self._snapshot:
+            limitations = ["此数据源为用户主动生成的静态快照；新数据需要生成新快照并重新连接。"]
+            snapshot_created_at = self._snapshot["created_at"]
+            snapshot_time_source = "manifest"
+            data_scope = "用户主动生成的本地 SQLite 静态快照中的已保存分析、事件成员与评论。"
+            record_counts = self._snapshot["record_counts"]
+        else:
+            limitations = ["当前未提供可信快照清单；snapshot_created_at 为 null，未使用文件 mtime。"]
+            snapshot_created_at = None
+            snapshot_time_source = "unknown"
+            data_scope = "用户明确指定的静态 SQLite 副本中的已保存分析、事件成员与评论。"
+            record_counts = None
         with closing(self._connect()):
             pass
         try:
@@ -605,12 +715,13 @@ class ReadOnlyService:
         return {
             "mcp_contract_version": 2,
             "service_version": SERVICE_VERSION,
-            "snapshot_id": SNAPSHOT_ID,
-            "snapshot_created_at": None,
-            "snapshot_time_source": "unknown",
+            "snapshot_id": self.snapshot_id,
+            "snapshot_created_at": snapshot_created_at,
+            "snapshot_time_source": snapshot_time_source,
             "schema_compatibility": compatibility,
             "available_tools": list(AVAILABLE_TOOLS),
-            "data_scope": "用户明确指定的静态 SQLite 副本中的已保存分析、事件成员与评论。",
+            "data_scope": data_scope,
+            "record_counts": record_counts,
             "limitations": limitations,
         }
 
@@ -641,13 +752,13 @@ class ReadOnlyService:
                 } for row in rows]
                 return {
                     "mcp_contract_version": 2,
-                    "snapshot_id": SNAPSHOT_ID,
+                    "snapshot_id": self.snapshot_id,
                     "items": values,
                     "total_count": int(total),
                     "has_more": offset + len(values) < total,
                     "limit": limit,
                     "offset": offset,
-                    "limitations": ["当前未提供可信快照清单；snapshot_id 为 null。"],
+                    "limitations": self._snapshot_limitations(),
                 }
         except AgentReadOnlyError:
             raise
@@ -690,7 +801,7 @@ class ReadOnlyService:
                 times = [comment["post_time"] for comment in comments if comment.get("post_time")]
                 limitations = self._event_limitations(members, comments, mode, denominator)
                 return {
-                    "mcp_contract_version": 2, "snapshot_id": SNAPSHOT_ID,
+                    "mcp_contract_version": 2, "snapshot_id": self.snapshot_id,
                     "event_id": event_id, "name": str(event["name"] or "")[:200], "mode": mode,
                     "members": members, "source_distribution": source_rows,
                     "raw_comment_count": raw_total, "sentiment_distribution": counts,
@@ -761,7 +872,7 @@ class ReadOnlyService:
                 limitations = ["评论正文单条最多返回 240 字符，单次响应正文合计最多 12000 字符。"]
                 limitations.extend(self._event_limitations(members, comments, mode, sum(comment[field] in allowed for comment in matched)))
                 return {
-                    "mcp_contract_version": 2, "snapshot_id": SNAPSHOT_ID,
+                    "mcp_contract_version": 2, "snapshot_id": self.snapshot_id,
                     "event_id": event_id, "mode": mode, "source_analysis_id": source_analysis_id,
                     "matched_count": len(matched), "returned_count": len(output),
                     "has_more": offset + len(output) < len(matched), "llm_coverage": coverage,

@@ -56,6 +56,27 @@ export function installDownloadedUpdate(): Promise<void> {
   return invoke<void>('install_update');
 }
 
+/**
+ * Reads the currently running desktop application's real executable path.
+ * This is intentionally a desktop-only query; it never writes a client config.
+ */
+export function getDesktopMcpExecutablePath(): Promise<string> {
+  return invoke<string>('desktop_mcp_executable_path');
+}
+
+/** Produces a portable JSON MCP entry without shell interpolation. */
+export function buildAgentMcpConfig(executablePath: string, databasePath: string): string {
+  return JSON.stringify({
+    mcpServers: {
+      'bili-opinion-readonly': {
+        command: executablePath,
+        args: ['--mcp-stdio'],
+        env: { BILI_MCP_DB_PATH: databasePath },
+      },
+    },
+  }, null, 2);
+}
+
 export function respondToCloseRequest(action: CloseAction, requestId?: string): Promise<void> {
   return invoke<void>('resolve_close_request', { action, requestId });
 }

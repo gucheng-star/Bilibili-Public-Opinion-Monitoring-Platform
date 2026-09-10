@@ -143,16 +143,17 @@ class CommentSearchOutput(StrictModel):
 
 
 class DataSourceInfoOutput(StrictModel):
-    """Metadata for the static SQLite input; R2 will add trusted manifests."""
+    """Metadata for a verified Agent snapshot or a manual static SQLite copy."""
 
     mcp_contract_version: Literal[2] = Field(description="当前只读 MCP 输出契约版本")
     service_version: str = Field(description="本地 MCP 服务版本")
     snapshot_id: str | None = Field(description="可信快照标识；无清单的手动副本为 null")
     snapshot_created_at: str | None = Field(description="可信快照 UTC 创建时间；未知时为 null")
-    snapshot_time_source: Literal["unknown"] = Field(description="R2 前不信任文件 mtime，创建时间来源为未知")
+    snapshot_time_source: Literal["unknown", "manifest"] = Field(description="可信快照使用清单 UTC 时间；手工副本不信任文件 mtime")
     schema_compatibility: Literal["compatible", "event_schema_missing"]
     available_tools: list[str]
     data_scope: str
+    record_counts: dict[str, int] | None = Field(description="可信快照清单中的非敏感记录数；手工副本为 null")
     limitations: list[str]
 
 

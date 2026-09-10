@@ -15,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 
 sys.path.insert(0, os.path.dirname(__file__))
 from api.auth_routes import router as auth_router
+from api.agent_snapshot_routes import router as agent_snapshot_router
 from api.danmaku_routes import router as danmaku_router
 from api.group_routes import router as group_router
 from api.routes import router
@@ -150,6 +151,7 @@ app.include_router(group_router)
 app.include_router(router)
 app.include_router(danmaku_router)
 app.include_router(auth_router)
+app.include_router(agent_snapshot_router)
 app.include_router(runtime_router)
 
 frontend_dir = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")

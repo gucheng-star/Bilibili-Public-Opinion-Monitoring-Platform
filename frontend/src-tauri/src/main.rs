@@ -373,6 +373,31 @@ fn frontend_api_base(origin: &str) -> String {
     format!("{}/api", origin.trim_end_matches('/'))
 }
 
+/// Returns only the canonical path of this desktop executable. The frontend
+/// uses it to prepare a user-copyable MCP example; it cannot pass a path in or
+/// change any external client configuration through this command.
+#[tauri::command]
+fn desktop_mcp_executable_path() -> Result<String, String> {
+    current_desktop_executable_path()
+}
+
+fn current_desktop_executable_path() -> Result<String, String> {
+    let executable = env::current_exe()
+        .map_err(|_| "无法定位当前桌面程序，请重启应用后重试".to_owned())?
+        .canonicalize()
+        .map_err(|_| "无法验证当前桌面程序路径，请重启应用后重试".to_owned())?;
+    let metadata = fs::metadata(&executable)
+        .map_err(|_| "无法验证当前桌面程序路径，请重启应用后重试".to_owned())?;
+    if !metadata.is_file()
+        || !executable
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("exe"))
+    {
+        return Err("当前桌面程序路径不可用于 MCP 配置，请重启应用后重试".to_owned());
+    }
+    Ok(executable.to_string_lossy().into_owned())
+}
+
 #[tauri::command]
 async fn save_export_file(
     suggested_name: String,
@@ -971,6 +996,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             runtime_config,
+            desktop_mcp_executable_path,
             save_export_file,
             check_for_updates,
             download_update,
@@ -1058,7 +1084,7 @@ fn run_mcp_stdio() -> Result<u32, McpStartupFailure> {
             env!("CARGO_PKG_VERSION"),
         )
         .map_err(|_| McpStartupFailure(McpStartupStage::Materialize))?;
-    let environment = mcp_environment(&session, &database)
+    let environment = mcp_environment(&session, &database, &paths.data_dir.join("agent-snapshots"))
         .map_err(|_| McpStartupFailure(McpStartupStage::Environment))?;
     let job =
         create_kill_on_close_job().map_err(|_| McpStartupFailure(McpStartupStage::JobCreate))?;
@@ -1084,14 +1110,19 @@ fn run_mcp_stdio() -> Result<u32, McpStartupFailure> {
         .map_err(|_| McpStartupFailure(McpStartupStage::ExitCode))
 }
 
-fn mcp_environment(session: &portable::McpSession, database: &Path) -> anyhow::Result<Vec<u16>> {
+fn mcp_environment(
+    session: &portable::McpSession,
+    database: &Path,
+    snapshot_root: &Path,
+) -> anyhow::Result<Vec<u16>> {
     let windows_dir = windows_directory_from_api()?;
-    mcp_environment_from_windows_dir(session, database, &windows_dir)
+    mcp_environment_from_windows_dir(session, database, snapshot_root, &windows_dir)
 }
 
 fn mcp_environment_from_windows_dir(
     session: &portable::McpSession,
     database: &Path,
+    snapshot_root: &Path,
     windows_dir: &Path,
 ) -> anyhow::Result<Vec<u16>> {
     let windows_metadata = fs::symlink_metadata(windows_dir)?;
@@ -1113,6 +1144,10 @@ fn mcp_environment_from_windows_dir(
         ("TMP".into(), session.path().as_os_str().to_owned()),
         ("TMPDIR".into(), session.path().as_os_str().to_owned()),
         ("BILI_MCP_DB_PATH".into(), database.as_os_str().to_owned()),
+        (
+            "BILI_AGENT_SNAPSHOT_ROOT".into(),
+            snapshot_root.as_os_str().to_owned(),
+        ),
     ]);
     values.sort_by(|left, right| left.0.cmp(&right.0));
     let mut block = Vec::new();
@@ -1437,10 +1472,11 @@ fn random_hex(bytes: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_manifest_error, export_file_type, export_suggested_file_name,
-        fetch_manifest_from_url, frontend_api_base, is_valid_std_handle, logged_update_task,
-        mcp_environment, mcp_start_failure_message, parse_start_mode_from, McpStartupStage,
-        PortablePaths, StartMode, UpdateFailure, MCP_STDIO_ARGUMENT,
+        classify_manifest_error, current_desktop_executable_path, export_file_type,
+        export_suggested_file_name, fetch_manifest_from_url, frontend_api_base,
+        is_valid_std_handle, logged_update_task, mcp_environment, mcp_start_failure_message,
+        parse_start_mode_from, McpStartupStage, PortablePaths, StartMode, UpdateFailure,
+        MCP_STDIO_ARGUMENT,
     };
     use std::ffi::OsString;
     use std::{
@@ -1489,6 +1525,17 @@ mod tests {
             frontend_api_base("http://127.0.0.1:49152/"),
             "http://127.0.0.1:49152/api"
         );
+    }
+
+    #[test]
+    fn desktop_mcp_path_is_the_current_absolute_executable() {
+        let value = current_desktop_executable_path().unwrap();
+        let path = Path::new(&value);
+        assert!(path.is_absolute());
+        assert!(path.is_file());
+        assert!(path
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("exe")));
     }
 
     #[test]
@@ -1692,7 +1739,11 @@ mod tests {
         for name in names {
             env::remove_var(name);
         }
-        let result = mcp_environment(&session, Path::new(r"C:\allowed\backup.sqlite"));
+        let result = mcp_environment(
+            &session,
+            Path::new(r"C:\allowed\backup.sqlite"),
+            &root.join("data").join("agent-snapshots"),
+        );
         for (name, value) in previous {
             match value {
                 Some(value) => env::set_var(name, value),
@@ -1704,6 +1755,10 @@ mod tests {
         assert!(text.contains("SystemRoot="));
         assert!(text.contains("WINDIR="));
         assert!(text.contains("ComSpec="));
+        assert!(text.contains(&format!(
+            "BILI_AGENT_SNAPSHOT_ROOT={}",
+            root.join("data").join("agent-snapshots").display()
+        )));
         assert!(!text.contains("HTTP_PROXY="));
         assert!(!text.contains("caller-secret-sentinel"));
         drop(session);

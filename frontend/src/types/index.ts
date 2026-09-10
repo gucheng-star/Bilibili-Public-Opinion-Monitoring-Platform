@@ -322,6 +322,22 @@ export interface LLMTaskUpdate {
   clear_api_key?: boolean;
 }
 
+/** A user-requested, immutable SQLite copy intended for a read-only MCP session. */
+export interface AgentSnapshotResponse {
+  snapshot_id: string;
+  created_at: string;
+  database_path: string;
+  manifest_path: string;
+  database_sha256: string;
+  application_version: string;
+  mcp_contract_version: number;
+  record_counts: {
+    analyses: number;
+    comments: number;
+    events: number;
+  };
+}
+
 /** Filter state */
 export interface FilterState {
   gender: "all" | "male" | "female";
