@@ -135,10 +135,16 @@ class ReadOnlyService:
         if not trusted_root_raw:
             return None
         trusted_root = Path(trusted_root_raw)
+        # The desktop shell and Python backend may preserve harmless `.` / `..`
+        # spelling differently.  Normalize spelling only after the reparse-point
+        # check below; resolving the path here would conceal a junction.
+        same_trusted_root = os.path.normcase(os.path.normpath(os.fspath(directory.parent))) == os.path.normcase(
+            os.path.normpath(os.fspath(trusted_root))
+        )
         if (
             self.database_path.name != _SNAPSHOT_DATABASE_NAME
             or directory.parent.name != "agent-snapshots"
-            or directory.parent != trusted_root
+            or not same_trusted_root
         ):
             return None
         try:

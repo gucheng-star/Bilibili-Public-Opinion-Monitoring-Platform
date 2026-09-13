@@ -24,7 +24,7 @@
 
 ```toml
 [mcp_servers.bili-opinion-readonly]
-command = "F:\\Apps\\Bili 舆情\\BiliOpinionMonitor-0.3.0-windows-x64.exe"
+command = "F:\\Apps\\Bili 舆情\\BiliOpinionMonitor-0.3.1-windows-x64.exe"
 args = ["--mcp-stdio"]
 
 [mcp_servers.bili-opinion-readonly.env]

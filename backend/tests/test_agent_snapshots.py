@@ -108,6 +108,15 @@ class AgentSnapshotServiceTests(AgentMCPFixtureMixin, unittest.TestCase):
         self.assertIsNone(info["snapshot_id"])
         self.assertEqual(info["snapshot_time_source"], "unknown")
 
+    def test_snapshot_layout_accepts_an_equivalent_non_resolved_trust_anchor(self):
+        result = self._service().create()
+        database = Path(result["database_path"])
+        equivalent_root = self.snapshot_root.parent / "agent-snapshots" / ".." / "agent-snapshots"
+        with patch.dict(os.environ, {"BILI_AGENT_SNAPSHOT_ROOT": str(equivalent_root)}):
+            info = ReadOnlyService(database).get_data_source_info()
+        self.assertEqual(info["snapshot_id"], result["snapshot_id"])
+        self.assertEqual(info["snapshot_time_source"], "manifest")
+
 
 class AgentSnapshotRouteTests(AgentMCPFixtureMixin, unittest.IsolatedAsyncioTestCase):
     def setUp(self):

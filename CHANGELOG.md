@@ -5,6 +5,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-13
+
+### Added
+- 首个公开的 0.3.x 版本提供只读 MCP，可查询已完成分析、评论和舆情事件，并在返回中附带快照来源与限制。
+- 首个公开的 0.3.x 版本提供用户授权的本地一致性快照与 Agent Skill；明确授权后可自动注册或更新唯一的只读 MCP 条目。
+
+### Fixed
+- 修复 Windows 上等价快照根目录路径被误判为不可信、导致 `snapshot_id` 缺失的问题。
+
 ## [0.3.0] - 2026-09-13
 
 ### Added
