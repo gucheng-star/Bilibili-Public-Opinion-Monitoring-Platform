@@ -5,6 +5,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-13
+
+### Added
+- 新增只读 MCP，可查询已完成分析、评论和舆情事件，并在返回中附带快照来源与限制。
+- 新增用户授权的本地一致性快照；每次连接使用独立静态副本，不读取 Cookie、API Key 或在线数据库。
+- 新增 Agent Skill：将首页的一行链接交给本机 AI 编程 Agent 后，可在明确授权范围内自动注册或更新唯一的只读 MCP 条目。
+
+### Fixed
+- 修复本地开发诊断事件带 Referer 请求时被错误拒绝的问题。
+
 ## [0.2.4] - 2026-09-08
 
 ### Added

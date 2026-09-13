@@ -86,15 +86,15 @@
 
 ## AI 智能体 — 一行接入
 
-本次提交推送到公开仓库的 `master` 分支后，把这一行粘贴给你的本机 AI 编程 Agent：
+把这一行粘贴给你的本机 AI 编程 Agent：
 
 ```text
 curl -fsSL https://raw.githubusercontent.com/gucheng-star/Bilibili-Public-Opinion-Monitoring-Platform/master/skills/bili-opinion/SKILL.md
 ```
 
-Skill 会先说明要写入的范围，等待你的明确授权；获授权后，Agent 会调用桌面程序的本地 `--mcp-bootstrap` 引导，自动创建一致的只读快照、读取应用目录中的 nonce 绑定接入记录、注册 `bili-opinion-readonly`，并在重连后验证 7 个只读工具。你不需要在设置页寻找或复制 JSON。
+就这一行。Agent 会先读取 Skill，并告诉你它准备执行的本机操作；只有在你明确授权后，它才会调用已安装的桌面程序创建一致的只读快照、注册或更新 `bili-opinion-readonly`，重新连接并验证 7 个只读工具。你不需要在设置页寻找或复制 JSON。
 
-首次使用仍需由你完成 B 站登录和至少一次本地分析；这是应用数据和登录授权，Agent 不会代替你完成。引导只会处理这一项本机 Codex MCP 配置：不会抓取 B站、上传 `data/`、读取 Cookie/API Key，或改动其他 MCP。新数据或应用升级后，只需再次明确授权 Agent 更新同名条目并重新连接。
+开始前，请从 [GitHub Releases](https://github.com/gucheng-star/Bilibili-Public-Opinion-Monitoring-Platform/releases) 下载 **0.3.0 或更高版本**，完成 B 站登录并至少进行一次本地分析。登录和分析仍由你主动完成，Agent 不会代替你操作。引导仅处理这一项本机 Codex MCP 配置：不会抓取 B站、上传 `data/`、读取 Cookie/API Key，或改动其他 MCP。新数据或应用升级后，只需再次明确授权 Agent 更新同名条目并重新连接。
 
 ## 数据与隐私
 
@@ -117,7 +117,7 @@ Skill 会先说明要写入的范围，等待你的明确授权；获授权后�
 
 ## 版本状态
 
-当前版本为 **0.2.4**，仍处于预发布阶段。功能、数据结构和使用方式可能继续调整；更新前请备份 `data/` 目录。
+当前版本为 **0.3.0**，仍处于预发布阶段。功能、数据结构和使用方式可能继续调整；更新前请备份 `data/` 目录。
 
 ## 系统要求
 

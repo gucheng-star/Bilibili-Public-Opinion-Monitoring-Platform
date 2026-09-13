@@ -103,23 +103,16 @@ jobs:
           $manifestPayload = "$($manifest.schema)|$($manifest.version)|$($manifest.asset.name)|$($manifest.asset.size)|$($manifest.asset.sha256)"
           if ($manifestPayload -cne $payload) { throw "Portable update manifest payload does not match the signed payload" }
           if ($manifest.signature -cne $signature) { throw "Portable update manifest signature was not preserved" }
+      - name: Build release notes from this version's changelog
+        shell: pwsh
+        run: |
+          $version = "${{ steps.package.outputs.version }}"
+          .\scripts\write-release-notes.ps1 -Version $version -OutputPath "dist\portable\release-notes.md"
       - name: Publish GitHub Release assets
         uses: softprops/action-gh-release@v2.6.2
         with:
           name: B站舆论监测平台 v${{ steps.package.outputs.version }}
-          body: |
-            ## 0.2.4 更新
-
-            - 评论 CSV 与各图表 PNG 统一采用本地保存流程；桌面版可选择保存位置，并在完成或失败时给出明确提示。
-            - 新增角色化 AI 简评，以及分 P 分时段弹幕抽样、情绪时间轴和弹幕明细；覆盖范围会明确标记已抽样、未采样、失败与部分区间。
-            - 评论采集支持在开始前确认数量与请求间隔，部分完成的结果可继续查看或重新采集；应用也支持浅色、暗色和跟随系统主题。
-            - 修复旧版弹幕单次采集数据库升级时的迁移检测，确保升级前正确备份并转换为可重试结构。
-
-            ## 升级提示
-
-            请下载 `BiliOpinionMonitor-${{ steps.package.outputs.version }}-windows-x64.exe` 覆盖旧程序文件；不要删除或覆盖同级 `data/` 目录，其中保存本机数据库、登录信息、模型设置和日志。
-
-            本版本仍为 0.x 预发布版本。请只从本仓库 Release 页面下载，并使用随发布生成的 `latest-portable.json` 核对文件大小与 SHA-256。
+          body_path: dist/portable/release-notes.md
           generate_release_notes: true
           prerelease: false
           make_latest: true

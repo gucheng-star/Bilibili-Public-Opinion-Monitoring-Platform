@@ -127,7 +127,8 @@ struct BootstrapRecordCounts {
 enum McpStartupStage {
     Discover,
     CoordinationLock,
-    Session,
+    SessionCleanup,
+    SessionCreate,
     DatabaseValidate,
     Materialize,
     Environment,
@@ -144,7 +145,8 @@ impl McpStartupStage {
         match self {
             Self::Discover => "DISCOVER",
             Self::CoordinationLock => "COORDINATION_LOCK",
-            Self::Session => "SESSION",
+            Self::SessionCleanup => "SESSION_CLEANUP",
+            Self::SessionCreate => "SESSION_CREATE",
             Self::DatabaseValidate => "DATABASE_VALIDATE",
             Self::Materialize => "MATERIALIZE",
             Self::Environment => "ENVIRONMENT",
@@ -1181,10 +1183,10 @@ fn run_mcp_stdio() -> Result<u32, McpStartupFailure> {
         .map_err(|_| McpStartupFailure(McpStartupStage::CoordinationLock))?;
     paths
         .clear_abandoned_mcp_sessions()
-        .map_err(|_| McpStartupFailure(McpStartupStage::Session))?;
+        .map_err(|_| McpStartupFailure(McpStartupStage::SessionCleanup))?;
     let session = paths
         .create_mcp_session()
-        .map_err(|_| McpStartupFailure(McpStartupStage::Session))?;
+        .map_err(|_| McpStartupFailure(McpStartupStage::SessionCreate))?;
     let database = env::var_os("BILI_MCP_DB_PATH")
         .ok_or(McpStartupFailure(McpStartupStage::DatabaseValidate))?;
     let database = validate_mcp_database_path(Path::new(&database))
@@ -1804,7 +1806,8 @@ mod tests {
         let stages = [
             McpStartupStage::Discover,
             McpStartupStage::CoordinationLock,
-            McpStartupStage::Session,
+            McpStartupStage::SessionCleanup,
+            McpStartupStage::SessionCreate,
             McpStartupStage::DatabaseValidate,
             McpStartupStage::Materialize,
             McpStartupStage::Environment,
@@ -1846,7 +1849,7 @@ mod tests {
                 "database_path": r"F:\Apps\data\agent-snapshots\snapshot\database.sqlite3",
                 "manifest_path": r"F:\Apps\data\agent-snapshots\snapshot\manifest.json",
                 "database_sha256": "a".repeat(64),
-                "application_version": "0.2.4",
+                "application_version": "0.3.0",
                 "mcp_contract_version": 2,
                 "record_counts": {"analyses": 1, "comments": 2, "events": 3}
             }
