@@ -5,6 +5,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-09-13
+
+### Fixed
+- 修复 Windows 将同一快照根目录表示为不同规范路径时，MCP 未能识别可信快照、导致 `snapshot_id` 缺失的问题。
+
 ## [0.3.1] - 2026-09-13
 
 ### Added

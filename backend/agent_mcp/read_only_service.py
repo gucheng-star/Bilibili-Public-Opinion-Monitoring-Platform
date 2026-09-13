@@ -135,23 +135,23 @@ class ReadOnlyService:
         if not trusted_root_raw:
             return None
         trusted_root = Path(trusted_root_raw)
-        # The desktop shell and Python backend may preserve harmless `.` / `..`
-        # spelling differently.  Normalize spelling only after the reparse-point
-        # check below; resolving the path here would conceal a junction.
-        same_trusted_root = os.path.normcase(os.path.normpath(os.fspath(directory.parent))) == os.path.normcase(
-            os.path.normpath(os.fspath(trusted_root))
-        )
         if (
             self.database_path.name != _SNAPSHOT_DATABASE_NAME
             or directory.parent.name != "agent-snapshots"
-            or not same_trusted_root
         ):
             return None
         try:
             if not trusted_root.is_absolute() or self._has_reparse_component(trusted_root):
                 raise ValueError
+            # The desktop shell and Python backend can describe the same safe
+            # directory with different Windows canonical spellings (including
+            # long and short path names).  The database and trusted root have
+            # both passed reparse-point checks, so identity is safe to compare
+            # through the filesystem without resolving an untrusted junction.
+            if not os.path.samefile(directory.parent, trusted_root):
+                return None
             snapshot_uuid = str(uuid.UUID(directory.name))
-        except (ValueError, AttributeError):
+        except (OSError, ValueError, AttributeError):
             return None
         manifest_path = directory / _SNAPSHOT_MANIFEST_NAME
         try:

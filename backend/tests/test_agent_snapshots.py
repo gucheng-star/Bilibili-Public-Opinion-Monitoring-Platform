@@ -117,6 +117,20 @@ class AgentSnapshotServiceTests(AgentMCPFixtureMixin, unittest.TestCase):
         self.assertEqual(info["snapshot_id"], result["snapshot_id"])
         self.assertEqual(info["snapshot_time_source"], "manifest")
 
+    def test_snapshot_layout_accepts_a_filesystem_equivalent_trust_anchor(self):
+        result = self._service().create()
+        database = Path(result["database_path"])
+        # A short Windows path cannot be constructed portably in the test
+        # runner.  Model the file-system identity check directly so a future
+        # string comparison cannot reintroduce the release-only failure.
+        canonical_alias = self.snapshot_root.parent / "canonical-agent-snapshots"
+        with patch.dict(os.environ, {"BILI_AGENT_SNAPSHOT_ROOT": str(canonical_alias)}):
+            with patch("agent_mcp.read_only_service.os.path.samefile", return_value=True) as samefile:
+                info = ReadOnlyService(database).get_data_source_info()
+        samefile.assert_called_once_with(database.parent.parent, canonical_alias)
+        self.assertEqual(info["snapshot_id"], result["snapshot_id"])
+        self.assertEqual(info["snapshot_time_source"], "manifest")
+
 
 class AgentSnapshotRouteTests(AgentMCPFixtureMixin, unittest.IsolatedAsyncioTestCase):
     def setUp(self):
