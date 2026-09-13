@@ -1849,7 +1849,7 @@ mod tests {
                 "database_path": r"F:\Apps\data\agent-snapshots\snapshot\database.sqlite3",
                 "manifest_path": r"F:\Apps\data\agent-snapshots\snapshot\manifest.json",
                 "database_sha256": "a".repeat(64),
-                "application_version": "0.3.2",
+                "application_version": "0.3.0-fix",
                 "mcp_contract_version": 2,
                 "record_counts": {"analyses": 1, "comments": 2, "events": 3}
             }

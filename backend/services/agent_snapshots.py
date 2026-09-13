@@ -89,7 +89,7 @@ class AgentSnapshotService:
                 "schema": MANIFEST_SCHEMA_VERSION,
                 "snapshot_id": snapshot_id,
                 "created_at": created_at,
-                "application_version": os.getenv("BILI_APP_VERSION", "0.3.2"),
+                "application_version": os.getenv("BILI_APP_VERSION", "0.3.0-fix"),
                 "mcp_contract_version": MCP_CONTRACT_VERSION,
                 "database_file": _DATABASE_FILE_NAME,
                 "database_sha256": database_digest,
