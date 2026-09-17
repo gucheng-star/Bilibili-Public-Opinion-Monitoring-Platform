@@ -5,6 +5,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Changed
+- 补充可复现的本地脱敏演示数据与 README 当前界面预览，覆盖历史、评论分析、图表导出、弹幕时间轴和舆情事件。
+
 ## [0.3.0-fix] - 2026-09-13
 
 ### Added

@@ -27,7 +27,7 @@
 
 ## 界面预览
 
-以下截图来自本地模拟数据；它们展示的是当前版本的完整用户路径。
+以下截图均来自当前版本的本地脱敏演示数据，不含真实 B 站账号、Cookie、评论或模型凭据。演示数据由 [`scripts/seed_readme_demo.py`](scripts/seed_readme_demo.py) 写入仓库内的 `tmp/readme-screenshots-data/`，截图由 [`scripts/capture_readme_screenshots.mjs`](scripts/capture_readme_screenshots.mjs) 可复现生成；两个脚本均不会访问 B 站或模型服务。
 
 ### 1. 登录并确认视频
 
@@ -35,23 +35,27 @@
 | --- | --- |
 | ![登录页：使用 B 站 App 扫码进入观测台](docs/images/login.png) | ![工作台：输入 B 站视频链接或 BV 号，获取视频信息后开始分析](docs/images/workspace-empty.png) |
 
-### 2. 单视频分析与评论证据
+### 2. 本机历史与单视频分析
 
-| 分析总览：统一筛选与 AI 简报 | 图表：情感、热度与词云 |
+| 本机历史：可继续查看多次本地分析 | 分析总览：统一筛选与 AI 简报 |
 | --- | --- |
-| ![单视频分析总览：视频信息、筛选器、AI 舆情简报与情感图表](docs/images/analysis-overview.png) | ![单视频图表：情感环图、热度趋势、24 小时分布和词云](docs/images/analysis-charts.png) |
+| ![本机历史：三个脱敏示例分析可继续查看或组合成舆情事件](docs/images/demo-history.png) | ![单视频分析总览：视频信息、筛选器、AI 舆情简报与情感图表](docs/images/demo-analysis-overview.png) |
 
-| 评论明细：筛选、搜索与导出 |
-| --- |
-| ![单视频评论明细：评论表格、情感标签、时间和导出 CSV](docs/images/comment-detail.png) |
+| 图表与导出：情感、热度、时间分布 | 评论明细：筛选、搜索与导出 |
+| --- | --- |
+| ![单视频图表：情感环图、热度趋势与单图 PNG 导出](docs/images/demo-analysis-charts.png) | ![单视频评论明细：评论表格、情感标签、时间和导出 CSV](docs/images/comment-detail.png) |
 
-### 3. 多视频舆情事件
+### 3. 弹幕时间轴
+
+![弹幕时间轴：主动抽样后的分 P、覆盖状态、情感曲线和未采样区间提示](docs/images/demo-danmaku-timeline.png)
+
+### 4. 多视频舆情事件
 
 | 事件总览：按评论池聚合来源视频 | 事件评论：可追溯到来源视频 |
 | --- | --- |
-| ![舆情事件总览：来源视频、统一筛选、AI 简报和情感图表](docs/images/event-overview.png) | ![舆情事件评论明细：每条评论标明来源视频并支持筛选和导出](docs/images/event-comment-detail.png) |
+| ![舆情事件总览：来源视频、统一筛选、AI 简报和情感图表](docs/images/demo-event-workspace.png) | ![舆情事件评论明细：每条评论标明来源视频并支持筛选和导出](docs/images/event-comment-detail.png) |
 
-### 4. 设置中心
+### 5. 设置中心
 
 ![设置中心：默认抓取参数、情绪分析模型和智能总结模型分别配置](docs/images/settings.png)
 

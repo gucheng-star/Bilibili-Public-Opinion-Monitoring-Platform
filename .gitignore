@@ -8,6 +8,8 @@ backend/backups/
 data.db
 *.db-shm
 *.db-wal
+# README 截图的本地生成数据、演示凭据与设置（由 scripts/seed_readme_demo.py 创建）
+tmp/readme-screenshots-data/
 
 # Frontend
 frontend/node_modules/
